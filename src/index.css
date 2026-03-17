@@ -1,0 +1,174 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg-app:     #0b0f1a;
+  --bg-surface: #111827;
+  --bg-panel:   #1a2235;
+  --bg-input:   #1e2d40;
+  --bg-hover:   #243047;
+
+  --border:     #2d3f55;
+  --border-dim: #1e2d3d;
+
+  --text-primary:   #e2e8f0;
+  --text-secondary: #7c93b0;
+  --text-muted:     #4a6080;
+  --text-code:      #94c5f8;
+
+  --accent:     #3b82f6;
+  --accent-dim: rgba(59, 130, 246, 0.15);
+
+  --ok:      #22c55e;
+  --warn:    #f59e0b;
+  --danger:  #ef4444;
+  --info:    #38bdf8;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-app);
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* --- PANELE MES --- */
+.mes-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.mes-panel-surface {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+
+/* Kompatybilność wsteczna — glass-card zastąpiony solidnym panelem */
+.glass-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.glass-effect {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+/* --- TABELE --- */
+.mes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mes-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.mes-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-dim);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.mes-table tbody tr:hover {
+  background: var(--bg-hover);
+  cursor: pointer;
+}
+
+.mes-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- MONO dla kodów/numerów --- */
+.mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+/* --- BADGE STATUSÓW --- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.badge-ok      { background: rgba(34,197,94,0.12);  color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
+.badge-warn    { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.25); }
+.badge-danger  { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
+.badge-info    { background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); }
+.badge-neutral { background: rgba(100,120,150,0.12); color: #7c93b0; border: 1px solid rgba(100,120,150,0.2); }
+
+/* --- PRZYCISKI --- */
+.btn-hover-effect {
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-hover-effect:hover {
+  filter: brightness(1.1);
+}
+
+.btn-hover-effect:active {
+  filter: brightness(0.95);
+}
+
+/* --- SCROLLBAR --- */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* --- INPUTS --- */
+input, select, textarea {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+select option {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+/* --- ANIMACJE --- */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-view {
+  animation: fadeIn 0.2s ease forwards;
+}
+
+/* --- PRINT --- */
+@media print {
+  body { background: white !important; color: black !important; }
+  .print-hidden { display: none !important; }
+}

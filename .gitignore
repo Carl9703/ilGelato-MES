@@ -1,0 +1,21 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+/src/generated/prisma
+
+# Pliki tymczasowe / debug
+server_log.txt
+cleanup_log.txt
+typescript_errors.txt
+err*.txt
+out.txt
+res_output.txt
+routes.txt
+all_*.json
+metadata.json

@@ -1,0 +1,250 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Uzytkownicy {
+  id                  String   @id @default(uuid())
+  login               String   @unique
+  haslo               String
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  ruchy_magazynowe    Ruchy_Magazynowe[]
+}
+
+model Asortyment {
+  id                       String   @id @default(uuid())
+  kod_towaru               String   @unique
+  nazwa                    String
+  typ_asortymentu          String   // Enum: Surowiec, Opakowanie, Polprodukt, Wyrob_Gotowy
+  jednostka_miary          String
+  jednostka_pomocnicza     String?  // np. "szt" gdy JM to "kg"
+  przelicznik_jednostki    Float?   // 1 JM = X JM_pomocniczej
+  czy_wymaga_daty_waznosci Boolean  @default(false)
+  czy_aktywne              Boolean  @default(true)
+  // Dodatkowe pola kartoteki
+  producent                String?
+  zrodlo_danych            String?  // np. "WŁASNE", "XMART", nazwa dostawcy
+  skladniki_opis           String?  // Skład produktu (do etykiet)
+  moze_zawierac            String?  // Alergeny śladowe "może zawierać"
+  utworzono_dnia           DateTime @default(now())
+  zaktualizowano_dnia      DateTime @updatedAt
+
+  partie_magazynowe        Partie_Magazynowe[]
+  receptury_docelowe       Receptury[]           @relation("AsortymentDocelowy")
+  skladniki_receptury      Skladniki_Receptury[] @relation("AsortymentSkladnika")
+  rezerwacje               Rezerwacje_Magazynowe[]
+  wartosci_odzywcze        Wartosci_Odzywcze?
+  alergeny                 Alergeny_Asortymentu?
+}
+
+model Wartosci_Odzywcze {
+  id               String    @id @default(uuid())
+  id_asortymentu   String    @unique
+  porcja_g         Float     @default(100) // Podstawa kalkulacji (100g)
+  energia_kj       Float?
+  energia_kcal     Float?
+  tluszcz          Float?
+  kwasy_nasycone   Float?
+  weglowodany      Float?
+  cukry            Float?
+  blonnik          Float?
+  bialko           Float?
+  sol              Float?
+  utworzono_dnia   DateTime  @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  asortyment       Asortyment @relation(fields: [id_asortymentu], references: [id])
+}
+
+model Alergeny_Asortymentu {
+  id               String    @id @default(uuid())
+  id_asortymentu   String    @unique
+  // 14 głównych alergenów UE
+  gluten           Boolean   @default(false)
+  skorupiaki       Boolean   @default(false)
+  jaja             Boolean   @default(false)
+  ryby             Boolean   @default(false)
+  orzeszki_ziemne  Boolean   @default(false)
+  soja             Boolean   @default(false)
+  mleko            Boolean   @default(false)
+  orzechy          Boolean   @default(false)
+  seler            Boolean   @default(false)
+  gorczyca         Boolean   @default(false)
+  sezam            Boolean   @default(false)
+  dwutlenek_siarki Boolean   @default(false)
+  lubin            Boolean   @default(false)
+  mieczaki         Boolean   @default(false)
+  utworzono_dnia   DateTime  @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  asortyment       Asortyment @relation(fields: [id_asortymentu], references: [id])
+}
+
+
+
+model Partie_Magazynowe {
+  id                  String   @id @default(uuid())
+  id_asortymentu      String
+  numer_partii        String   @unique
+  data_produkcji      DateTime?
+  termin_waznosci     DateTime?
+  status_partii       String   // Enum: Dostepna, Kwarantanna, Zablokowana_Kontrola_Jakosci, Zutylizowana
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  asortyment          Asortyment              @relation(fields: [id_asortymentu], references: [id])
+  ruchy_magazynowe    Ruchy_Magazynowe[]
+  rezerwacje          Rezerwacje_Magazynowe[]
+}
+
+model Ruchy_Magazynowe {
+  id                   String   @id @default(uuid())
+  id_partii            String
+  id_zlecenia          String?
+  typ_ruchu            String   // Enum: PZ, WZ, Zuzycie, Przyjecie_Z_Produkcji, Przesuniecie
+  ilosc                Float
+  ilosc_faktyczna      Float?   // Faktycznie zużyta ilość (dla śledzenia strat)
+  cena_jednostkowa     Float?   // Cena netto per JM — wypełniana na PZ
+  waluta               String?  @default("PLN")
+  referencja_dokumentu String?
+  id_uzytkownika       String
+  czy_aktywne          Boolean  @default(true)
+  utworzono_dnia       DateTime @default(now())
+  zaktualizowano_dnia  DateTime @updatedAt
+
+  partia               Partie_Magazynowe    @relation(fields: [id_partii], references: [id])
+  zlecenie             Zlecenia_Produkcyjne? @relation(fields: [id_zlecenia], references: [id])
+  uzytkownik           Uzytkownicy          @relation(fields: [id_uzytkownika], references: [id])
+}
+
+model Receptury {
+  id                        String   @id @default(uuid())
+  id_asortymentu_docelowego String
+  numer_wersji              Int
+  dni_trwalosci             Int?     // Reguła shelf-life: data_produkcji + dni_trwalosci = termin_waznosci
+  wielkosc_produkcji        Float    @default(1)  // Ile JM wyrobu liczymy (rozmiar wsadu)
+  narzut_procent            Float    @default(0)  // Narzut na koszty składników
+  czy_aktywne               Boolean  @default(true)
+  utworzono_dnia            DateTime @default(now())
+  zaktualizowano_dnia       DateTime @updatedAt
+
+  asortyment_docelowy       Asortyment            @relation("AsortymentDocelowy", fields: [id_asortymentu_docelowego], references: [id])
+  skladniki                 Skladniki_Receptury[]
+  zlecenia_produkcyjne      Zlecenia_Produkcyjne[]
+  punkty_kontrolne          Punkty_Kontrolne[]
+
+  @@unique([id_asortymentu_docelowego, numer_wersji])
+}
+
+model Skladniki_Receptury {
+  id                       String   @id @default(uuid())
+  id_receptury             String
+  id_asortymentu_skladnika String
+  ilosc_wymagana           Float
+  procent_strat            Float    @default(0) // Planowany % strat materiałowych
+  czy_pomocnicza           Boolean  @default(false) // Czy ilość podana w jednostce pomocniczej?
+  czy_aktywne              Boolean  @default(true)
+  utworzono_dnia           DateTime @default(now())
+  zaktualizowano_dnia      DateTime @updatedAt
+
+  receptura                Receptury  @relation(fields: [id_receptury], references: [id])
+  asortyment_skladnika     Asortyment @relation("AsortymentSkladnika", fields: [id_asortymentu_skladnika], references: [id])
+}
+
+model Zlecenia_Produkcyjne {
+  id                     String   @id @default(uuid())
+  numer_zlecenia         String?  @unique
+  id_receptury           String
+  planowana_ilosc_wyrobu Float
+  rzeczywista_ilosc_wyrobu Float?
+  status                 String   // Enum: Planowane, W_toku, Zrealizowane, Anulowane
+  czy_aktywne            Boolean  @default(true)
+  utworzono_dnia         DateTime @default(now())
+  zaktualizowano_dnia    DateTime @updatedAt
+
+  receptura              Receptury            @relation(fields: [id_receptury], references: [id])
+  ruchy_magazynowe       Ruchy_Magazynowe[]
+  rezerwacje             Rezerwacje_Magazynowe[]
+  wyniki_kontroli        Wyniki_Kontroli[]
+  przestoje              Rejestr_Przestojow[]
+}
+
+// --- OEE / Przestoje ---
+
+model Rejestr_Przestojow {
+  id                  String   @id @default(uuid())
+  id_zlecenia         String
+  kategoria_przestoju String   // Enum: Awaria, Przezbrojenie, Mycie_CIP, Brak_Surowca, Inne
+  opis                String?
+  czas_rozpoczecia    DateTime
+  czas_zakonczenia    DateTime?
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  zlecenie            Zlecenia_Produkcyjne @relation(fields: [id_zlecenia], references: [id])
+}
+
+// --- QC / HACCP ---
+
+model Punkty_Kontrolne {
+  id                  String   @id @default(uuid())
+  id_receptury        String
+  nazwa_parametru     String   // np. "Temperatura pasteryzacji", "pH mieszanki"
+  jednostka           String   // np. "°C", "pH", "%"
+  wartosc_min         Float?   // Dolna granica akceptacji
+  wartosc_max         Float?   // Górna granica akceptacji
+  czy_wymagany        Boolean  @default(true)
+  kolejnosc           Int      @default(0) // Kolejność wyświetlania
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  receptura           Receptury        @relation(fields: [id_receptury], references: [id])
+  wyniki              Wyniki_Kontroli[]
+}
+
+model Wyniki_Kontroli {
+  id                      String   @id @default(uuid())
+  id_zlecenia             String
+  id_punktu_kontrolnego   String
+  wartosc_zmierzona       Float
+  czy_w_normie            Boolean  // Automatycznie wyliczone: min <= wartość <= max
+  uwagi                   String?
+  czy_aktywne             Boolean  @default(true)
+  utworzono_dnia          DateTime @default(now())
+  zaktualizowano_dnia     DateTime @updatedAt
+
+  zlecenie                Zlecenia_Produkcyjne @relation(fields: [id_zlecenia], references: [id])
+  punkt_kontrolny         Punkty_Kontrolne     @relation(fields: [id_punktu_kontrolnego], references: [id])
+}
+
+// --- Rezerwacje ---
+
+model Rezerwacje_Magazynowe {
+  id                  String   @id @default(uuid())
+  id_partii           String?  // Opcjonalne dla rezerwacji twardych
+  id_asortymentu      String?  // Dodane dla rezerwacji ilościowych (miękkich)
+  id_zlecenia         String
+  ilosc_zarezerwowana Float
+  status              String   @default("Aktywna") // Enum: Aktywna, Zrealizowana, Anulowana
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  partia              Partie_Magazynowe?    @relation(fields: [id_partii], references: [id])
+  asortyment          Asortyment?           @relation(fields: [id_asortymentu], references: [id])
+  zlecenie            Zlecenia_Produkcyjne @relation(fields: [id_zlecenia], references: [id])
+}
+
