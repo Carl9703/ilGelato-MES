@@ -56,6 +56,12 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
     setTimeout(() => searchRef.current?.focus(), 100);
   }, []);
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   const fetchItems = async () => {
     setLoading(true);
     try {

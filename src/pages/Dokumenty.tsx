@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   FileText, Printer, Search, Tag, X, Plus, PackageOpen,
-  ArrowRightCircle, AlertCircle, Save, Eye, Trash2, ChevronDown, ChevronUp, Copy
+  ArrowRightCircle, AlertCircle, Save, Eye, Trash2, ChevronDown, ChevronUp, Copy,
+  CheckCircle, Ban, Clock
 } from "lucide-react";
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
 
@@ -11,9 +12,12 @@ type Pozycja = {
   asortyment: string; kod_towaru: string; numer_partii: string;
   ilosc: number; jednostka: string; termin_waznosci: string | null; data_produkcji: string | null;
 };
+type Kontrahent = { id: string; kod: string; nazwa: string };
 type Dokument = {
   referencja: string; typ: string; data: string; uzytkownik: string;
   numer_zlecenia: string | null; pozycje: Pozycja[]; wartosc_calkowita: number;
+  status: string; // Bufor | Zatwierdzony | Anulowany
+  kontrahent: Kontrahent | null;
 };
 type Etykieta = {
   numer_partii: string; nazwa_produktu: string; kod_towaru: string;
@@ -58,6 +62,22 @@ const typColors: Record<string, string> = {
   WZ: "bg-orange-500/20 text-orange-300",
 };
 
+const statusCfg: Record<string, { bg: string; color: string; border: string; label: string; Icon: React.ElementType }> = {
+  Bufor:        { bg: 'rgba(148,163,184,.1)',  color: '#94a3b8', border: 'rgba(148,163,184,.3)', label: 'BUFOR',        Icon: Clock       },
+  Zatwierdzony: { bg: 'rgba(34,197,94,.12)',   color: '#22c55e', border: 'rgba(34,197,94,.3)',   label: 'ZATWIERDZONY', Icon: CheckCircle },
+  Anulowany:    { bg: 'rgba(239,68,68,.12)',   color: '#ef4444', border: 'rgba(239,68,68,.3)',   label: 'ANULOWANY',    Icon: Ban         },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const cfg = statusCfg[status] || statusCfg.Bufor;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}` }}>
+      <cfg.Icon style={{ width: 10, height: 10 }} />
+      {cfg.label}
+    </span>
+  );
+}
+
 let _keyCounter = 0;
 const genKey = () => String(++_keyCounter);
 
@@ -93,11 +113,16 @@ export default function Dokumenty() {
   // Formularz WZ
   const [wzRows, setWzRows] = useState<WzRow[]>([]);
   const [wzReferencja, setWzReferencja] = useState("");
+  const [wzKontrahentId, setWzKontrahentId] = useState("");
+  const [kontrahenci, setKontrahenci] = useState<Kontrahent[]>([]);
 
   // Podgląd dokumentu
   const [previewDocRef, setPreviewDocRef] = useState<string | null>(null);
   const [previewDocData, setPreviewDocData] = useState<any>(null);
   const [previewDocLoading, setPreviewDocLoading] = useState(false);
+
+  // Akcje na dokumentach
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const openDocPreview = async (ref: string) => {
     setPreviewDocRef(ref);
@@ -108,14 +133,56 @@ export default function Dokumenty() {
     } catch (e) { console.error(e); } finally { setPreviewDocLoading(false); }
   };
 
+  const handleZatwierdz = async (ref: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setActionLoading(ref);
+    setError("");
+    try {
+      const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/zatwierdz`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setSuccess(`Dokument ${ref} zatwierdzony.`);
+      setTimeout(() => setSuccess(""), 4000);
+      fetchDokumenty();
+      if (previewDocRef === ref) openDocPreview(ref);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleAnuluj = async (ref: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setActionLoading(ref);
+    setError("");
+    try {
+      const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/anuluj`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setSuccess(`Dokument ${ref} anulowany.`);
+      setTimeout(() => setSuccess(""), 4000);
+      fetchDokumenty();
+      if (previewDocRef === ref) openDocPreview(ref);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   useEffect(() => { fetchDokumenty(); }, [filter]);
 
   useEffect(() => {
-    if (!previewDocRef) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setPreviewDocRef(null); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (previewDocRef) { setPreviewDocRef(null); return; }
+      if (showSelektor) { setShowSelektor(false); return; }
+      if (showPz) { setShowPz(false); setError(""); return; }
+      if (showWz) { setShowWz(false); setError(""); return; }
+      if (showEtykiety) { setShowEtykiety(false); return; }
+    };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [previewDocRef]);
+  }, [previewDocRef, showSelektor, showPz, showWz, showEtykiety]);
 
   // Gdy zmienia się referencja lub nextPzNumber, odśwież auto-uzupełnione numery partii
   useEffect(() => {
@@ -233,19 +300,24 @@ export default function Dokumenty() {
       });
       if (!res.ok) throw new Error((await res.json()).error);
       setShowPz(false);
-      setSuccess("Dokument PZ został wystawiony.");
+      setSuccess("Dokument PZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.");
       fetchDokumenty();
-      setTimeout(() => setSuccess(""), 3000);
+      setTimeout(() => setSuccess(""), 6000);
     } catch (err: any) { setError(err.message); }
   };
 
   // ─── Otwieranie WZ ─────────────────────────────────────────────────────────
 
-  const openWzModal = () => {
+  const openWzModal = async () => {
     setWzRows([]);
     setWzReferencja("");
+    setWzKontrahentId("");
     setError("");
     setShowWz(true);
+    try {
+      const res = await fetch("/api/kontrahenci");
+      if (res.ok) setKontrahenci(await res.json());
+    } catch {}
   };
 
   const openWzSelektor = () => {
@@ -306,18 +378,19 @@ export default function Dokumenty() {
     if (wzRows.length === 0) { setError("Dodaj co najmniej jedną pozycję."); return; }
     const missing = wzRows.find(r => !r.id_partii || !r.ilosc);
     if (missing) { setError(`Pozycja "${missing.nazwa}" wymaga wybrania partii i podania ilości.`); return; }
+    if (!wzKontrahentId) { setError("Wybierz kontrahenta (odbiorcę)."); return; }
     try {
       const items = wzRows.map(r => ({ id_partii: r.id_partii, ilosc: parseFloat(r.ilosc) }));
       const res = await fetch("/api/magazyn/wz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, referencja_zewnetrzna: wzReferencja || undefined }),
+        body: JSON.stringify({ items, referencja_zewnetrzna: wzReferencja || undefined, id_kontrahenta: wzKontrahentId }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
       setShowWz(false);
-      setSuccess("Dokument WZ został wystawiony.");
+      setSuccess("Dokument WZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.");
       fetchDokumenty();
-      setTimeout(() => setSuccess(""), 3000);
+      setTimeout(() => setSuccess(""), 6000);
     } catch (err: any) { setError(err.message); }
   };
 
@@ -733,13 +806,31 @@ export default function Dokumenty() {
                   </div>
                 )}
 
-                <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
-                  <label className="block text-slate-400 text-xs font-bold uppercase mb-2">Numer zewnętrzny — opcjonalnie</label>
-                  <input
-                    type="text" value={wzReferencja} onChange={e => setWzReferencja(e.target.value)}
-                    placeholder="np. ZAM-2026/03/001"
-                    className="w-full md:w-1/2 bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 font-mono"
-                  />
+                <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-slate-400 text-xs font-bold uppercase mb-2">
+                      Kontrahent (odbiorca) <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      required
+                      value={wzKontrahentId}
+                      onChange={e => setWzKontrahentId(e.target.value)}
+                      className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 text-sm"
+                    >
+                      <option value="">-- wybierz kontrahenta --</option>
+                      {kontrahenci.map(k => (
+                        <option key={k.id} value={k.id}>{k.kod} — {k.nazwa}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 text-xs font-bold uppercase mb-2">Numer zewnętrzny — opcjonalnie</label>
+                    <input
+                      type="text" value={wzReferencja} onChange={e => setWzReferencja(e.target.value)}
+                      placeholder="np. ZAM-2026/03/001"
+                      className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 font-mono"
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -887,8 +978,25 @@ export default function Dokumenty() {
                     previewDocData.typ === 'RW' ? 'badge-danger' : 'badge-warn'
                   }`}>{previewDocData.typ}</span>
                 )}
+                {previewDocData?.status && <StatusBadge status={previewDocData.status} />}
               </div>
               <div className="flex items-center gap-2">
+                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status === "Bufor" && (
+                  <button onClick={() => handleZatwierdz(previewDocRef!)}
+                    disabled={actionLoading === previewDocRef}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
+                    style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>
+                    <CheckCircle className="w-3.5 h-3.5" /> Zatwierdź
+                  </button>
+                )}
+                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status !== "Anulowany" && (
+                  <button onClick={() => handleAnuluj(previewDocRef!)}
+                    disabled={actionLoading === previewDocRef}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
+                    style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
+                    <Ban className="w-3.5 h-3.5" /> Anuluj
+                  </button>
+                )}
                 {previewDocData && (
                   <button onClick={() => handlePrintAllLabels(previewDocRef!)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium btn-hover-effect"
@@ -904,12 +1012,29 @@ export default function Dokumenty() {
 
             {/* Meta */}
             {previewDocData && (
-              <div className="flex items-center gap-6 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: '#0f172a' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Data: <span className="text-white font-medium">{fmtFull(previewDocData.data)}</span></span>
-                <span style={{ color: 'var(--text-muted)' }}>Wystawił: <span className="text-white font-medium">{previewDocData.uzytkownik}</span></span>
+              <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: '#0f172a' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Wystawiono: <span className="text-white font-medium">{fmtFull(previewDocData.data)}</span></span>
+                <span style={{ color: 'var(--text-muted)' }}>Operator: <span className="text-white font-medium">{previewDocData.uzytkownik}</span></span>
+                {previewDocData.data_zatwierdzenia && (
+                  <span style={{ color: 'var(--text-muted)' }}>Zatwierdził: <span className="font-medium" style={{ color: '#22c55e' }}>{previewDocData.uzytkownik_zatwierdzenia}</span> · {fmtFull(previewDocData.data_zatwierdzenia)}</span>
+                )}
+                {previewDocData.data_anulowania && (
+                  <span style={{ color: 'var(--text-muted)' }}>Anulował: <span className="font-medium" style={{ color: '#ef4444' }}>{previewDocData.uzytkownik_anulowania}</span> · {fmtFull(previewDocData.data_anulowania)}</span>
+                )}
                 {previewDocData.numer_zlecenia && (
                   <span style={{ color: 'var(--text-muted)' }}>ZP: <span className="font-mono font-medium" style={{ color: 'var(--text-code)' }}>{previewDocData.numer_zlecenia}</span></span>
                 )}
+                {previewDocData.kontrahent && (
+                  <span style={{ color: 'var(--text-muted)' }}>Kontrahent: <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{previewDocData.kontrahent.kod} — {previewDocData.kontrahent.nazwa}</span></span>
+                )}
+              </div>
+            )}
+            {/* Error w podglądzie */}
+            {error && previewDocRef && (
+              <div className="px-5 py-2 shrink-0 bg-red-500/10 border-b border-red-500/20 text-red-300 text-xs flex items-start gap-2">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span className="whitespace-pre-line">{error}</span>
+                <button onClick={() => setError("")} className="ml-auto"><X className="w-3 h-3" /></button>
               </div>
             )}
 
@@ -1022,8 +1147,8 @@ export default function Dokumenty() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-                {["Typ","Nr dokumentu","Data · Operator","Wartość","ZP","Akcje"].map((h, i) => (
-                  <th key={h} style={{ padding: '6px 10px', textAlign: i >= 3 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
+                {["Typ","Status","Nr dokumentu","Data · Operator","Kontrahent","Wartość","ZP","Akcje"].map((h, i) => (
+                  <th key={h} style={{ padding: '6px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -1033,9 +1158,12 @@ export default function Dokumenty() {
                 const typBg: Record<string,string>    = { PZ:'rgba(34,197,94,.12)', PW:'rgba(56,189,248,.12)', RW:'rgba(239,68,68,.12)', WZ:'rgba(249,115,22,.12)' };
                 const color = typColor[doc.typ] || 'var(--text-muted)';
                 const bg    = typBg[doc.typ]    || 'transparent';
+                const isLoading = actionLoading === doc.referencja;
+                const canApprove = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status === "Bufor";
+                const canCancel  = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status !== "Anulowany";
                 return (
                   <tr key={doc.referencja} onClick={() => openDocPreview(doc.referencja)}
-                    style={{ borderBottom: '1px solid var(--border-dim)', cursor: 'pointer', transition: 'background .1s' }}
+                    style={{ borderBottom: '1px solid var(--border-dim)', cursor: 'pointer', transition: 'background .1s', opacity: doc.status === 'Anulowany' ? 0.55 : 1 }}
                     onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
 
@@ -1044,6 +1172,11 @@ export default function Dokumenty() {
                       <span style={{ display:'inline-block', padding:'1px 7px', borderRadius:3, fontSize:10, fontWeight:800, letterSpacing:'0.06em', background: bg, color, border:`1px solid ${color}40` }}>
                         {doc.typ}
                       </span>
+                    </td>
+
+                    {/* Status */}
+                    <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                      <StatusBadge status={doc.status || 'Zatwierdzony'} />
                     </td>
 
                     {/* Nr dokumentu */}
@@ -1059,6 +1192,13 @@ export default function Dokumenty() {
                         {fmtFull(doc.data)}
                       </span>
                       <span style={{ fontSize:11, color:'var(--text-muted)', marginLeft:6 }}>· {doc.uzytkownik}</span>
+                    </td>
+
+                    {/* Kontrahent */}
+                    <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                      {doc.kontrahent
+                        ? <span style={{ fontSize: 11 }}><span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--accent)', fontWeight: 700 }}>{doc.kontrahent.kod}</span> <span style={{ color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span></span>
+                        : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
                     </td>
 
                     {/* Wartość */}
@@ -1078,19 +1218,35 @@ export default function Dokumenty() {
                     {/* Akcje */}
                     <td style={{ padding: '5px 10px' }}>
                       <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
-                        {doc.typ === "PZ" && (
-                          <button onClick={() => handleCopyDoc(doc)} title="Kopiuj do PZ"
+                        {canApprove && (
+                          <button onClick={e => handleZatwierdz(doc.referencja, e)} title="Zatwierdź"
+                            disabled={isLoading}
+                            className="p-1 rounded btn-hover-effect"
+                            style={{ color:'#22c55e', background:'rgba(34,197,94,0.1)', border:'1px solid rgba(34,197,94,0.3)' }}>
+                            {isLoading ? <div className="w-3.5 h-3.5 border border-green-500 border-t-transparent rounded-full animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        {canCancel && (
+                          <button onClick={e => handleAnuluj(doc.referencja, e)} title="Anuluj dokument"
+                            disabled={isLoading}
+                            className="p-1 rounded btn-hover-effect"
+                            style={{ color:'#ef4444', background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)' }}>
+                            {isLoading ? <div className="w-3.5 h-3.5 border border-red-500 border-t-transparent rounded-full animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        {doc.typ === "PZ" && doc.status !== "Anulowany" && (
+                          <button onClick={e => { e.stopPropagation(); handleCopyDoc(doc); }} title="Kopiuj do PZ"
                             className="p-1 rounded btn-hover-effect"
                             style={{ color:'var(--warn)', background:'rgba(245,158,11,0.08)', border:'1px solid rgba(245,158,11,0.2)' }}>
                             <Copy className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button onClick={() => openDocPreview(doc.referencja)} title="Podgląd"
+                        <button onClick={e => { e.stopPropagation(); openDocPreview(doc.referencja); }} title="Podgląd"
                           className="p-1 rounded btn-hover-effect"
                           style={{ color:'var(--accent)', background:'rgba(59,130,246,0.08)', border:'1px solid rgba(59,130,246,0.2)' }}>
                           <Eye className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={() => handlePrintDoc(doc)} title="Drukuj"
+                        <button onClick={e => { e.stopPropagation(); handlePrintDoc(doc); }} title="Drukuj"
                           className="p-1 rounded btn-hover-effect"
                           style={{ color:'var(--text-secondary)', background:'var(--bg-hover)', border:'1px solid var(--border)' }}>
                           <Printer className="w-3.5 h-3.5" />

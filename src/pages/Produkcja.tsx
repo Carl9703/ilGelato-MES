@@ -11,7 +11,7 @@ type SkladnikReceptury = {
   asortyment_skladnika: Asortyment; 
   sugerowane_partie?: { id: string; numer_partii: string; termin_waznosci: string | null; stan: number }[] 
 };
-type Receptura = { id: string; numer_wersji: number; asortyment_docelowy: Asortyment; skladniki: SkladnikReceptury[]; utworzono_dnia: string };
+type Receptura = { id: string; numer_wersji: number; wielkosc_produkcji: number; asortyment_docelowy: Asortyment; skladniki: SkladnikReceptury[]; utworzono_dnia: string };
 type RuchMagazynowy = { id: string; typ_ruchu: string; ilosc: number; referencja_dokumentu: string | null; utworzono_dnia: string; partia: { id_asortymentu: string; numer_partii: string; termin_waznosci: string | null; asortyment: Asortyment } };
 type Zlecenie = { 
   id: string; 
@@ -26,7 +26,6 @@ type Zlecenie = {
   rezerwacje?: any[];
   numer_partii_wyrobu?: string;
 };
-type PunktKontrolny = { id: string; nazwa_parametru: string; jednostka: string; wartosc_min: number | null; wartosc_max: number | null; czy_wymagany: boolean };
 
 export default function Produkcja() {
   const [zlecenia, setZlecenia] = useState<Zlecenie[]>([]);
@@ -43,11 +42,6 @@ export default function Produkcja() {
   const [recepturaId, setRecepturaId] = useState("");
   const [ilosc, setIlosc] = useState(1);
   const [filter, setFilter] = useState<string>("all");
-  // QC state
-  const [qcPunkty, setQcPunkty] = useState<PunktKontrolny[]>([]);
-  const [qcWyniki, setQcWyniki] = useState<{ [id: string]: string }>({});
-  const [qcUwagi, setQcUwagi] = useState<{ [id: string]: string }>({});
-  const [showQc, setShowQc] = useState(false);
   const [pickListZlecenie, setPickListZlecenie] = useState<Zlecenie | null>(null);
   const [activeTab, setActiveTab] = useState<"product" | "materials">("product");
   const [viewZlecenie, setViewZlecenie] = useState<Zlecenie | null>(null);
@@ -85,11 +79,19 @@ export default function Produkcja() {
   useEffect(() => { fetchData(); }, []);
 
   useEffect(() => {
-    if (!previewDocRef) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setPreviewDocRef(null); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (previewDocRef) { setPreviewDocRef(null); return; }
+      if (activePicker) { setActivePicker(null); return; }
+      if (showSelektor) { setShowSelektor(false); return; }
+      if (itemToRealize) { setItemToRealize(null); return; }
+      if (pickListZlecenie) { setPickListZlecenie(null); return; }
+      if (viewZlecenie) { setViewZlecenie(null); return; }
+      if (isAdding) { setIsAdding(false); return; }
+    };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [previewDocRef]);
+  }, [previewDocRef, activePicker, showSelektor, itemToRealize, pickListZlecenie, viewZlecenie, isAdding]);
 
   const fetchData = async () => {
     try {
@@ -146,18 +148,11 @@ export default function Produkcja() {
 
     setSelectedProduct(product);
     // Wybierz najnowszą wersję domyślnie
-    setSelectedRecId(availableRecs[0].id);
-    setPlanowanaIlosc("1");
+    const defaultRec = availableRecs[0];
+    setSelectedRecId(defaultRec.id);
+    setPlanowanaIlosc(String(defaultRec.wielkosc_produkcji ?? 1));
     setShowSelektor(false);
     setIsAdding(true);
-  };
-
-  const updateItemQty = (id: string, qty: string) => {
-    setSelectedItems(prev => prev.map(item => item.id_asortymentu === id ? { ...item, ilosc: qty } : item));
-  };
-
-  const removeItem = (id: string) => {
-    setSelectedItems(prev => prev.filter(item => item.id_asortymentu !== id));
   };
 
   const handleStartProduction = async (z: Zlecenie) => {
@@ -170,7 +165,7 @@ export default function Produkcja() {
   };
 
   const handleRealizuj = async (z: Zlecenie) => {
-    setError(""); setItemToRealize(z); setRzeczywistaIlosc(z.planowana_ilosc_wyrobu.toString()); setShowQc(false);
+    setError(""); setItemToRealize(z); setRzeczywistaIlosc(z.planowana_ilosc_wyrobu.toString());
     const initialValues: { [ingredId: string]: Array<{ id_partii: string, ilosc: number }> } = {};
     
     z.receptura?.skladniki?.forEach(s => {
@@ -193,7 +188,7 @@ export default function Produkcja() {
 
       for (const p of sortedBatches) {
         if (remaining <= 0) break;
-        const stan = s.czy_pomocnicza && s.asortyment_skladnika.przelicznik_jednostki ? (p.stan * s.asortyment_skladnika.przelicznik_jednostki) : p.stan;
+        const stan = p.stan;
         if (stan <= 0) continue;
         
         const take = Math.round(Math.min(stan, remaining) * 100) / 100;
@@ -206,11 +201,6 @@ export default function Produkcja() {
     });
 
     setZuzytePartie(initialValues);
-    // Load QC points
-    try {
-      const res = await fetch(`/api/punkty-kontrolne/${z.id_receptury}`);
-      if (res.ok) { const p = await res.json(); setQcPunkty(p); setQcWyniki({}); setQcUwagi({}); }
-    } catch {}
   };
 
   const confirmRealizuj = async () => {
@@ -218,17 +208,7 @@ export default function Produkcja() {
     const qtyStr = rzeczywistaIlosc.toString().replace(",", ".");
     const qtyNum = parseFloat(qtyStr);
     if (isNaN(qtyNum) || qtyNum <= 0) { setError("Ilość musi być > 0"); return; }
-    // Save QC results first if any
-    if (qcPunkty.length > 0) {
-      const wyniki = qcPunkty.map(p => ({ id_punktu_kontrolnego: p.id, wartosc_zmierzona: qcWyniki[p.id] || "0", uwagi: qcUwagi[p.id] || "" }));
-      const missing = qcPunkty.filter(p => p.czy_wymagany && !qcWyniki[p.id]);
-      if (missing.length > 0) { setError(`Wypełnij wymagane pomiary QC: ${missing.map(p => p.nazwa_parametru).join(", ")}`); return; }
-      try {
-        const res = await fetch("/api/wyniki-kontroli", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id_zlecenia: itemToRealize.id, wyniki }) });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
-      } catch (err: any) { setError(err.message); return; }
-    }
-    const payload = Object.values(zuzytePartie).flat().filter(p => p.id_partii && p.ilosc > 0);
+    const payload = (Object.values(zuzytePartie) as Array<Array<{ id_partii: string; ilosc: number }>>).flatMap(arr => arr).filter(p => p.id_partii && p.ilosc > 0);
     try {
       const res = await fetch(`/api/produkcja/${itemToRealize.id}/realizuj`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rzeczywista_ilosc: qtyNum, zuzyte_partie: payload }) });
       if (!res.ok) { const d = await res.json(); setError(d.error); return; }
@@ -238,6 +218,68 @@ export default function Produkcja() {
 
   const handleDelete = async (id: string) => {
     try { await fetch(`/api/produkcja/${id}`, { method: "DELETE" }); fetchData(); } catch {}
+  };
+
+  const handlePrintZP = (z: Zlecenie) => {
+    const win = window.open("", "_blank", "width=900,height=700");
+    if (!win) return;
+    const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
+    const statusLabel: Record<string, string> = { Planowane: "Planowane", W_toku: "W toku", Zrealizowane: "Zrealizowane", Anulowane: "Anulowane" };
+
+    let skladnikiHTML = "";
+    if (z.status === "Planowane") {
+      skladnikiHTML = (z.receptura?.skladniki || []).map(s => {
+        const qty = (s.ilosc_wymagana * z.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100)).toFixed(3);
+        const partia = s.sugerowane_partie?.[0]?.numer_partii || "—";
+        return `<tr><td>${s.asortyment_skladnika?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${partia}</td><td style="text-align:right;font-weight:700">${qty} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
+      }).join("");
+    } else if (z.status === "W_toku") {
+      const skladniki = z.receptura?.skladniki || [];
+      skladnikiHTML = skladniki.map(s => {
+        const rezerwacje = (z.rezerwacje || []).filter((r: any) =>
+          (r.id_partii && r.partia?.id_asortymentu === s.asortyment_skladnika?.id) || (r.id_asortymentu === s.asortyment_skladnika?.id)
+        );
+        const suma = rezerwacje.reduce((acc: number, r: any) => acc + (r.ilosc_zarezerwowana || 0), 0);
+        const partia = rezerwacje[0]?.partia?.numer_partii || "Rez. ilościowa";
+        return `<tr><td>${s.asortyment_skladnika?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${partia}</td><td style="text-align:right;font-weight:700">${suma.toFixed(3)} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
+      }).join("");
+    } else {
+      skladnikiHTML = (z.ruchy_magazynowe || []).filter(r => r.typ_ruchu === "Zuzycie").map(r =>
+        `<tr><td>${r.partia?.asortyment?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${r.partia?.numer_partii}</td><td style="text-align:right;font-weight:700;color:#16a34a">${Math.abs(r.ilosc).toFixed(3)} ${r.partia?.asortyment?.jednostka_miary}</td></tr>`
+      ).join("");
+    }
+
+    const wyrobHTML = z.numer_partii_wyrobu
+      ? `<tr><td>Nr partii wyrobu</td><td style="font-family:monospace;color:#3b82f6">${z.numer_partii_wyrobu}</td></tr>` : "";
+
+    win.document.write(`<!DOCTYPE html><html><head><title>${z.numer_zlecenia || "ZP"}</title><style>
+      body{font-family:Inter,system-ui,sans-serif;padding:40px;color:#1e293b;max-width:800px;margin:0 auto}
+      h1{font-size:24px;margin:0 0 4px}
+      .meta{color:#64748b;font-size:13px;margin-bottom:24px}
+      .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;margin-left:8px;background:#e0e7ff;color:#4338ca}
+      table{width:100%;border-collapse:collapse;margin-top:16px}
+      th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;color:#64748b}
+      td{padding:8px;border-bottom:1px solid #e5e7eb}
+      .section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:24px 0 4px}
+      .info-table td{border:none;padding:4px 8px}
+      .info-table td:first-child{color:#64748b;width:160px}
+      .info-table td:last-child{font-weight:700}
+      @media print{body{padding:20px}@page{size:A4;margin:15mm}}
+    </style></head><body>
+    <h1>${z.numer_zlecenia || "ZP-TEMP"} <span class="badge">${statusLabel[z.status] || z.status}</span></h1>
+    <div class="meta">${z.receptura?.asortyment_docelowy?.nazwa} · ${z.receptura?.asortyment_docelowy?.kod_towaru} · Wystawiono: ${fmt(z.utworzono_dnia)}</div>
+    <div class="section-title">Parametry zlecenia</div>
+    <table class="info-table"><tbody>
+      <tr><td>Plan</td><td>${z.planowana_ilosc_wyrobu} ${z.receptura?.asortyment_docelowy?.jednostka_miary}</td></tr>
+      ${z.rzeczywista_ilosc_wyrobu != null ? `<tr><td>Wykonano</td><td style="color:#16a34a">${z.rzeczywista_ilosc_wyrobu} ${z.receptura?.asortyment_docelowy?.jednostka_miary}</td></tr>` : ""}
+      ${wyrobHTML}
+      <tr><td>Status</td><td>${statusLabel[z.status] || z.status}</td></tr>
+    </tbody></table>
+    <div class="section-title">Zapotrzebowanie i zużycie surowców</div>
+    <table><thead><tr><th>Surowiec</th><th>Nr Partii</th><th style="text-align:right">Ilość</th></tr></thead><tbody>${skladnikiHTML}</tbody></table>
+    </body></html>`);
+    win.document.close();
+    win.print();
   };
 
   const getStatusStyle = (s: string) => {
@@ -253,7 +295,7 @@ export default function Produkcja() {
   const filtered = zlecenia.filter(z => filter === "all" || z.status === filter);
 
   const handleRozlicz = async () => {
-    const pozycje = Object.entries(planIlosci)
+    const pozycje = (Object.entries(planIlosci) as [string, string][])
       .map(([id_receptury, ilosc]) => ({ id_receptury, ilosc_produkcji: parseFloat(ilosc) || 0 }))
       .filter(p => p.ilosc_produkcji > 0);
     if (pozycje.length === 0) return;
@@ -532,7 +574,11 @@ export default function Produkcja() {
                           <label className="text-slate-400 text-xs font-semibold">Wersja receptury</label>
                           <select
                             value={selectedRecId}
-                            onChange={(e) => setSelectedRecId(e.target.value)}
+                            onChange={(e) => {
+                              const rec = receptury.find(r => r.id === e.target.value);
+                              setSelectedRecId(e.target.value);
+                              if (rec) setPlanowanaIlosc(String(rec.wielkosc_produkcji ?? 1));
+                            }}
                             className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500 transition-colors font-semibold appearance-none"
                           >
                             {receptury
@@ -634,11 +680,9 @@ export default function Produkcja() {
             </thead>
             <tbody>
               {filtered.map(z => (
-                <tr key={z.id}>
+                <tr key={z.id} className="cursor-pointer" onClick={() => setViewZlecenie(z)}>
                   <td className="mono font-medium" style={{ color: 'var(--text-code)' }}>
-                    <button onClick={() => setViewZlecenie(z)} className="hover:underline text-left" style={{ color: 'var(--text-code)' }}>
-                      {z.numer_zlecenia || z.id.substring(0, 8)}
-                    </button>
+                    {z.numer_zlecenia || z.id.substring(0, 8)}
                   </td>
                   <td className="text-white font-medium">{z.receptura.asortyment_docelowy.nazwa}</td>
                   <td>
@@ -651,11 +695,8 @@ export default function Produkcja() {
                     {z.rzeczywista_ilosc_wyrobu ?? '—'}
                   </td>
                   <td className="mono text-xs" style={{ color: 'var(--text-secondary)' }}>{new Date(z.utworzono_dnia).toLocaleDateString("pl-PL")}</td>
-                  <td>
+                  <td onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => setViewZlecenie(z)} className="px-3 py-1.5 rounded text-xs font-medium btn-hover-effect" style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
-                        <FileText className="w-3.5 h-3.5 inline mr-1" />Szczegóły
-                      </button>
                       {z.status === "Planowane" && (
                         <button onClick={() => handleStartProduction(z)} className="px-3 py-1.5 rounded text-xs font-medium btn-hover-effect text-white" style={{ background: '#d97706' }}>
                           <Clock className="w-3.5 h-3.5 inline mr-1" />Rozpocznij
@@ -699,7 +740,7 @@ export default function Produkcja() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => window.print()} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155] transition-colors" title="Drukuj">
+                <button onClick={() => handlePrintZP(viewZlecenie)} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155] transition-colors" title="Drukuj">
                   <Printer className="w-5 h-5" />
                 </button>
                 <button onClick={() => setViewZlecenie(null)} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155] transition-colors">
@@ -840,7 +881,7 @@ export default function Produkcja() {
                         </tr>
                       </thead>
                       <tbody>
-                        {Array.from(new Set((viewZlecenie.ruchy_magazynowe || []).map(r => r.referencja_dokumentu))).filter(Boolean).map(ref => {
+                        {Array.from(new Set((viewZlecenie.ruchy_magazynowe || []).map(r => r.referencja_dokumentu))).filter((ref): ref is string => Boolean(ref)).map(ref => {
                           const r = (viewZlecenie.ruchy_magazynowe || []).find(x => x.referencja_dokumentu === ref)!;
                           const isPW = r.typ_ruchu?.includes("Przyjecie");
                           return (
@@ -863,16 +904,6 @@ export default function Produkcja() {
           </div>
         </div>
       )}
-
-      {/* Professional Print Styles */}
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .print-section, .print-section * { visibility: visible; }
-          .print-section { position: absolute; left: 0; top: 0; width: 100%; height: 100%; padding: 2cm; background: white; color: black; }
-          .no-print { display: none !important; }
-        }
-      `}</style>
 
       {/* ═══ LISTA POBRAŃ (PICK LIST) MODAL ═══════════════════════════════════ */}
       {pickListZlecenie && (
@@ -1088,43 +1119,6 @@ export default function Produkcja() {
                     </div>
                   </div>
 
-                  {/* Quality Control Section */}
-                  <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
-                    <div className="flex justify-between items-center mb-3">
-                      <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest">Kontrola jakości</h4>
-                      {qcPunkty.length > 0 && <span className="badge badge-warn">Wymagane parametry</span>}
-                    </div>
-
-                    <div className="space-y-3">
-                      {qcPunkty.map(p => (
-                        <div key={p.id} className="bg-[#1e293b] rounded-xl p-3 border border-[#334155]">
-                          <div className="flex justify-between items-center mb-2">
-                            <span className="text-white font-semibold text-sm">{p.nazwa_parametru} {p.czy_wymagany && <span className="text-red-400 ml-1">*</span>}</span>
-                            <span className="text-slate-500 text-xs">{p.wartosc_min || "—"} – {p.wartosc_max || "—"} {p.jednostka}</span>
-                          </div>
-                          <div className="flex gap-2">
-                             <div className="flex-1 relative">
-                               <input
-                                 type="text"
-                                 placeholder="Wynik"
-                                 className="w-full bg-[#334155] border border-[#475569] text-white rounded-lg px-3 py-2 text-sm font-mono font-bold outline-none focus:border-amber-500 transition-colors"
-                                 value={qcWyniki[p.id] || ""}
-                                 onChange={(e) => setQcWyniki({ ...qcWyniki, [p.id]: e.target.value })}
-                               />
-                             </div>
-                             <input
-                               type="text"
-                               placeholder="Uwagi (opcjonalnie)"
-                               className="flex-[2] bg-[#334155] border border-[#475569] text-white rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 transition-colors"
-                               value={qcUwagi[p.id] || ""}
-                               onChange={(e) => setQcUwagi({ ...qcUwagi, [p.id]: e.target.value })}
-                             />
-                          </div>
-                        </div>
-                      ))}
-                      {qcPunkty.length === 0 && <div className="text-center py-4 text-slate-600 text-xs">Brak zdefiniowanych punktów kontrolnych</div>}
-                    </div>
-                  </div>
                </div>
 
                {/* Right: Ingredients Allocation */}
@@ -1141,7 +1135,7 @@ export default function Produkcja() {
                       const ingId = s.asortyment_skladnika?.id;
                       const allocated = zuzytePartie[ingId] || [];
                       const allocatedSum = allocated.reduce((sum, p) => sum + p.ilosc, 0);
-                      const required = Math.round(s.ilosc_wymagana * parseFloat(rzeczywistaIlosc || "0") * (1 + (s.procent_strat || 0) / 100) * 100) / 100;
+                      const required = Math.round(s.ilosc_wymagana * itemToRealize.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100) * 100) / 100;
                       const isComplete = Math.abs(allocatedSum - required) < 0.001;
 
                       return (
@@ -1223,47 +1217,83 @@ export default function Produkcja() {
                     <div className="flex-1 overflow-y-auto p-5 space-y-3">
                        <div className="bg-[#0f172a] border border-[#334155] rounded-xl p-3 flex justify-between items-center">
                           <span className="text-slate-400 text-sm">Wymagane do alokacji:</span>
-                          <span className="text-white font-mono font-bold">
-                             {(activePicker.skladnik.ilosc_wymagana * parseFloat(rzeczywistaIlosc || "0") * (1 + (activePicker.skladnik.procent_strat || 0) / 100)).toFixed(3)}
-                             <span className="text-slate-500 text-xs ml-1">{activePicker.skladnik.asortyment_skladnika.jednostka_miary}</span>
-                          </span>
+                          <div className="flex items-center gap-3">
+                             <button
+                               onClick={() => {
+                                 const req = Math.round(activePicker.skladnik.ilosc_wymagana * itemToRealize.planowana_ilosc_wyrobu * (1 + (activePicker.skladnik.procent_strat || 0) / 100) * 1000) / 1000;
+                                 const sorted = [...(activePicker.skladnik.sugerowane_partie || [])].sort((a, b) => {
+                                   if (!a.termin_waznosci) return 1;
+                                   if (!b.termin_waznosci) return -1;
+                                   return new Date(a.termin_waznosci).getTime() - new Date(b.termin_waznosci).getTime();
+                                 });
+                                 let remaining = req;
+                                 const allocation: { id_partii: string; ilosc: number }[] = [];
+                                 for (const p of sorted) {
+                                   if (remaining <= 0) break;
+                                   if (p.stan <= 0) continue;
+                                   const take = Math.round(Math.min(p.stan, remaining) * 1000) / 1000;
+                                   if (take > 0) { allocation.push({ id_partii: p.id, ilosc: take }); remaining = Math.round((remaining - take) * 1000) / 1000; }
+                                 }
+                                 setZuzytePartie(prev => ({ ...prev, [activePicker.ingredId]: allocation }));
+                               }}
+                               className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+                             >
+                               Resetuj FEFO
+                             </button>
+                             <span className="text-white font-mono font-bold">
+                               {(activePicker.skladnik.ilosc_wymagana * itemToRealize.planowana_ilosc_wyrobu * (1 + (activePicker.skladnik.procent_strat || 0) / 100)).toFixed(3)}
+                               <span className="text-slate-500 text-xs ml-1">{activePicker.skladnik.asortyment_skladnika.jednostka_miary}</span>
+                             </span>
+                          </div>
                        </div>
 
-                       {activePicker.skladnik.sugerowane_partie?.map(p => {
-                          const currentAllocation = zuzytePartie[activePicker.ingredId]?.find(x => x.id_partii === p.id)?.ilosc || 0;
-                          return (
-                            <div key={p.id} className="bg-[#0f172a] border border-[#334155] rounded-xl p-4 flex justify-between items-center hover:border-[#475569] transition-colors">
-                               <div>
-                                  <div className="mono font-semibold text-white">{p.numer_partii}</div>
-                                  <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
-                                     <span>Ważn: {p.termin_waznosci ? new Date(p.termin_waznosci).toLocaleDateString() : "—"}</span>
-                                     <span>·</span>
-                                     <span>SOH: <span className="text-slate-300">{p.stan.toFixed(3)}</span></span>
-                                  </div>
-                               </div>
-                               <input
-                                 type="text"
-                                 placeholder="0.000"
-                                 className="w-28 bg-[#334155] border border-[#475569] text-blue-300 rounded-lg px-3 py-2 text-right font-mono font-bold outline-none focus:border-blue-500 transition-colors"
-                                 value={currentAllocation || ""}
-                                 onChange={(e) => {
-                                   const val = parseFloat(e.target.value.replace(",", "."));
-                                   const newZuzyte = { ...zuzytePartie };
-                                   const list = [...(newZuzyte[activePicker.ingredId] || [])];
-                                   const idx = list.findIndex(x => x.id_partii === p.id);
-                                   if (isNaN(val) || val <= 0) {
-                                      if (idx >= 0) list.splice(idx, 1);
-                                   } else {
-                                      if (idx >= 0) list[idx].ilosc = val;
-                                      else list.push({ id_partii: p.id, ilosc: val });
-                                   }
-                                   newZuzyte[activePicker.ingredId] = list;
-                                   setZuzytePartie(newZuzyte);
-                                 }}
-                               />
-                            </div>
-                          );
-                       })}
+                       {(() => {
+                          const pickerRequired = Math.round(activePicker.skladnik.ilosc_wymagana * itemToRealize.planowana_ilosc_wyrobu * (1 + (activePicker.skladnik.procent_strat || 0) / 100) * 1000) / 1000;
+                          return activePicker.skladnik.sugerowane_partie?.map(p => {
+                            const currentAllocation = zuzytePartie[activePicker.ingredId]?.find(x => x.id_partii === p.id)?.ilosc || 0;
+                            const sumOthers = (zuzytePartie[activePicker.ingredId] || []).filter(x => x.id_partii !== p.id).reduce((s, x) => s + x.ilosc, 0);
+                            const maxForThis = Math.max(0, Math.min(p.stan, pickerRequired - sumOthers));
+                            return (
+                              <div key={p.id} className="bg-[#0f172a] border border-[#334155] rounded-xl p-4 flex justify-between items-center hover:border-[#475569] transition-colors">
+                                 <div>
+                                    <div className="mono font-semibold text-white">{p.numer_partii}</div>
+                                    <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
+                                       <span>Ważn: {p.termin_waznosci ? new Date(p.termin_waznosci).toLocaleDateString() : "—"}</span>
+                                       <span>·</span>
+                                       <span>SOH: <span className="text-slate-300">{p.stan.toFixed(3)}</span></span>
+                                       {maxForThis <= 0 && sumOthers >= pickerRequired && <span className="text-amber-500">· limit osiągnięty</span>}
+                                    </div>
+                                 </div>
+                                 <input
+                                   type="text"
+                                   placeholder="0.000"
+                                   className="w-28 bg-[#334155] border border-[#475569] text-blue-300 rounded-lg px-3 py-2 text-right font-mono font-bold outline-none focus:border-blue-500 transition-colors"
+                                   value={currentAllocation || ""}
+                                   onChange={(e) => {
+                                     const val = parseFloat(e.target.value.replace(",", "."));
+                                     const newZuzyte = { ...zuzytePartie };
+                                     const list = [...(newZuzyte[activePicker.ingredId] || [])];
+                                     const idx = list.findIndex(x => x.id_partii === p.id);
+                                     if (isNaN(val) || val <= 0) {
+                                        if (idx >= 0) list.splice(idx, 1);
+                                     } else {
+                                        const sumOthersCurrent = list.filter(x => x.id_partii !== p.id).reduce((s, x) => s + x.ilosc, 0);
+                                        const clamped = Math.round(Math.min(val, pickerRequired - sumOthersCurrent, p.stan) * 1000) / 1000;
+                                        if (clamped <= 0) {
+                                          if (idx >= 0) list.splice(idx, 1);
+                                        } else {
+                                          if (idx >= 0) list[idx].ilosc = clamped;
+                                          else list.push({ id_partii: p.id, ilosc: clamped });
+                                        }
+                                     }
+                                     newZuzyte[activePicker.ingredId] = list;
+                                     setZuzytePartie(newZuzyte);
+                                   }}
+                                 />
+                              </div>
+                            );
+                          });
+                       })()}
                     </div>
 
                     <div className="p-4 border-t border-[#334155] bg-[#0f172a]/50 shrink-0">

@@ -7,6 +7,10 @@ coverage/
 .env*
 !.env.example
 
+# SQLite database files
+prisma/*.db
+prisma/*.db-journal
+
 /src/generated/prisma
 
 # Pliki tymczasowe / debug

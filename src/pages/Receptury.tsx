@@ -10,7 +10,7 @@ type Skladnik = {
   asortyment_skladnika: Asortyment;
 };
 type Receptura = {
-  id: string; numer_wersji: number; dni_trwalosci: number | null; czy_aktywne: boolean;
+  id: string; numer_wersji: number; dni_trwalosci: number | null; wielkosc_produkcji: number; czy_aktywne: boolean;
   asortyment_docelowy: Asortyment; skladniki: Skladnik[];
 };
 
@@ -30,6 +30,7 @@ export default function Receptury() {
   const [docelowyId, setDocelowyId] = useState("");
   const [wersja, setWersja] = useState(1);
   const [dniTrwalosci, setDniTrwalosci] = useState("");
+  const [wielkoscProdukcji, setWielkoscProdukcji] = useState("1");
   const [skladniki, setSkladniki] = useState<{ id_asortymentu_skladnika: string; ilosc_wymagana: string; czy_pomocnicza: boolean }[]>([]);
 
   const [showArchived, setShowArchived] = useState(false);
@@ -44,6 +45,12 @@ export default function Receptury() {
   const [kalcNarzut, setKalcNarzut] = useState("0");
 
   useEffect(() => { fetchAll(); }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && kartaMode) closeKarta(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [kartaMode]);
 
   const fetchAll = async (archived = showArchived) => {
     const [rRes, aRes] = await Promise.all([
@@ -99,9 +106,11 @@ export default function Receptury() {
     setDocelowyId(r.asortyment_docelowy.id);
     setWersja(r.numer_wersji);
     setDniTrwalosci(r.dni_trwalosci?.toString() || "");
+    setWielkoscProdukcji(r.wielkosc_produkcji?.toString() || "1");
+    const wsad = r.wielkosc_produkcji || 1;
     setSkladniki(r.skladniki.map(s => ({
       id_asortymentu_skladnika: s.id_asortymentu_skladnika,
-      ilosc_wymagana: s.ilosc_wymagana.toString(),
+      ilosc_wymagana: String(Number((s.ilosc_wymagana * wsad).toFixed(3))),
       czy_pomocnicza: s.czy_pomocnicza === true
     })));
     setError("");
@@ -114,6 +123,7 @@ export default function Receptury() {
     setDocelowyId("");
     setWersja(1);
     setDniTrwalosci("");
+    setWielkoscProdukcji("1");
     setSkladniki([]);
     setError("");
   };
@@ -134,9 +144,11 @@ export default function Receptury() {
     setDocelowyId(r.asortyment_docelowy.id);
     setWersja(maxVersion + 1);
     setDniTrwalosci(r.dni_trwalosci?.toString() || "");
+    setWielkoscProdukcji(r.wielkosc_produkcji?.toString() || "1");
+    const wsad2 = r.wielkosc_produkcji || 1;
     setSkladniki(r.skladniki.map(s => ({
       id_asortymentu_skladnika: s.id_asortymentu_skladnika,
-      ilosc_wymagana: s.ilosc_wymagana.toString(),
+      ilosc_wymagana: String(Number((s.ilosc_wymagana * wsad2).toFixed(3))),
       czy_pomocnicza: s.czy_pomocnicza === true
     })));
     setError("");
@@ -154,11 +166,13 @@ export default function Receptury() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setError("");
     if (!docelowyId || skladniki.length === 0) { setError("Wybierz produkt i dodaj co najmniej jeden składnik."); return; }
+    const wsad = parseFloat(wielkoscProdukcji) || 1;
     const body = {
       id_asortymentu_docelowego: docelowyId,
       numer_wersji: wersja,
       dni_trwalosci: dniTrwalosci ? parseInt(dniTrwalosci) : null,
-      skladniki
+      wielkosc_produkcji: wsad,
+      skladniki: skladniki.map(s => ({ ...s, ilosc_wymagana: String(parseFloat(s.ilosc_wymagana) / wsad) })),
     };
     try {
       const isEdit = kartaMode === "edit" && kartaReceptura;
@@ -227,7 +241,26 @@ export default function Receptury() {
                     <div className="flex items-center gap-2 mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
                       <span className="mono" style={{ color: 'var(--text-code)' }}>{kartaReceptura.asortyment_docelowy.kod_towaru}</span>
                       <span>·</span>
-                      <span>v{kartaReceptura.numer_wersji}</span>
+                      {receptury
+                        .filter(r => r.asortyment_docelowy.id === kartaReceptura.asortyment_docelowy.id)
+                        .sort((a, b) => a.numer_wersji - b.numer_wersji)
+                        .map(r => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => kartaMode === "view" && openView(r)}
+                            className="px-2 py-0.5 rounded font-bold transition-colors"
+                            style={{
+                              background: r.id === kartaReceptura.id ? 'var(--accent)' : 'transparent',
+                              color: r.id === kartaReceptura.id ? '#fff' : 'var(--text-muted)',
+                              cursor: kartaMode === "view" ? 'pointer' : 'default',
+                              fontSize: 10,
+                            }}
+                          >
+                            v{r.numer_wersji}
+                          </button>
+                        ))
+                      }
                     </div>
                   )}
                 </div>
@@ -320,6 +353,23 @@ export default function Receptury() {
                               className="w-20 text-sm font-mono font-bold outline-none text-center"
                               style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', padding: '2px 6px' }} />
                           </div>
+                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
+                          <div className="flex flex-col gap-0.5">
+                            <label className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu ({selectedAsortyment?.jednostka_miary || 'j.m.'})</label>
+                            <input type="number" value={wielkoscProdukcji} onChange={e => {
+                              const nowyWsad = parseFloat(e.target.value) || 1;
+                              const staryWsad = parseFloat(wielkoscProdukcji) || 1;
+                              if (nowyWsad !== staryWsad) {
+                                setSkladniki(prev => prev.map(s => ({
+                                  ...s,
+                                  ilosc_wymagana: String(Number((parseFloat(s.ilosc_wymagana) * nowyWsad / staryWsad).toFixed(3))),
+                                })));
+                              }
+                              setWielkoscProdukcji(e.target.value);
+                            }} min={0.001} step="any" placeholder="1"
+                              className="w-20 text-sm font-mono font-bold outline-none text-center"
+                              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', padding: '2px 6px' }} />
+                          </div>
                         </>
                       ) : (
                         <>
@@ -339,6 +389,11 @@ export default function Receptury() {
                           </div>
                           <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
                           <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu</span>
+                            <span className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{kartaReceptura?.wielkosc_produkcji ?? 1} {kartaReceptura?.asortyment_docelowy.jednostka_miary}</span>
+                          </div>
+                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
+                          <div className="flex flex-col gap-0.5">
                             <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Składniki</span>
                             <span className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{kartaReceptura?.skladniki.length} poz.</span>
                           </div>
@@ -351,7 +406,7 @@ export default function Receptury() {
                       {/* Nagłówek tabeli */}
                       <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
                         <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                          BOM — na 1 {isEditMode ? (selectedAsortyment?.jednostka_miary || 'j.m.') : kartaReceptura?.asortyment_docelowy.jednostka_miary}
+                          BOM — na {isEditMode ? (parseFloat(wielkoscProdukcji) || 1) : (kartaReceptura?.wielkosc_produkcji ?? 1)} {isEditMode ? (selectedAsortyment?.jednostka_miary || 'j.m.') : kartaReceptura?.asortyment_docelowy.jednostka_miary}
                         </span>
                         {isEditMode && (
                           <button type="button" data-testid="btn-dodaj-skladnik"
@@ -429,7 +484,7 @@ export default function Receptury() {
                                   <div className="text-[10px] font-mono" style={{ color: 'var(--text-code)' }}>{s.asortyment_skladnika.kod_towaru}</div>
                                 </div>
                                 <div className="text-right font-mono font-bold text-sm" style={{ color: '#4ade80' }}>
-                                  {s.ilosc_wymagana}
+                                  {Number((s.ilosc_wymagana * (kartaReceptura?.wielkosc_produkcji ?? 1)).toFixed(3))}
                                 </div>
                                 <div className="text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>
                                   {s.czy_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary}
@@ -474,7 +529,7 @@ export default function Receptury() {
                           style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                         />
                       </div>
-                      <button onClick={saveKalcParametry} disabled={kalcLoading}
+                      <button type="button" onClick={saveKalcParametry} disabled={kalcLoading}
                         className="px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect disabled:opacity-50"
                         style={{ background: 'var(--accent)' }}>
                         {kalcLoading ? "Liczę…" : "Przelicz"}
@@ -600,13 +655,23 @@ export default function Receptury() {
                   acc[pid].push(r);
                   return acc;
                 }, {})
-              ).flatMap(([, versions]: [string, Receptura[]]) => {
+              ).map(([, versions]: [string, Receptura[]]) => {
                 const sorted = versions.sort((a, b) => b.numer_wersji - a.numer_wersji);
-                return sorted.map((v, vi) => (
+                const v = sorted[0];
+                return (
                   <tr key={v.id} onClick={() => v.czy_aktywne && openView(v)} className={v.czy_aktywne ? 'cursor-pointer' : 'opacity-40'}>
-                    <td className="font-medium text-white">{vi === 0 ? v.asortyment_docelowy.nazwa : <span className="text-slate-600 pl-4">↳</span>}</td>
-                    <td className="mono" style={{ color: 'var(--text-code)' }}>{vi === 0 ? v.asortyment_docelowy.kod_towaru : ''}</td>
-                    <td className="mono font-bold">v{v.numer_wersji}</td>
+                    <td className="font-medium text-white">{v.asortyment_docelowy.nazwa}</td>
+                    <td className="mono" style={{ color: 'var(--text-code)' }}>{v.asortyment_docelowy.kod_towaru}</td>
+                    <td>
+                      <div className="flex items-center gap-1.5">
+                        <span className="mono font-bold" style={{ color: 'var(--text-primary)' }}>v{v.numer_wersji}</span>
+                        {sorted.length > 1 && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.15)', color: 'rgb(129,140,248)' }}>
+                            {sorted.length} wersje
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ color: 'var(--text-secondary)' }}>{v.skladniki.length}</td>
                     <td className="mono" style={{ color: 'var(--text-secondary)' }}>{v.dni_trwalosci ? `${v.dni_trwalosci} dni` : '—'}</td>
                     <td>
@@ -627,7 +692,7 @@ export default function Receptury() {
                       )}
                     </td>
                   </tr>
-                ));
+                );
               })}
             </tbody>
           </table>

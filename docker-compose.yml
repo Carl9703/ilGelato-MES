@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: file:/data/gelato.db
+    volumes:
+      - /volume1/docker/ilgelato/data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    restart: always
+    ports:
+      # Port 80 is typically occupied by DSM's built-in nginx on Synology.
+      # Change to another free port if needed (e.g. 8080).
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge

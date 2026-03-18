@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { Search, Share2, ArrowRight, ArrowLeft, Package, Factory, ClipboardList } from "lucide-react";
+import { Search, Share2, ArrowRight, ArrowLeft, Package, Factory, ClipboardList, Truck } from "lucide-react";
 
 type TraceData = {
   partia: { id: string; numer_partii: string; asortyment: string; status: string };
   skladniki: any[];
   wyroby_pochodne: any[];
+  wydania_wz: { dokument: string | null; ilosc: number; jednostka: string; data: string }[];
 };
 
 export default function Traceability() {
@@ -160,6 +161,33 @@ export default function Traceability() {
               )}
             </div>
           </div>
+
+          {/* Wydania WZ */}
+          {(data.wydania_wz?.length ?? 0) > 0 && (
+            <div className="mes-panel rounded overflow-hidden">
+              <div className="px-4 py-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                <Truck className="w-3.5 h-3.5" /> Wydania WZ powiązane z partią
+              </div>
+              <table className="mes-table">
+                <thead>
+                  <tr>
+                    <th>Dokument WZ</th>
+                    <th className="text-right">Ilość</th>
+                    <th>Data</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.wydania_wz?.map((w, i) => (
+                    <tr key={i}>
+                      <td className="mono" style={{ color: 'var(--warn)' }}>{w.dokument ?? '—'}</td>
+                      <td className="text-right mono">{w.ilosc} <span className="text-xs opacity-50">{w.jednostka}</span></td>
+                      <td className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(w.data).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Sekcja informacyjna */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

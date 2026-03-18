@@ -72,11 +72,15 @@ export default function Asortyment() {
   useEffect(() => { fetchAll(); }, [showArchived]);
 
   useEffect(() => {
-    if (!previewDocRef) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setPreviewDocRef(null); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (previewDocRef) { setPreviewDocRef(null); return; }
+      if (showModal) { setShowModal(false); setError(""); return; }
+      if (selectedItem) { setSelectedItem(null); return; }
+    };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [previewDocRef]);
+  }, [previewDocRef, showModal, selectedItem]);
 
   const fetchAll = async () => {
     try {
@@ -156,6 +160,24 @@ export default function Asortyment() {
       });
     }
   }, [detailData]);
+
+  const toggleAktywne = async () => {
+    if (!selectedItem) return;
+    const aktywne = selectedItem.czy_aktywne;
+    try {
+      let res;
+      if (aktywne) {
+        res = await fetch(`/api/asortyment/${selectedItem.id}?archive=true`, { method: "DELETE" });
+      } else {
+        res = await fetch(`/api/asortyment/${selectedItem.id}/restore`, { method: "PUT" });
+      }
+      if (!res.ok) throw new Error((await res.json()).error);
+      setSelectedItem({ ...selectedItem, czy_aktywne: !aktywne });
+      setSuccess(aktywne ? "Przeniesiono do archiwum" : "Przywrócono z archiwum");
+      setTimeout(() => setSuccess(""), 2500);
+      fetchAll();
+    } catch (err: any) { setError(err.message); }
+  };
 
   const handleDetailSubmit = async () => {
     setError("");
@@ -248,6 +270,7 @@ export default function Asortyment() {
   if (selectedItem) {
     return (
       <div className="h-full flex flex-col gap-3 animate-view">
+        {success && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-2xl animate-view">✓ {success}</div>}
         {/* Header */}
         <div className="flex items-center gap-6 shrink-0">
           <button
@@ -618,9 +641,20 @@ export default function Asortyment() {
                           </div>
                         )}
                       </div>
-                   </div>
-                   <div>
-                     <span className="badge badge-ok">Kartoteka aktywna</span>
+                     <div
+                       className="flex items-center justify-between p-3 bg-[#1e293b] rounded-xl border border-[#334155] cursor-pointer select-none"
+                       onClick={toggleAktywne}
+                     >
+                       <div>
+                         <div className="text-sm font-medium text-white">Kartoteka aktywna</div>
+                         <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                           {selectedItem.czy_aktywne ? "Widoczna w systemie" : "Zarchiwizowana — ukryta w listach"}
+                         </div>
+                       </div>
+                       <div className={`w-10 h-5 rounded-full transition-colors relative ${selectedItem.czy_aktywne ? 'bg-emerald-500' : 'bg-slate-600'}`}>
+                         <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${selectedItem.czy_aktywne ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                       </div>
+                     </div>
                    </div>
                 </div>
             )}
@@ -790,7 +824,19 @@ export default function Asortyment() {
               </button>
             ))}
           </div>
-          
+
+          <button
+            onClick={() => setShowArchived(v => !v)}
+            className="px-4 py-2 rounded text-xs font-semibold transition-colors btn-hover-effect shrink-0"
+            style={{
+              background: showArchived ? 'var(--warn)' : 'var(--bg-panel)',
+              color: showArchived ? '#fff' : 'var(--text-muted)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            {showArchived ? "Ukryj archiwalne" : "Pokaż archiwalne"}
+          </button>
+
           <div className="relative flex-1 group">
             <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
             <input 
@@ -819,15 +865,21 @@ export default function Asortyment() {
                   <th>Nazwa</th>
                   <th>Typ</th>
                   <th>J.M.</th>
+                  <th className="text-right">Ilość</th>
+                  <th className="text-right">Zarezerwowane</th>
                   <th className="text-right">Dostępne</th>
+                  <th className="text-right">Cena śr.</th>
                   <th className="text-right">Wartość mag.</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(a => (
-                  <tr key={a.id} onClick={() => openDetail(a)}>
+                  <tr key={a.id} onClick={() => openDetail(a)} style={!a.czy_aktywne ? { opacity: 0.5, background: 'repeating-linear-gradient(135deg, transparent, transparent 6px, rgba(0,0,0,0.15) 6px, rgba(0,0,0,0.15) 12px)' } : {}}>
                     <td className="mono" style={{ color: 'var(--text-code)' }}>{a.kod_towaru}</td>
-                    <td className="font-medium text-white">{a.nazwa}</td>
+                    <td className="font-medium" style={{ color: a.czy_aktywne ? 'white' : 'var(--text-muted)' }}>
+                      {a.nazwa}
+                      {!a.czy_aktywne && <span className="ml-2 text-[10px] font-bold uppercase tracking-widest opacity-60">archiwum</span>}
+                    </td>
                     <td>
                       <span className={`badge ${
                         a.typ_asortymentu === 'Surowiec' ? 'badge-info' :
@@ -836,6 +888,15 @@ export default function Asortyment() {
                     </td>
                     <td style={{ color: 'var(--text-secondary)' }}>{a.jednostka_miary}</td>
                     <td className="text-right mono font-medium text-white">{fillZero(a.ilosc)}</td>
+                    <td className={`text-right mono font-medium ${a.rezerwacje > 0 ? 'text-amber-400' : ''}`} style={a.rezerwacje <= 0 ? { color: 'var(--text-muted)' } : {}}>
+                      {fillZero(a.rezerwacje)}
+                    </td>
+                    <td className={`text-right mono font-medium ${(a.ilosc - a.rezerwacje) > 0 ? 'text-emerald-400' : ''}`} style={(a.ilosc - a.rezerwacje) <= 0 ? { color: 'var(--text-muted)' } : {}}>
+                      {fillZero(a.ilosc - a.rezerwacje)}
+                    </td>
+                    <td className="text-right mono" style={{ color: a.cena_srednia > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                      {a.cena_srednia > 0 ? <>{fillZero(a.cena_srednia)} <span className="text-xs opacity-50">PLN</span></> : "—"}
+                    </td>
                     <td className={`text-right mono font-medium ${a.ilosc > 0 ? 'text-emerald-400' : ''}`} style={a.ilosc <= 0 ? { color: 'var(--text-muted)' } : {}}>
                       {fillZero(a.ilosc * (a.cena_srednia || 0))} <span className="text-xs opacity-50">PLN</span>
                     </td>

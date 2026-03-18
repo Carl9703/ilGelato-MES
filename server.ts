@@ -1,4 +1,5 @@
 import express from "express";
+import helmet from "helmet";
 import { createServer as createViteServer } from "vite";
 import { PrismaClient } from "@prisma/client";
 import path from "path";
@@ -12,26 +13,78 @@ async function generateDocNumber(tx: any, prefix: string) {
   const year = date.getFullYear().toString().slice(-2);
   const suffix = `/${month}/${year}`;
 
-  const ruchy = await tx.ruchy_Magazynowe.findMany({
-    where: {
-      czy_aktywne: true,
-      referencja_dokumentu: {
-        endsWith: suffix
-      }
-    }
-  });
-
+  // For PZ/WZ, also check Dokumenty_Magazynowe headers (includes BUFOR docs)
   let maxNum = 0;
-  for (const r of ruchy) {
-    if (r.referencja_dokumentu && r.referencja_dokumentu.startsWith(`${prefix}-`)) {
-      const match = r.referencja_dokumentu.match(new RegExp(`^${prefix}-(\\d+)/${month}/${year}$`));
+  if (prefix === "PZ" || prefix === "WZ") {
+    const headers = await tx.dokumenty_Magazynowe.findMany({
+      where: { referencja: { endsWith: suffix }, typ: prefix }
+    });
+    for (const h of headers) {
+      const match = h.referencja.match(new RegExp(`^${prefix}-(\\d+)/${month}/${year}$`));
       if (match) {
         const num = parseInt(match[1], 10);
         if (num > maxNum) maxNum = num;
       }
     }
+  } else {
+    const ruchy = await tx.ruchy_Magazynowe.findMany({
+      where: { referencja_dokumentu: { endsWith: suffix } }
+    });
+    for (const r of ruchy) {
+      if (r.referencja_dokumentu && r.referencja_dokumentu.startsWith(`${prefix}-`)) {
+        const match = r.referencja_dokumentu.match(new RegExp(`^${prefix}-(\\d+)/${month}/${year}$`));
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > maxNum) maxNum = num;
+        }
+      }
+    }
   }
   return `${prefix}-${maxNum + 1}${suffix}`;
+}
+
+// Migracja jednorazowa: tworzy nagłówki Dokumenty_Magazynowe dla istniejących PZ/WZ
+async function migrateExistingDocuments() {
+  try {
+    const user = await prisma.uzytkownicy.findFirst();
+    if (!user) return;
+
+    const existingRuchy = await prisma.ruchy_Magazynowe.findMany({
+      where: { typ_ruchu: { in: ["PZ", "WZ"] }, referencja_dokumentu: { not: null } },
+      select: { referencja_dokumentu: true, typ_ruchu: true, id_uzytkownika: true, utworzono_dnia: true }
+    });
+
+    const refMap = new Map<string, { typ: string; userId: string; data: Date }>();
+    for (const r of existingRuchy) {
+      if (r.referencja_dokumentu && !refMap.has(r.referencja_dokumentu)) {
+        refMap.set(r.referencja_dokumentu, {
+          typ: r.typ_ruchu,
+          userId: r.id_uzytkownika,
+          data: r.utworzono_dnia
+        });
+      }
+    }
+
+    for (const [ref, info] of refMap) {
+      const existing = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      if (!existing) {
+        await prisma.dokumenty_Magazynowe.create({
+          data: {
+            referencja: ref,
+            typ: info.typ,
+            status: "Zatwierdzony",
+            id_uzytkownika_utworzenia: info.userId,
+            id_uzytkownika_zatwierdzenia: info.userId,
+            data_zatwierdzenia: info.data,
+            utworzono_dnia: info.data,
+          }
+        });
+      }
+    }
+    console.log(`Migracja dokumentów: ${refMap.size} dokumentów PZ/WZ zmigrowanych.`);
+  } catch (e) {
+    console.warn("Błąd migracji dokumentów:", e);
+  }
 }
 
 async function generateZlecenieNumber(tx: any) {
@@ -65,9 +118,12 @@ async function generateZlecenieNumber(tx: any) {
 }
 
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
+  await migrateExistingDocuments();
 
+  const app = express();
+  const PORT = parseInt(process.env.PORT || "3000", 10);
+
+  app.use(helmet({ contentSecurityPolicy: false })); // CSP wyłączone bo Vite dev serwuje inline scripts
   app.use(express.json());
 
   // --- API ROUTES ---
@@ -76,10 +132,12 @@ async function startServer() {
   });
 
   app.post("/api/reset", async (req, res) => {
+    const { confirm } = req.body;
+    if (confirm !== "RESET_CONFIRMED") {
+      return res.status(400).json({ error: "Wymagane potwierdzenie: { confirm: 'RESET_CONFIRMED' }" });
+    }
     try {
       await prisma.$transaction([
-        prisma.wyniki_Kontroli.deleteMany(),
-        prisma.punkty_Kontrolne.deleteMany(),
         prisma.rezerwacje_Magazynowe.deleteMany(),
         prisma.ruchy_Magazynowe.deleteMany(),
         prisma.skladniki_Receptury.deleteMany(),
@@ -96,81 +154,18 @@ async function startServer() {
     }
   });
 
-  // Ensure a dummy user exists for foreign keys
+  // Tworzy użytkownika systemowego (wymagany jako FK dla ruchów magazynowych)
+  // Dane demo ładuj przez: npx tsx prisma/seed.ts
   app.post("/api/init", async (req, res) => {
     try {
       let user = await prisma.uzytkownicy.findFirst();
       if (!user) {
         user = await prisma.uzytkownicy.create({
-          data: {
-            login: "admin",
-            haslo: "admin", // Dummy password
-          },
+          data: { login: "admin", haslo: "admin" },
         });
       }
 
-      // Sprawdzenie czy baza jest pusta (brak asortymentu)
-      const count = await prisma.asortyment.count();
-      if (count === 0) {
-        console.log("Inicjalizacja danych testowych...");
-
-        // 1. Asortyment (Surowce, Półprodukty, Wyroby Gotowe)
-        const mleko = await prisma.asortyment.create({ data: { kod_towaru: "SUR-MLE-01", nazwa: "Mleko 3.2%", typ_asortymentu: "Surowiec", jednostka_miary: "L", czy_wymaga_daty_waznosci: true } });
-        const smietanka = await prisma.asortyment.create({ data: { kod_towaru: "SUR-SMI-36", nazwa: "Śmietanka 36%", typ_asortymentu: "Surowiec", jednostka_miary: "L", czy_wymaga_daty_waznosci: true } });
-        const cukier = await prisma.asortyment.create({ data: { kod_towaru: "SUR-CUK-01", nazwa: "Cukier biały", typ_asortymentu: "Surowiec", jednostka_miary: "kg", czy_wymaga_daty_waznosci: false } });
-        const pastaPistacjowa = await prisma.asortyment.create({ data: { kod_towaru: "SUR-PIST-01", nazwa: "Pasta pistacjowa 100%", typ_asortymentu: "Surowiec", jednostka_miary: "kg", czy_wymaga_daty_waznosci: true } });
-        const bazaMleczna = await prisma.asortyment.create({ data: { kod_towaru: "POL-BAZA-01", nazwa: "Baza mleczna jasna", typ_asortymentu: "Polprodukt", jednostka_miary: "L", czy_wymaga_daty_waznosci: true } });
-        const lodyPistacjowe = await prisma.asortyment.create({ data: { kod_towaru: "WG-PIST-5L", nazwa: "Lody Pistacjowe (Kuweta 5L)", typ_asortymentu: "Wyrob_Gotowy", jednostka_miary: "szt", czy_wymaga_daty_waznosci: true } });
-
-        // 2. Dokumenty Magazynowe - Przyjęcia (PZ) wg logiki Grupowej (kilka surowców z różnymi cenami)
-        // Utworzymy jeden PZ na nabiał, drugi na cukier i pastę
-
-        const dataDzis = new Date();
-        const refPZ1 = `PZ-1/${(dataDzis.getMonth() + 1).toString().padStart(2, '0')}/${dataDzis.getFullYear().toString().slice(-2)}`;
-
-        // PZ 1: Mleko i śmietanka
-        const partiaMleko = await prisma.partie_Magazynowe.create({ data: { id_asortymentu: mleko.id, numer_partii: "DOST-MLE-001", status_partii: "Dostepna", termin_waznosci: new Date(dataDzis.getTime() + 14 * 24 * 60 * 60 * 1000) } });
-        const partiaSmietanka = await prisma.partie_Magazynowe.create({ data: { id_asortymentu: smietanka.id, numer_partii: "DOST-SMI-001", status_partii: "Dostepna", termin_waznosci: new Date(dataDzis.getTime() + 7 * 24 * 60 * 60 * 1000) } });
-
-        await prisma.ruchy_Magazynowe.createMany({
-          data: [
-            { id_partii: partiaMleko.id, typ_ruchu: "PZ", ilosc: 500, cena_jednostkowa: 3.20, referencja_dokumentu: refPZ1, id_uzytkownika: user.id },
-            { id_partii: partiaSmietanka.id, typ_ruchu: "PZ", ilosc: 100, cena_jednostkowa: 14.50, referencja_dokumentu: refPZ1, id_uzytkownika: user.id }
-          ]
-        });
-
-        const refPZ2 = `PZ-2/${(dataDzis.getMonth() + 1).toString().padStart(2, '0')}/${dataDzis.getFullYear().toString().slice(-2)}`;
-
-        // PZ 2: Cukier i Pasta
-        const partiaCukier = await prisma.partie_Magazynowe.create({ data: { id_asortymentu: cukier.id, numer_partii: "DOST-CUK-001", status_partii: "Dostepna" } });
-        const partiaPasta = await prisma.partie_Magazynowe.create({ data: { id_asortymentu: pastaPistacjowa.id, numer_partii: "DOST-PIST-001", status_partii: "Dostepna", termin_waznosci: new Date(dataDzis.getTime() + 180 * 24 * 60 * 60 * 1000) } });
-
-        await prisma.ruchy_Magazynowe.createMany({
-          data: [
-            { id_partii: partiaCukier.id, typ_ruchu: "PZ", ilosc: 200, cena_jednostkowa: 4.10, referencja_dokumentu: refPZ2, id_uzytkownika: user.id },
-            { id_partii: partiaPasta.id, typ_ruchu: "PZ", ilosc: 20, cena_jednostkowa: 120.00, referencja_dokumentu: refPZ2, id_uzytkownika: user.id }
-          ]
-        });
-
-        // 3. Receptury
-        const recBaza = await prisma.receptury.create({
-          data: {
-            id_asortymentu_docelowego: bazaMleczna.id, numer_wersji: 1, dni_trwalosci: 14,
-            skladniki: { create: [{ id_asortymentu_skladnika: mleko.id, ilosc_wymagana: 0.65, procent_strat: 2 }, { id_asortymentu_skladnika: smietanka.id, ilosc_wymagana: 0.20 }, { id_asortymentu_skladnika: cukier.id, ilosc_wymagana: 0.15 }] }
-          }
-        });
-
-        const recLodyPistacjowe = await prisma.receptury.create({
-          data: {
-            id_asortymentu_docelowego: lodyPistacjowe.id, numer_wersji: 1, dni_trwalosci: 360,
-            skladniki: { create: [{ id_asortymentu_skladnika: bazaMleczna.id, ilosc_wymagana: 4.5 }, { id_asortymentu_skladnika: pastaPistacjowa.id, ilosc_wymagana: 0.5 }] }
-          }
-        });
-
-        console.log("Baza wyczyszczona i zainicjalizowana nowymi dokumentami grupowymi (PZ). Zapasy surowców dostępne. Brak zleceń.");
-      }
-
-      // Check for old Zlecenia numbering and update them
+      // Migracja starych numerów zleceń (ZLE/ → ZP-)
       const oldZlecenia = await prisma.zlecenia_Produkcyjne.findMany({
         where: {
           OR: [
@@ -191,10 +186,59 @@ async function startServer() {
         console.log(`Zaktualizowano numerację dla ${oldZlecenia.length} starych zleceń.`);
       }
 
-      res.json({ user, seeded: count === 0 });
+      res.json({ user, migratedZlecenia: oldZlecenia.length });
     } catch (error) {
       console.error(error);
-      res.status(500).json({ error: "Failed to initialize dummy user and seed data" });
+      res.status(500).json({ error: "Błąd inicjalizacji użytkownika" });
+    }
+  });
+
+  // --- KONTRAHENCI ---
+  app.get("/api/kontrahenci", async (req, res) => {
+    try {
+      const kontrahenci = await prisma.kontrahenci.findMany({
+        where: { czy_aktywne: true },
+        orderBy: { nazwa: "asc" },
+      });
+      res.json(kontrahenci);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/kontrahenci", async (req, res) => {
+    try {
+      const { kod, nazwa, adres } = req.body;
+      if (!kod?.trim() || !nazwa?.trim()) return res.status(400).json({ error: "Kod i nazwa są wymagane" });
+      const k = await prisma.kontrahenci.create({ data: { kod: kod.trim(), nazwa: nazwa.trim(), adres: adres?.trim() || null } });
+      res.json(k);
+    } catch (e: any) {
+      if (e.code === "P2002") return res.status(400).json({ error: "Kontrahent z tym kodem już istnieje" });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/kontrahenci/:id", async (req, res) => {
+    try {
+      const { kod, nazwa, adres } = req.body;
+      if (!kod?.trim() || !nazwa?.trim()) return res.status(400).json({ error: "Kod i nazwa są wymagane" });
+      const k = await prisma.kontrahenci.update({
+        where: { id: req.params.id },
+        data: { kod: kod.trim(), nazwa: nazwa.trim(), adres: adres?.trim() || null },
+      });
+      res.json(k);
+    } catch (e: any) {
+      if (e.code === "P2002") return res.status(400).json({ error: "Kontrahent z tym kodem już istnieje" });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/kontrahenci/:id", async (req, res) => {
+    try {
+      await prisma.kontrahenci.update({ where: { id: req.params.id }, data: { czy_aktywne: false } });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 
@@ -438,74 +482,121 @@ async function startServer() {
   // --- DOKUMENTY ---
   app.get("/api/dokumenty", async (req, res) => {
     try {
-      const { typ: filterTyp, showAll } = req.query;
-      const where: any = showAll === 'true' ? {} : { czy_aktywne: true };
-      
-      if (filterTyp && filterTyp !== "all") {
-        if (filterTyp === "PZ") where.typ_ruchu = "PZ";
-        else if (filterTyp === "WZ") where.typ_ruchu = "WZ";
-        else if (filterTyp === "RW") where.typ_ruchu = "Zuzycie";
-        else if (filterTyp === "PW") where.typ_ruchu = "Przyjecie_Z_Produkcji";
-      }
-
-      const ruchy = await prisma.ruchy_Magazynowe.findMany({
-        where,
-        include: {
-          partia: { include: { asortyment: true } },
-          zlecenie: true,
-          uzytkownik: true
-        },
-        orderBy: { utworzono_dnia: 'desc' }
-      });
-
+      const { typ: filterTyp } = req.query;
       const dokumentyMap = new Map();
 
-      ruchy.forEach(ruch => {
-        const ref = ruch.referencja_dokumentu || ruch.id;
-        if (!dokumentyMap.has(ref)) {
-          let typ = ruch.typ_ruchu;
-          if (typ === "Przyjecie_Z_Produkcji") typ = "PW";
-          if (typ === "Zuzycie") typ = "RW";
+      // PZ/WZ — pobieramy z Dokumenty_Magazynowe (żródło prawdy)
+      const showPZ = !filterTyp || filterTyp === "all" || filterTyp === "PZ";
+      const showWZ = !filterTyp || filterTyp === "all" || filterTyp === "WZ";
 
-          dokumentyMap.set(ref, {
-            referencja: ref,
-            typ: typ,
-            anulowany: !ruch.czy_aktywne,
-            data: ruch.utworzono_dnia,
-            uzytkownik: ruch.uzytkownik?.login || "system",
-            numer_zlecenia: ruch.zlecenie?.numer_zlecenia || null,
-            pozycje: []
+      if (showPZ || showWZ) {
+        const headerWhere: any = {};
+        if (filterTyp === "PZ") headerWhere.typ = "PZ";
+        else if (filterTyp === "WZ") headerWhere.typ = "WZ";
+        else headerWhere.typ = { in: ["PZ", "WZ"] };
+
+        const headers = await prisma.dokumenty_Magazynowe.findMany({
+          where: headerWhere,
+          include: { uzytkownik_utworzenia: true, kontrahent: true },
+          orderBy: { utworzono_dnia: 'desc' }
+        });
+
+        const refs = headers.map(h => h.referencja);
+        const ruchy = refs.length > 0 ? await prisma.ruchy_Magazynowe.findMany({
+          where: { referencja_dokumentu: { in: refs } },
+          include: { partia: { include: { asortyment: true } } }
+        }) : [];
+
+        const ruchyByRef = new Map<string, typeof ruchy>();
+        ruchy.forEach(r => {
+          const ref = r.referencja_dokumentu!;
+          if (!ruchyByRef.has(ref)) ruchyByRef.set(ref, []);
+          ruchyByRef.get(ref)!.push(r);
+        });
+
+        for (const header of headers) {
+          const docRuchy = ruchyByRef.get(header.referencja) || [];
+          dokumentyMap.set(header.referencja, {
+            referencja: header.referencja,
+            typ: header.typ,
+            status: header.status,
+            data: header.utworzono_dnia,
+            uzytkownik: header.uzytkownik_utworzenia.login,
+            numer_zlecenia: null,
+            kontrahent: (header as any).kontrahent ? { id: (header as any).kontrahent.id, kod: (header as any).kontrahent.kod, nazwa: (header as any).kontrahent.nazwa } : null,
+            pozycje: docRuchy.map(r => ({
+              id_asortymentu: r.partia.id_asortymentu,
+              asortyment: r.partia.asortyment.nazwa,
+              kod_towaru: r.partia.asortyment.kod_towaru,
+              numer_partii: r.partia.numer_partii,
+              ilosc: Math.abs(r.ilosc),
+              jednostka: r.partia.asortyment.jednostka_miary,
+              termin_waznosci: r.partia.termin_waznosci,
+              data_produkcji: r.partia.data_produkcji,
+              cena_jednostkowa: r.cena_jednostkowa || 0,
+              wartosc: (r.cena_jednostkowa || 0) * Math.abs(r.ilosc)
+            }))
           });
         }
+      }
 
-        const doc = dokumentyMap.get(ref);
-        doc.pozycje.push({
-          id_asortymentu: ruch.partia.id_asortymentu,
-          asortyment: ruch.partia.asortyment.nazwa,
-          kod_towaru: ruch.partia.asortyment.kod_towaru,
-          numer_partii: ruch.partia.numer_partii,
-          ilosc: Math.abs(ruch.ilosc),
-          jednostka: ruch.partia.asortyment.jednostka_miary,
-          termin_waznosci: ruch.partia.termin_waznosci,
-          data_produkcji: ruch.partia.data_produkcji,
-          cena_jednostkowa: ruch.cena_jednostkowa || 0,
-          wartosc: (ruch.cena_jednostkowa || 0) * Math.abs(ruch.ilosc)
+      // PW/RW — pobieramy z Ruchy_Magazynowe (brak statusów)
+      const showPW = !filterTyp || filterTyp === "all" || filterTyp === "PW";
+      const showRW = !filterTyp || filterTyp === "all" || filterTyp === "RW";
+
+      if (showPW || showRW) {
+        const ruchTypy: string[] = [];
+        if (showPW) ruchTypy.push("Przyjecie_Z_Produkcji");
+        if (showRW) ruchTypy.push("Zuzycie");
+
+        const ruchy = await prisma.ruchy_Magazynowe.findMany({
+          where: { typ_ruchu: { in: ruchTypy }, czy_aktywne: true },
+          include: { partia: { include: { asortyment: true } }, zlecenie: true, uzytkownik: true },
+          orderBy: { utworzono_dnia: 'desc' }
         });
-      });
 
-      // Zlecenia Produkcyjne (tylko gdy filtr to 'all' lub 'ZP' - chociaż w UI nie ma filtra ZP w dokumentach)
+        ruchy.forEach(ruch => {
+          const ref = ruch.referencja_dokumentu || ruch.id;
+          if (!dokumentyMap.has(ref)) {
+            dokumentyMap.set(ref, {
+              referencja: ref,
+              typ: ruch.typ_ruchu === "Przyjecie_Z_Produkcji" ? "PW" : "RW",
+              status: "Zatwierdzony",
+              data: ruch.utworzono_dnia,
+              uzytkownik: ruch.uzytkownik?.login || "system",
+              numer_zlecenia: ruch.zlecenie?.numer_zlecenia || null,
+              pozycje: []
+            });
+          }
+          const doc = dokumentyMap.get(ref);
+          doc.pozycje.push({
+            id_asortymentu: ruch.partia.id_asortymentu,
+            asortyment: ruch.partia.asortyment.nazwa,
+            kod_towaru: ruch.partia.asortyment.kod_towaru,
+            numer_partii: ruch.partia.numer_partii,
+            ilosc: Math.abs(ruch.ilosc),
+            jednostka: ruch.partia.asortyment.jednostka_miary,
+            termin_waznosci: ruch.partia.termin_waznosci,
+            data_produkcji: ruch.partia.data_produkcji,
+            cena_jednostkowa: ruch.cena_jednostkowa || 0,
+            wartosc: (ruch.cena_jednostkowa || 0) * Math.abs(ruch.ilosc)
+          });
+        });
+      }
+
+      // ZP — zlecenia produkcyjne
       if (!filterTyp || filterTyp === "all") {
         const zlecenia = await prisma.zlecenia_Produkcyjne.findMany({
           where: { czy_aktywne: true },
           include: { receptura: { include: { asortyment_docelowy: true } } },
           orderBy: { utworzono_dnia: 'desc' }
         });
-
         zlecenia.forEach(zl => {
-          const ref = zl.numer_zlecenia || `ZP-${zl.id.substring(0,8)}`;
+          const ref = zl.numer_zlecenia || `ZP-${zl.id.substring(0, 8)}`;
           dokumentyMap.set(ref, {
             referencja: ref,
             typ: "ZP",
+            status: "Zatwierdzony",
             data: zl.utworzono_dnia,
             uzytkownik: "system",
             numer_zlecenia: ref,
@@ -524,7 +615,7 @@ async function startServer() {
 
       const result = Array.from(dokumentyMap.values())
         .map(d => ({ ...d, wartosc_calkowita: d.pozycje.reduce((s: number, p: any) => s + (p.wartosc || 0), 0) }))
-        .sort((a,b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+        .sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
       res.json(result);
     } catch (error) {
       console.error(error);
@@ -532,17 +623,109 @@ async function startServer() {
     }
   });
 
+  app.post("/api/dokumenty/:ref/zatwierdz", async (req, res) => {
+    try {
+      const ref = decodeURIComponent(req.params.ref);
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+
+      const header = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      if (!header) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (header.status !== "Bufor") return res.status(400).json({ error: `Dokument jest już w stanie: ${header.status}` });
+
+      await prisma.$transaction(async (tx) => {
+        const ruchy = await tx.ruchy_Magazynowe.findMany({
+          where: { referencja_dokumentu: ref },
+          include: { partia: { include: { ruchy_magazynowe: { where: { czy_aktywne: true } } } } }
+        });
+
+        if (header.typ === "WZ") {
+          // Sprawdź dostępność dla WZ przed aktywacją
+          const niedobory: string[] = [];
+          for (const ruch of ruchy) {
+            const stanAktywny = ruch.partia.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
+            const wymagana = Math.abs(ruch.ilosc);
+            if (stanAktywny < wymagana) {
+              niedobory.push(`${ruch.partia.numer_partii}: dostępne ${stanAktywny.toFixed(3)}, wymagane ${wymagana.toFixed(3)}`);
+            }
+          }
+          if (niedobory.length > 0) {
+            throw new Error(`Niewystarczający stan magazynowy:\n${niedobory.join('\n')}`);
+          }
+        }
+
+        await tx.ruchy_Magazynowe.updateMany({
+          where: { referencja_dokumentu: ref },
+          data: { czy_aktywne: true }
+        });
+
+        await tx.dokumenty_Magazynowe.update({
+          where: { referencja: ref },
+          data: {
+            status: "Zatwierdzony",
+            id_uzytkownika_zatwierdzenia: user.id,
+            data_zatwierdzenia: new Date()
+          }
+        });
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Błąd zatwierdzania dokumentu" });
+    }
+  });
+
   app.post("/api/dokumenty/:ref/anuluj", async (req, res) => {
     try {
       const ref = decodeURIComponent(req.params.ref);
-      const updated = await prisma.ruchy_Magazynowe.updateMany({
-        where: { referencja_dokumentu: ref, czy_aktywne: true },
-        data: { czy_aktywne: false },
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+
+      const header = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      if (!header) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (header.status === "Anulowany") return res.status(400).json({ error: "Dokument jest już anulowany" });
+
+      await prisma.$transaction(async (tx) => {
+        if (header.status === "Zatwierdzony" && header.typ === "PZ") {
+          // Anulowanie zatwierdzonego PZ: sprawdź czy deaktywacja nie spowoduje ujemnych stanów
+          const ruchy = await tx.ruchy_Magazynowe.findMany({
+            where: { referencja_dokumentu: ref, czy_aktywne: true },
+            include: { partia: { include: { ruchy_magazynowe: { where: { czy_aktywne: true } } } } }
+          });
+
+          const niedobory: string[] = [];
+          for (const ruch of ruchy) {
+            const stanAktywny = ruch.partia.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
+            // Po deaktywacji tego ruchu, stan = stanAktywny - ruch.ilosc (który jest dodatni dla PZ)
+            const stanPo = stanAktywny - ruch.ilosc;
+            if (stanPo < -0.001) {
+              niedobory.push(`${ruch.partia.numer_partii}: stan ${stanAktywny.toFixed(3)}, cofnięcie ${ruch.ilosc.toFixed(3)} → niedobór`);
+            }
+          }
+          if (niedobory.length > 0) {
+            throw new Error(`Nie można anulować — towar już rozchodowany:\n${niedobory.join('\n')}`);
+          }
+        }
+
+        // Dezaktywuj ruchy (dla Bufor — ruchy już są nieaktywne, dla Zatwierdzony — deaktywuj)
+        await tx.ruchy_Magazynowe.updateMany({
+          where: { referencja_dokumentu: ref },
+          data: { czy_aktywne: false }
+        });
+
+        await tx.dokumenty_Magazynowe.update({
+          where: { referencja: ref },
+          data: {
+            status: "Anulowany",
+            id_uzytkownika_anulowania: user.id,
+            data_anulowania: new Date()
+          }
+        });
       });
-      if (updated.count === 0) return res.status(404).json({ error: "Nie znaleziono aktywnych pozycji dokumentu" });
-      res.json({ success: true, count: updated.count });
-    } catch (error) {
-      res.status(500).json({ error: "Błąd anulowania dokumentu" });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Błąd anulowania dokumentu" });
     }
   });
 
@@ -595,7 +778,7 @@ async function startServer() {
   app.post("/api/magazyn/pz", async (req, res) => {
     try {
       const { referencja_zewnetrzna, pozycje } = req.body;
-      const items = pozycje || []; // Obsługa obu nazw dla kompatybilności
+      const items = pozycje || [];
 
       const user = await prisma.uzytkownicy.findFirst();
       if (!user) throw new Error("Brak użytkownika w systemie");
@@ -606,19 +789,24 @@ async function startServer() {
           finalReferencja = await generateDocNumber(tx, "PZ");
         }
 
+        // Utwórz nagłówek dokumentu w stanie Bufor
+        await tx.dokumenty_Magazynowe.create({
+          data: {
+            referencja: finalReferencja,
+            typ: "PZ",
+            status: "Bufor",
+            id_uzytkownika_utworzenia: user.id,
+          }
+        });
+
         const ruchy = [];
         for (const item of items) {
           const { id_asortymentu, numer_partii, ilosc, cena_jednostkowa, data_produkcji, termin_waznosci } = item;
 
-          let partia = await tx.partie_Magazynowe.findUnique({
-            where: { numer_partii },
-          });
+          let partia = await tx.partie_Magazynowe.findUnique({ where: { numer_partii } });
 
           if (!partia) {
-            console.log(`Tworzenie nowej partii: ${numer_partii} dla asortymentu ID: [${id_asortymentu}]`);
-            if (!id_asortymentu) {
-              throw new Error(`Brak ID asortymentu dla nowej partii ${numer_partii}`);
-            }
+            if (!id_asortymentu) throw new Error(`Brak ID asortymentu dla nowej partii ${numer_partii}`);
             partia = await tx.partie_Magazynowe.create({
               data: {
                 id_asortymentu,
@@ -634,6 +822,7 @@ async function startServer() {
             }
           }
 
+          // Ruch nieaktywny — nie wpływa na stan do czasu zatwierdzenia
           const ruch = await tx.ruchy_Magazynowe.create({
             data: {
               id_partii: partia.id,
@@ -642,11 +831,12 @@ async function startServer() {
               cena_jednostkowa: cena_jednostkowa ? parseFloat(cena_jednostkowa) : null,
               referencja_dokumentu: finalReferencja,
               id_uzytkownika: user.id,
+              czy_aktywne: false,
             },
           });
           ruchy.push(ruch);
         }
-        return ruchy;
+        return { referencja: finalReferencja, ruchy };
       });
 
       res.json(result);
@@ -658,7 +848,7 @@ async function startServer() {
   // --- MAGAZYN: WZ ---
   app.post("/api/magazyn/wz", async (req, res) => {
     try {
-      const { items, referencja_zewnetrzna } = req.body;
+      const { items, referencja_zewnetrzna, id_kontrahenta } = req.body;
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Brak pozycji do wydania" });
       }
@@ -672,6 +862,17 @@ async function startServer() {
           finalReferencja = await generateDocNumber(tx, "WZ");
         }
 
+        // Utwórz nagłówek dokumentu w stanie Bufor
+        await tx.dokumenty_Magazynowe.create({
+          data: {
+            referencja: finalReferencja,
+            typ: "WZ",
+            status: "Bufor",
+            id_uzytkownika_utworzenia: user.id,
+            id_kontrahenta: id_kontrahenta || null,
+          }
+        });
+
         const ruchy = [];
         for (const item of items) {
           const { id_partii, ilosc } = item;
@@ -680,25 +881,30 @@ async function startServer() {
             throw new Error("Nieprawidłowe dane pozycji WZ");
           }
 
-          // Sprawdź dostępność
-          const partia = await tx.partie_Magazynowe.findUnique({
-            where: { id: id_partii },
-            include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
-          });
+          const partia = await tx.partie_Magazynowe.findUnique({ where: { id: id_partii } });
           if (!partia) throw new Error(`Partia ${id_partii} nie istnieje`);
 
-          const dostepne = partia.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
-          if (dostepne < parsedIlosc) {
-            throw new Error(`Niewystarczający stan partii ${partia.numer_partii}: dostępne ${dostepne.toFixed(3)}, żądane ${parsedIlosc.toFixed(3)}`);
+          // Oblicz cena ważona (weighted average) z PZ/PW dla tej partii
+          const pzRuchy = await tx.ruchy_Magazynowe.findMany({
+            where: { id_partii, cena_jednostkowa: { not: null }, ilosc: { gt: 0 }, czy_aktywne: true }
+          });
+          let cena_jednostkowa: number | null = null;
+          if (pzRuchy.length > 0) {
+            const totalIlosc = pzRuchy.reduce((s, r) => s + r.ilosc, 0);
+            const totalWartosc = pzRuchy.reduce((s, r) => s + r.ilosc * (r.cena_jednostkowa || 0), 0);
+            if (totalIlosc > 0) cena_jednostkowa = totalWartosc / totalIlosc;
           }
 
+          // Ruch nieaktywny — weryfikacja stanu nastąpi przy zatwierdzeniu
           const ruch = await tx.ruchy_Magazynowe.create({
             data: {
               id_partii,
               typ_ruchu: "WZ",
               ilosc: -parsedIlosc,
+              cena_jednostkowa,
               referencja_dokumentu: finalReferencja,
               id_uzytkownika: user.id,
+              czy_aktywne: false,
             },
           });
           ruchy.push(ruch);
@@ -717,19 +923,30 @@ async function startServer() {
   app.get("/api/dokumenty/podglad/:referencja", async (req, res) => {
     try {
       const { referencja } = req.params;
+
+      // Pobierz nagłówek (jeśli istnieje) — zwłaszcza dla PZ/WZ
+      const header = await prisma.dokumenty_Magazynowe.findUnique({
+        where: { referencja },
+        include: { uzytkownik_utworzenia: true, uzytkownik_zatwierdzenia: true, uzytkownik_anulowania: true, kontrahent: true }
+      });
+
+      // Pobierz wszystkie ruchy (włącznie z nieaktywnymi dla BUFOR)
       const ruchy = await prisma.ruchy_Magazynowe.findMany({
-        where: { referencja_dokumentu: referencja, czy_aktywne: true },
+        where: { referencja_dokumentu: referencja },
         include: {
           partia: { include: { asortyment: true } },
           zlecenie: true,
           uzytkownik: true
         },
-        orderBy: { utworzono_dnia: 'desc' }
+        orderBy: { utworzono_dnia: 'asc' }
       });
 
-      if (ruchy.length === 0) {
+      if (ruchy.length === 0 && !header) {
         return res.status(404).json({ error: "Nie znaleziono dokumentu" });
       }
+
+      const firstRuch = ruchy[0];
+      const status = header?.status || "Zatwierdzony";
 
       let wartosc_calkowita = 0;
       const pozycje = ruchy.map(r => {
@@ -751,12 +968,22 @@ async function startServer() {
         };
       });
 
+      const typDok = firstRuch
+        ? (firstRuch.typ_ruchu === "Zuzycie" ? "RW" : firstRuch.typ_ruchu === "Przyjecie_Z_Produkcji" ? "PW" : firstRuch.typ_ruchu)
+        : header!.typ;
+
       res.json({
         referencja,
-        typ: ruchy[0].typ_ruchu === "Zuzycie" ? "RW" : ruchy[0].typ_ruchu === "Przyjecie_Z_Produkcji" ? "PW" : ruchy[0].typ_ruchu,
-        data: ruchy[0].utworzono_dnia,
-        uzytkownik: ruchy[0].uzytkownik?.login || "system",
-        numer_zlecenia: ruchy[0].zlecenie?.numer_zlecenia || null,
+        typ: typDok,
+        status,
+        data: header?.utworzono_dnia || firstRuch?.utworzono_dnia,
+        uzytkownik: header?.uzytkownik_utworzenia?.login || firstRuch?.uzytkownik?.login || "system",
+        data_zatwierdzenia: header?.data_zatwierdzenia || null,
+        uzytkownik_zatwierdzenia: header?.uzytkownik_zatwierdzenia?.login || null,
+        data_anulowania: header?.data_anulowania || null,
+        uzytkownik_anulowania: header?.uzytkownik_anulowania?.login || null,
+        numer_zlecenia: firstRuch?.zlecenie?.numer_zlecenia || null,
+        kontrahent: header?.kontrahent ? { id: header.kontrahent.id, kod: header.kontrahent.kod, nazwa: header.kontrahent.nazwa } : null,
         pozycje,
         wartosc_calkowita
       });
@@ -799,17 +1026,19 @@ async function startServer() {
                 status_partii: "Dostepna"
               },
               include: {
-                ruchy_magazynowe: true
+                ruchy_magazynowe: { where: { czy_aktywne: true } },
+                rezerwacje: { where: { czy_aktywne: true, status: "Aktywna" } }
               },
               orderBy: [
-                { termin_waznosci: 'asc' }, // FIFO: najpierw te, które się kończą
+                { termin_waznosci: 'asc' },
                 { utworzono_dnia: 'asc' }
               ]
             });
 
-            // Obliczamy realny stan każdej partii i wybieramy te, które pokryją zapotrzebowanie
+            // Obliczamy realny stan każdej partii pomniejszony o aktywne rezerwacje
             const sugestie = partie.map(p => {
-              const stan = p.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0);
+              const stan = p.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0)
+                         - p.rezerwacje.reduce((sum, r) => sum + r.ilosc_zarezerwowana, 0);
               return {
                 id: p.id,
                 numer_partii: p.numer_partii,
@@ -914,7 +1143,7 @@ async function startServer() {
 
   app.post("/api/receptury", async (req, res) => {
     try {
-      const { id_asortymentu_docelowego, numer_wersji, skladniki } = req.body;
+      const { id_asortymentu_docelowego, numer_wersji, dni_trwalosci, wielkosc_produkcji, skladniki } = req.body;
 
       // Sprawdzenie czy wersja już istnieje
       const existing = await prisma.receptury.findUnique({
@@ -934,6 +1163,8 @@ async function startServer() {
         data: {
           id_asortymentu_docelowego,
           numer_wersji: Number(numer_wersji),
+          dni_trwalosci: dni_trwalosci != null ? Number(dni_trwalosci) || null : null,
+          wielkosc_produkcji: wielkosc_produkcji ? parseFloat(wielkosc_produkcji) : 1,
           skladniki: {
             create: skladniki.map((s: any) => ({
               id_asortymentu_skladnika: s.id_asortymentu_skladnika,
@@ -962,7 +1193,7 @@ async function startServer() {
   app.put("/api/receptury/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { id_asortymentu_docelowego, numer_wersji, dni_trwalosci, skladniki } = req.body;
+      const { id_asortymentu_docelowego, numer_wersji, dni_trwalosci, wielkosc_produkcji, skladniki } = req.body;
 
       // Sprawdzenie czy inna receptura o tej samej wersji już istnieje
       const existing = await prisma.receptury.findFirst({
@@ -983,6 +1214,7 @@ async function startServer() {
           id_asortymentu_docelowego,
           numer_wersji: Number(numer_wersji),
           dni_trwalosci: dni_trwalosci != null ? Number(dni_trwalosci) || null : null,
+          wielkosc_produkcji: wielkosc_produkcji ? parseFloat(wielkosc_produkcji) : 1,
           skladniki: {
             deleteMany: {}, // Usuń stare składniki
             create: skladniki.map((s: any) => ({
@@ -1266,7 +1498,10 @@ async function startServer() {
               id_asortymentu: s.id_asortymentu_skladnika,
               status_partii: "Dostepna"
             },
-            include: { ruchy_magazynowe: true },
+            include: {
+              ruchy_magazynowe: { where: { czy_aktywne: true } },
+              rezerwacje: { where: { czy_aktywne: true, status: "Aktywna" } }
+            },
             orderBy: [
               { termin_waznosci: 'asc' },
               { utworzono_dnia: 'asc' }
@@ -1277,8 +1512,8 @@ async function startServer() {
             id: p.id,
             numer_partii: p.numer_partii,
             termin_waznosci: p.termin_waznosci,
-
             stan: p.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0)
+                - p.rezerwacje.reduce((sum, r) => sum + r.ilosc_zarezerwowana, 0)
           })).filter(p => p.stan > 0);
 
           return { ...s, sugerowane_partie: sugestie };
@@ -1364,19 +1599,28 @@ async function startServer() {
         if (zuzyte_partie && Array.isArray(zuzyte_partie) && zuzyte_partie.length > 0) {
           // OPCJA A: Użycie konkretnych partii wskazanych przez użytkownika (Proaktywne)
           for (const p of zuzyte_partie) {
-            
+            // Walidacja partii: status i dostępny stan
+            const partia = await tx.partie_Magazynowe.findUnique({
+              where: { id: p.id_partii },
+              include: { ruchy_magazynowe: { where: { czy_aktywne: true } } }
+            });
+            if (!partia) throw new Error(`Partia ${p.id_partii} nie istnieje`);
+            if (partia.status_partii !== "Dostepna") throw new Error(`Partia ${partia.numer_partii} nie jest dostępna (status: ${partia.status_partii})`);
+            const stanPartii = partia.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0);
+            const pobieranaIlosc = Math.abs(p.ilosc);
+            if (stanPartii < pobieranaIlosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}: dostępne ${stanPartii.toFixed(3)}, żądane ${pobieranaIlosc.toFixed(3)}`);
+
             // Pobranie ceny jednostkowej zarejestrowanej partii (z momentu przyjęcia - PZ lub PW)
             const docWejscia = await tx.ruchy_Magazynowe.findFirst({
-              where: { 
-                id_partii: p.id_partii, 
-                typ_ruchu: { in: ["PZ", "Przyjecie_Z_Produkcji"] }, 
-                ilosc: { gt: 0 } 
+              where: {
+                id_partii: p.id_partii,
+                typ_ruchu: { in: ["PZ", "Przyjecie_Z_Produkcji"] },
+                ilosc: { gt: 0 }
               },
               orderBy: { utworzono_dnia: 'asc' }
             });
             const cenaKosztowaPartii = docWejscia?.cena_jednostkowa || 0;
-            const pobieranaIlosc = Math.abs(p.ilosc);
-            totalCost += pobieranaIlosc * cenaKosztowaPartii; // sumujemy koszt RW
+            totalCost += pobieranaIlosc * cenaKosztowaPartii;
 
             await tx.ruchy_Magazynowe.create({
               data: {
@@ -1394,7 +1638,7 @@ async function startServer() {
           // OPCJA B: Automatyczne FIFO (fallback)
           for (const skladnik of zlecenie.receptura.skladniki) {
             const asort = await tx.asortyment.findUnique({ where: { id: skladnik.id_asortymentu_skladnika } });
-            let iloscWymagana = skladnik.ilosc_wymagana * zlecenie.planowana_ilosc_wyrobu;
+            let iloscWymagana = skladnik.ilosc_wymagana * rzeczywistaIloscNum * (1 + (skladnik.procent_strat || 0) / 100);
 
             // Konwersja na jednostkę podstawową jeśli podano w pomocniczej
             if (skladnik.czy_pomocnicza && asort?.przelicznik_jednostki) {
@@ -1451,26 +1695,7 @@ async function startServer() {
           }
         }
 
-        // 1.5. Walidacja QC — sprawdzenie czy wymagane punkty kontrolne zostały wypełnione
-        const punktyKontrolne = await tx.punkty_Kontrolne.findMany({
-          where: { id_receptury: zlecenie.id_receptury, czy_wymagany: true, czy_aktywne: true }
-        });
-        if (punktyKontrolne.length > 0) {
-          const wynikiKontroli = await tx.wyniki_Kontroli.findMany({
-            where: { id_zlecenia: zlecenie.id, czy_aktywne: true }
-          });
-          const wypelnionePunkty = new Set(wynikiKontroli.map(w => w.id_punktu_kontrolnego));
-          const brakujace = punktyKontrolne.filter(p => !wypelnionePunkty.has(p.id));
-          if (brakujace.length > 0) {
-            throw new Error(`Brakuje wyników kontroli jakości: ${brakujace.map(p => p.nazwa_parametru).join(", ")}`);
-          }
-          const nieWNormie = wynikiKontroli.filter(w => !w.czy_w_normie);
-          if (nieWNormie.length > 0) {
-            throw new Error(`Wyniki kontroli poza normą! Sprawdź wyniki QC przed zamknięciem zlecenia.`);
-          }
-        }
-
-        // 1.6. Zwolnienie rezerwacji
+        // 1.5. Zwolnienie rezerwacji
         await tx.rezerwacje_Magazynowe.updateMany({
           where: { id_zlecenia: zlecenie.id, status: "Aktywna" },
           data: { status: "Zrealizowana" }
@@ -1524,119 +1749,6 @@ async function startServer() {
     }
   });
 
-
-
-  // --- KONTROLA JAKOŚCI (QC / HACCP) ---
-  app.get("/api/punkty-kontrolne/:id_receptury", async (req, res) => {
-    try {
-      const { id_receptury } = req.params;
-      const punkty = await prisma.punkty_Kontrolne.findMany({
-        where: { id_receptury, czy_aktywne: true },
-        orderBy: { kolejnosc: 'asc' }
-      });
-      res.json(punkty);
-    } catch (error) {
-      res.status(500).json({ error: "Błąd pobierania punktów kontrolnych" });
-    }
-  });
-
-  app.post("/api/punkty-kontrolne", async (req, res) => {
-    try {
-      const { id_receptury, nazwa_parametru, jednostka, wartosc_min, wartosc_max, czy_wymagany, kolejnosc } = req.body;
-      const punkt = await prisma.punkty_Kontrolne.create({
-        data: {
-          id_receptury,
-          nazwa_parametru,
-          jednostka,
-          wartosc_min: wartosc_min != null ? parseFloat(wartosc_min) : null,
-          wartosc_max: wartosc_max != null ? parseFloat(wartosc_max) : null,
-          czy_wymagany: czy_wymagany !== false,
-          kolejnosc: kolejnosc || 0
-        }
-      });
-      res.json(punkt);
-    } catch (error) {
-      res.status(500).json({ error: "Błąd tworzenia punktu kontrolnego" });
-    }
-  });
-
-  app.delete("/api/punkty-kontrolne/:id", async (req, res) => {
-    try {
-      await prisma.punkty_Kontrolne.update({ where: { id: req.params.id }, data: { czy_aktywne: false } });
-      res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ error: "Błąd usuwania punktu kontrolnego" });
-    }
-  });
-
-  app.post("/api/wyniki-kontroli", async (req, res) => {
-    try {
-      const { id_zlecenia, wyniki } = req.body;
-      const created = [];
-      for (const w of wyniki) {
-        const punkt = await prisma.punkty_Kontrolne.findUnique({ where: { id: w.id_punktu_kontrolnego } });
-        const val = parseFloat(w.wartosc_zmierzona);
-        const wNormie = (punkt?.wartosc_min == null || val >= punkt.wartosc_min) && (punkt?.wartosc_max == null || val <= punkt.wartosc_max);
-        const wynik = await prisma.wyniki_Kontroli.create({
-          data: {
-            id_zlecenia,
-            id_punktu_kontrolnego: w.id_punktu_kontrolnego,
-            wartosc_zmierzona: val,
-            czy_w_normie: wNormie,
-            uwagi: w.uwagi || null
-          }
-        });
-        created.push(wynik);
-      }
-      res.json(created);
-    } catch (error) {
-      res.status(500).json({ error: "Błąd zapisywania wyników kontroli" });
-    }
-  });
-
-  app.get("/api/wyniki-kontroli/:id_zlecenia", async (req, res) => {
-    try {
-      const wyniki = await prisma.wyniki_Kontroli.findMany({
-        where: { id_zlecenia: req.params.id_zlecenia, czy_aktywne: true },
-        include: { punkt_kontrolny: true }
-      });
-      res.json(wyniki);
-    } catch (error) {
-      res.status(500).json({ error: "Błąd pobierania wyników kontroli" });
-    }
-  });
-
-  // --- WZ (Wydanie Zewnętrzne) ---
-  app.post("/api/magazyn/wz", async (req, res) => {
-    try {
-      const { items } = req.body;
-      const user = await prisma.uzytkownicy.findFirst();
-      if (!user) throw new Error("Brak użytkownika w systemie");
-
-      const result = await prisma.$transaction(async (tx) => {
-        const referencja = await generateDocNumber(tx, "WZ");
-        const ruchy = [];
-        for (const item of items) {
-          const { id_partii, ilosc } = item;
-          const partia = await tx.partie_Magazynowe.findUnique({
-            where: { id: id_partii },
-            include: { ruchy_magazynowe: { where: { czy_aktywne: true } } }
-          });
-          if (!partia) throw new Error("Nie znaleziono partii");
-          const stan = partia.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
-          if (stan < parseFloat(ilosc)) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}. Dostępne: ${stan.toFixed(3)}`);
-          const ruch = await tx.ruchy_Magazynowe.create({
-            data: { id_partii, typ_ruchu: "WZ", ilosc: -Math.abs(parseFloat(ilosc)), referencja_dokumentu: referencja, id_uzytkownika: user.id }
-          });
-          ruchy.push(ruch);
-        }
-        return { referencja, ruchy };
-      });
-      res.json(result);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message || "Błąd rejestracji WZ" });
-    }
-  });
 
 
   // --- REZERWACJE (rozpoczęcie zlecenia) ---
@@ -1800,6 +1912,12 @@ async function startServer() {
         zlecenie_produkcyjne: z.zlecenie?.numer_zlecenia
       })) || []);
 
+      // 3. WZ — wydania zewnętrzne powiązane z tą partią
+      const wydaniaWZ = await prisma.ruchy_Magazynowe.findMany({
+        where: { id_partii: partia.id, typ_ruchu: "WZ", czy_aktywne: true },
+        orderBy: { utworzono_dnia: "asc" }
+      });
+
       res.json({
         partia: {
           id: partia.id,
@@ -1808,7 +1926,13 @@ async function startServer() {
           status: partia.status_partii
         },
         skladniki: genealogia_w_tyl,
-        wyroby_pochodne: genealogia_w_przod
+        wyroby_pochodne: genealogia_w_przod,
+        wydania_wz: wydaniaWZ.map(w => ({
+          dokument: w.referencja_dokumentu,
+          ilosc: Math.abs(w.ilosc),
+          jednostka: partia.asortyment.jednostka_miary,
+          data: w.utworzono_dnia
+        }))
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Błąd traceingu" });
@@ -1816,9 +1940,13 @@ async function startServer() {
   });
 
   app.post("/api/magazyn/partia/:id/status", async (req, res) => {
+    const VALID_STATUSES = ["Dostepna", "Kwarantanna", "Zablokowana_Kontrola_Jakosci", "Zutylizowana"];
     try {
       const { id } = req.params;
       const { status } = req.body;
+      if (!VALID_STATUSES.includes(status)) {
+        return res.status(400).json({ error: `Nieprawidłowy status. Dozwolone: ${VALID_STATUSES.join(", ")}` });
+      }
       const updated = await prisma.partie_Magazynowe.update({
         where: { id },
         data: { status_partii: status }
@@ -1854,7 +1982,7 @@ async function startServer() {
       const alertyWaznosc = partieZeStanem
         .filter(p => p.termin_waznosci && new Date(p.termin_waznosci) <= za7Dni)
         .map(p => ({
-          typ: new Date(p.termin_waznosci!) < now ? "PRZETERMINOWANE" : "BLISKIE_WYGASNIECIA",
+          typ: new Date(p.termin_waznosci!) <= now ? "PRZETERMINOWANE" : "BLISKIE_WYGASNIECIA",
           asortyment: p.asortyment.nazwa,
           numer_partii: p.numer_partii,
           termin_waznosci: p.termin_waznosci,
@@ -1967,7 +2095,7 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("Błąd API asortyment/:id:", error);
-      res.status(500).json({ error: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -2022,6 +2150,89 @@ async function startServer() {
       res.json(etykiety);
     } catch (error) {
       res.status(500).json({ error: "Błąd generowania etykiet" });
+    }
+  });
+
+  // --- RAPORTY ---
+  app.get("/api/raporty/sprzedaz-per-kontrahent", async (req, res) => {
+    try {
+      const { od, do: doData } = req.query as { od?: string; do?: string };
+
+      const whereHeader: any = { typ: "WZ", status: "Zatwierdzony" };
+      if (od || doData) {
+        whereHeader.data_zatwierdzenia = {};
+        if (od) whereHeader.data_zatwierdzenia.gte = new Date(od);
+        if (doData) {
+          const doDate = new Date(doData);
+          doDate.setHours(23, 59, 59, 999);
+          whereHeader.data_zatwierdzenia.lte = doDate;
+        }
+      }
+
+      const headers = await prisma.dokumenty_Magazynowe.findMany({
+        where: whereHeader,
+        include: { kontrahent: true },
+        orderBy: { data_zatwierdzenia: "desc" },
+      });
+
+      const refs = headers.map((h) => h.referencja);
+      const ruchy = refs.length > 0 ? await prisma.ruchy_Magazynowe.findMany({
+        where: { referencja_dokumentu: { in: refs }, czy_aktywne: true },
+        include: { partia: { include: { asortyment: true } } },
+      }) : [];
+
+      const ruchyByRef = new Map<string, typeof ruchy>();
+      ruchy.forEach((r) => {
+        const ref = r.referencja_dokumentu!;
+        if (!ruchyByRef.has(ref)) ruchyByRef.set(ref, []);
+        ruchyByRef.get(ref)!.push(r);
+      });
+
+      // Grupuj per kontrahent
+      const kontrahentMap = new Map<string, {
+        id: string | null; kod: string; nazwa: string;
+        liczba_dokumentow: number; wartosc_total: number;
+        dokumenty: { referencja: string; data: Date | null; wartosc: number; pozycje: any[] }[];
+      }>();
+
+      for (const header of headers) {
+        const klucz = header.id_kontrahenta || "__brak__";
+        if (!kontrahentMap.has(klucz)) {
+          kontrahentMap.set(klucz, {
+            id: header.id_kontrahenta,
+            kod: header.kontrahent?.kod ?? "—",
+            nazwa: header.kontrahent?.nazwa ?? "Bez kontrahenta",
+            liczba_dokumentow: 0,
+            wartosc_total: 0,
+            dokumenty: [],
+          });
+        }
+        const entry = kontrahentMap.get(klucz)!;
+        const docRuchy = ruchyByRef.get(header.referencja) || [];
+        const pozycje = docRuchy.map((r) => ({
+          kod_towaru: r.partia.asortyment.kod_towaru,
+          nazwa: r.partia.asortyment.nazwa,
+          jednostka: r.partia.asortyment.jednostka_miary,
+          ilosc: Math.abs(r.ilosc),
+          cena_jednostkowa: r.cena_jednostkowa ?? 0,
+          wartosc: (r.cena_jednostkowa ?? 0) * Math.abs(r.ilosc),
+        }));
+        const wartoscDok = pozycje.reduce((s, p) => s + p.wartosc, 0);
+        entry.liczba_dokumentow++;
+        entry.wartosc_total += wartoscDok;
+        entry.dokumenty.push({
+          referencja: header.referencja,
+          data: header.data_zatwierdzenia,
+          wartosc: wartoscDok,
+          pozycje,
+        });
+      }
+
+      const wynik = Array.from(kontrahentMap.values()).sort((a, b) => b.wartosc_total - a.wartosc_total);
+      const suma_total = wynik.reduce((s, k) => s + k.wartosc_total, 0);
+      res.json({ kontrahenci: wynik, suma_total, liczba_dokumentow: headers.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Błąd generowania raportu" });
     }
   });
 

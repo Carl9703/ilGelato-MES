@@ -10,9 +10,6 @@ async function main() {
   console.log("⏳ Czyszczenie bazy...");
 
   // Usuń w kolejności respektującej klucze obce
-  await prisma.wyniki_Kontroli.deleteMany();
-  await prisma.punkty_Kontrolne.deleteMany();
-  await prisma.rejestr_Przestojow.deleteMany();
   await prisma.rezerwacje_Magazynowe.deleteMany();
   await prisma.ruchy_Magazynowe.deleteMany();
   await prisma.zlecenia_Produkcyjne.deleteMany();

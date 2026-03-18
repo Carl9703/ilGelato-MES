@@ -1,0 +1,7 @@
+# Force LF for files that run on Linux (containers)
+*.sh        text eol=lf
+Dockerfile* text eol=lf
+nginx.conf  text eol=lf
+
+# Default: auto line endings for everything else
+*           text=auto
