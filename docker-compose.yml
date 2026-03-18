@@ -25,8 +25,8 @@ services:
       target: frontend
     restart: always
     ports:
-      # Port 80 is typically occupied by DSM's built-in nginx on Synology.
-      # Change to another free port if needed (e.g. 8080).
+      # UGOS Pro uses port 9999 for its web UI — port 8080 is free.
+      # Change if another service already occupies 8080.
       - "8080:80"
     depends_on:
       backend:
