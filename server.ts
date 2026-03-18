@@ -131,6 +131,16 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Jednorazowy setup — tworzy admina tylko jeśli brak użytkowników w systemie
+  app.get("/api/setup", async (req, res) => {
+    const count = await prisma.uzytkownicy.count();
+    if (count > 0) {
+      return res.send("✅ System już skonfigurowany — użytkownik istnieje.");
+    }
+    await prisma.uzytkownicy.create({ data: { login: "admin", haslo: "admin" } });
+    res.send("✅ Utworzono użytkownika admin / admin. Możesz teraz korzystać z systemu.");
+  });
+
   app.post("/api/reset", async (req, res) => {
     const { confirm } = req.body;
     if (confirm !== "RESET_CONFIRMED") {

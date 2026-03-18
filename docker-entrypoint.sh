@@ -13,4 +13,8 @@ fi
 echo "Initializing database..."
 npx prisma db push --skip-generate
 
+# Ensure default admin user exists (safe to run on every start)
+echo "Ensuring admin user..."
+npx tsx prisma/create-admin.ts
+
 exec npx tsx server.ts

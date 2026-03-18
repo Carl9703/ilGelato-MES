@@ -9,6 +9,14 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("⏳ Czyszczenie bazy...");
 
+  // Utwórz domyślnego użytkownika (jeśli nie istnieje)
+  await prisma.uzytkownicy.upsert({
+    where: { login: "admin" },
+    update: {},
+    create: { login: "admin", haslo: "admin" },
+  });
+  console.log("✓ Użytkownik 'admin' gotowy");
+
   // Usuń w kolejności respektującej klucze obce
   await prisma.rezerwacje_Magazynowe.deleteMany();
   await prisma.ruchy_Magazynowe.deleteMany();
@@ -256,6 +264,7 @@ async function main() {
 
   // ─── PODSUMOWANIE ─────────────────────────────────────────────────────────
   console.log("\n✅ Seed zakończony pomyślnie!");
+  console.log("   Użytkownik: admin / admin");
   console.log("   Asortyment: 9 surowców + 1 półprodukt + 1 wyrób gotowy = 11 pozycji");
   console.log("   Receptury:  2 (Mieszanka PERPANNA 50-18 + Lody ciasteczko z karmelem)");
 }
