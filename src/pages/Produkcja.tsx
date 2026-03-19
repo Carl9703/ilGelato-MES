@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, MapPin, FileText, ChevronDown, ChevronUp, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator } from "lucide-react";
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
+import { fmtL } from "../utils/fmt";
+import ConfirmModal from "../components/ConfirmModal";
 
 type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null };
 type SkladnikReceptury = { 
@@ -13,15 +15,17 @@ type SkladnikReceptury = {
 };
 type Receptura = { id: string; numer_wersji: number; wielkosc_produkcji: number; asortyment_docelowy: Asortyment; skladniki: SkladnikReceptury[]; utworzono_dnia: string };
 type RuchMagazynowy = { id: string; typ_ruchu: string; ilosc: number; referencja_dokumentu: string | null; utworzono_dnia: string; partia: { id_asortymentu: string; numer_partii: string; termin_waznosci: string | null; asortyment: Asortyment } };
-type Zlecenie = { 
-  id: string; 
-  numer_zlecenia: string | null; 
-  id_receptury: string; 
-  planowana_ilosc_wyrobu: number; 
-  rzeczywista_ilosc_wyrobu?: number; 
-  status: string; 
-  utworzono_dnia: string; 
-  receptura: Receptura; 
+type OpakowaniePozycja = { id_asortymentu: string; nazwa: string; waga_kg: number };
+type Zlecenie = {
+  id: string;
+  numer_zlecenia: string | null;
+  id_receptury: string;
+  planowana_ilosc_wyrobu: number;
+  rzeczywista_ilosc_wyrobu?: number;
+  opakowania?: OpakowaniePozycja[];
+  status: string;
+  utworzono_dnia: string;
+  receptura: Receptura;
   ruchy_magazynowe: RuchMagazynowy[];
   rezerwacje?: any[];
   numer_partii_wyrobu?: string;
@@ -49,6 +53,19 @@ export default function Produkcja() {
   const [selectedProduct, setSelectedProduct] = useState<WybranyTowar | null>(null);
   const [selectedRecId, setSelectedRecId] = useState("");
   const [planowanaIlosc, setPlanowanaIlosc] = useState("1");
+  const [stockData, setStockData] = useState<Record<string, number>>({});
+
+  const bomData = React.useMemo(() => {
+    if (!selectedRecId) return null;
+    const skladniki = receptury.find(r => r.id === selectedRecId)?.skladniki ?? [];
+    const qtyNum = parseFloat(planowanaIlosc.replace(",", ".")) || 0;
+    const anyShortage = skladniki.some(s => {
+      const req = qtyNum * s.ilosc_wymagana * (1 + (s.procent_strat || 0) / 100);
+      const available = stockData[s.id_asortymentu_skladnika] ?? 0;
+      return req > 0 && available < req;
+    });
+    return { skladniki, qtyNum, anyShortage };
+  }, [selectedRecId, receptury, planowanaIlosc, stockData]);
   
   // Page-level tabs
   const [pageTab, setPageTab] = useState<"zlecenia" | "rozliczenie" | "koszty">("zlecenia");
@@ -59,6 +76,13 @@ export default function Produkcja() {
   const [planIlosci, setPlanIlosci] = useState<Record<string, string>>({});
   const [rozliczenie, setRozliczenie] = useState<any>(null);
   const [rozliczLoading, setRozliczLoading] = useState(false);
+
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [editIlosc, setEditIlosc] = useState("");
+
+  // Pakowanie w realizacji
+  const [opakowaniaWpisy, setOpakowaniaWpisy] = useState<Array<{ id_asortymentu: string; nazwa: string; waga_kg: string }>>([]);
+  const [dostepneOpakowania, setDostepneOpakowania] = useState<Array<{ id: string; nazwa: string }>>([]);
 
   // Document preview modal
   const [previewDocRef, setPreviewDocRef] = useState<string | null>(null);
@@ -77,6 +101,21 @@ export default function Produkcja() {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  useEffect(() => {
+    if (!selectedRecId) { setStockData({}); return; }
+    const rec = receptury.find(r => r.id === selectedRecId);
+    if (!rec || rec.skladniki.length === 0) return;
+    fetch("/api/asortyment")
+      .then(r => r.json())
+      .then((items: any[]) => {
+        const ids = new Set(rec.skladniki.map(s => s.id_asortymentu_skladnika));
+        const map: Record<string, number> = {};
+        items.forEach(item => { if (ids.has(item.id)) map[item.id] = item.ilosc ?? 0; });
+        setStockData(map);
+      })
+      .catch(() => {});
+  }, [selectedRecId, receptury]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -164,8 +203,29 @@ export default function Produkcja() {
     } catch (err: any) { setError(err.message); }
   };
 
+  const handleSaveEdit = async () => {
+    if (!viewZlecenie) return;
+    setError("");
+    try {
+      const qty = parseFloat(editIlosc.replace(",", "."));
+      if (isNaN(qty) || qty <= 0) { setError("Podaj prawidłową ilość."); return; }
+      const res = await fetch(`/api/produkcja/${viewZlecenie.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planowana_ilosc_wyrobu: qty }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
+      setSuccess("Zlecenie zaktualizowane."); fetchData(); setTimeout(() => setSuccess(""), 2000);
+    } catch (err: any) { setError(err.message); }
+  };
+
   const handleRealizuj = async (z: Zlecenie) => {
     setError(""); setItemToRealize(z); setRzeczywistaIlosc(z.planowana_ilosc_wyrobu.toString());
+    setOpakowaniaWpisy([]);
+    fetch("/api/asortyment")
+      .then(r => r.json())
+      .then((items: any[]) => setDostepneOpakowania(items.filter(a => a.typ_asortymentu === "Opakowanie" && a.czy_aktywne)))
+      .catch(() => {});
     const initialValues: { [ingredId: string]: Array<{ id_partii: string, ilosc: number }> } = {};
     
     z.receptura?.skladniki?.forEach(s => {
@@ -210,7 +270,10 @@ export default function Produkcja() {
     if (isNaN(qtyNum) || qtyNum <= 0) { setError("Ilość musi być > 0"); return; }
     const payload = (Object.values(zuzytePartie) as Array<Array<{ id_partii: string; ilosc: number }>>).flatMap(arr => arr).filter(p => p.id_partii && p.ilosc > 0);
     try {
-      const res = await fetch(`/api/produkcja/${itemToRealize.id}/realizuj`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rzeczywista_ilosc: qtyNum, zuzyte_partie: payload }) });
+      const opakowaniaDo = opakowaniaWpisy
+        .filter(o => o.id_asortymentu && parseFloat(o.waga_kg.replace(",", ".")) > 0)
+        .map(o => ({ id_asortymentu: o.id_asortymentu, nazwa: o.nazwa, waga_kg: parseFloat(o.waga_kg.replace(",", ".")) }));
+      const res = await fetch(`/api/produkcja/${itemToRealize.id}/realizuj`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rzeczywista_ilosc: qtyNum, zuzyte_partie: payload, opakowania: opakowaniaDo }) });
       if (!res.ok) { const d = await res.json(); setError(d.error); return; }
       setItemToRealize(null); setSuccess("Zlecenie zrealizowane!"); fetchData(); setTimeout(() => setSuccess(""), 2000);
     } catch { setError("Błąd realizacji"); }
@@ -229,7 +292,7 @@ export default function Produkcja() {
     let skladnikiHTML = "";
     if (z.status === "Planowane") {
       skladnikiHTML = (z.receptura?.skladniki || []).map(s => {
-        const qty = (s.ilosc_wymagana * z.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100)).toFixed(3);
+        const qty = fmtL(s.ilosc_wymagana * z.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100), 3);
         const partia = s.sugerowane_partie?.[0]?.numer_partii || "—";
         return `<tr><td>${s.asortyment_skladnika?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${partia}</td><td style="text-align:right;font-weight:700">${qty} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
       }).join("");
@@ -241,11 +304,11 @@ export default function Produkcja() {
         );
         const suma = rezerwacje.reduce((acc: number, r: any) => acc + (r.ilosc_zarezerwowana || 0), 0);
         const partia = rezerwacje[0]?.partia?.numer_partii || "Rez. ilościowa";
-        return `<tr><td>${s.asortyment_skladnika?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${partia}</td><td style="text-align:right;font-weight:700">${suma.toFixed(3)} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
+        return `<tr><td>${s.asortyment_skladnika?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${partia}</td><td style="text-align:right;font-weight:700">${fmtL(suma, 3)} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
       }).join("");
     } else {
       skladnikiHTML = (z.ruchy_magazynowe || []).filter(r => r.typ_ruchu === "Zuzycie").map(r =>
-        `<tr><td>${r.partia?.asortyment?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${r.partia?.numer_partii}</td><td style="text-align:right;font-weight:700;color:#16a34a">${Math.abs(r.ilosc).toFixed(3)} ${r.partia?.asortyment?.jednostka_miary}</td></tr>`
+        `<tr><td>${r.partia?.asortyment?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${r.partia?.numer_partii}</td><td style="text-align:right;font-weight:700;color:#16a34a">${fmtL(Math.abs(r.ilosc), 3)} ${r.partia?.asortyment?.jednostka_miary}</td></tr>`
       ).join("");
     }
 
@@ -275,6 +338,12 @@ export default function Produkcja() {
       ${wyrobHTML}
       <tr><td>Status</td><td>${statusLabel[z.status] || z.status}</td></tr>
     </tbody></table>
+    ${z.opakowania && z.opakowania.length > 0 ? `
+    <div class="section-title">Pakowanie</div>
+    <table><thead><tr><th>Opakowanie</th><th style="text-align:right">Waga</th></tr></thead><tbody>
+    ${z.opakowania.map(op => `<tr><td>${op.nazwa}</td><td style="text-align:right;font-weight:700">${op.waga_kg.toFixed(3).replace('.', ',')} kg</td></tr>`).join("")}
+    <tr style="border-top:2px solid #334155"><td style="font-weight:700">Razem</td><td style="text-align:right;font-weight:900">${z.opakowania.reduce((s, o) => s + o.waga_kg, 0).toFixed(3).replace('.', ',')} kg</td></tr>
+    </tbody></table>` : ""}
     <div class="section-title">Zapotrzebowanie i zużycie surowców</div>
     <table><thead><tr><th>Surowiec</th><th>Nr Partii</th><th style="text-align:right">Ilość</th></tr></thead><tbody>${skladnikiHTML}</tbody></table>
     </body></html>`);
@@ -429,16 +498,16 @@ export default function Produkcja() {
                     <tr key={p.id_receptury}>
                       <td className="font-medium text-white">{p.nazwa}</td>
                       <td className="mono" style={{ color: 'var(--text-code)' }}>{p.kod}</td>
-                      <td className="text-right mono font-medium text-white">{p.ilosc_produkcji.toFixed(3)} <span className="opacity-50 text-xs">{p.jednostka}</span></td>
-                      <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>{p.koszt_jm.toFixed(2)} PLN</td>
-                      <td className="text-right mono font-bold" style={{ color: 'var(--ok)' }}>{p.wartosc.toFixed(2)} PLN</td>
+                      <td className="text-right mono font-medium text-white">{fmtL(p.ilosc_produkcji, 3)} <span className="opacity-50 text-xs">{p.jednostka}</span></td>
+                      <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>{fmtL(p.koszt_jm, 2)} PLN</td>
+                      <td className="text-right mono font-bold" style={{ color: 'var(--ok)' }}>{fmtL(p.wartosc, 2)} PLN</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                     <td colSpan={4} className="px-3 py-2 text-xs font-black uppercase" style={{ color: 'var(--text-muted)' }}>Suma końcowa</td>
-                    <td className="px-3 py-2 text-right font-black mono text-white">{rozliczenie.suma_produkty.toFixed(2)} PLN</td>
+                    <td className="px-3 py-2 text-right font-black mono text-white">{fmtL(rozliczenie.suma_produkty, 2)} PLN</td>
                   </tr>
                 </tfoot>
               </table>
@@ -493,18 +562,18 @@ export default function Produkcja() {
                             <td className="font-medium text-white">{s.nazwa}</td>
                             <td className="mono text-xs" style={{ color: 'var(--text-code)' }}>{s.kod}</td>
                             <td className="mono text-xs" style={{ color: 'var(--text-muted)' }}>{s.jednostka}</td>
-                            <td className="text-right mono font-medium text-white">{s.zuzycie.toFixed(3)}</td>
+                            <td className="text-right mono font-medium text-white">{fmtL(s.zuzycie, 3)}</td>
                             <td className="text-right mono" style={{ color: s.cena_srednia > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                              {s.cena_srednia > 0 ? `${s.cena_srednia.toFixed(2)} PLN` : '—'}
+                              {s.cena_srednia > 0 ? `${fmtL(s.cena_srednia, 2)} PLN` : '—'}
                             </td>
                             <td className="text-right mono font-bold" style={{ color: 'var(--ok)' }}>
-                              {s.wartosc > 0 ? `${s.wartosc.toFixed(2)} PLN` : '—'}
+                              {s.wartosc > 0 ? `${fmtL(s.wartosc, 2)} PLN` : '—'}
                             </td>
                           </tr>
                         )),
                         <tr key={`sum-${typ}`} style={{ background: 'var(--bg-surface)' }}>
                           <td colSpan={5} className="px-3 py-1.5 text-xs font-bold text-right" style={{ color: 'var(--text-muted)' }}>{typLabels[typ] || typ} Razem</td>
-                          <td className="px-3 py-1.5 text-right font-bold mono text-white">{suma.toFixed(2)} PLN</td>
+                          <td className="px-3 py-1.5 text-right font-bold mono text-white">{fmtL(suma, 2)} PLN</td>
                         </tr>,
                       ];
                     });
@@ -513,7 +582,7 @@ export default function Produkcja() {
                 <tfoot>
                   <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                     <td colSpan={5} className="px-3 py-2 text-xs font-black uppercase" style={{ color: 'var(--text-muted)' }}>Suma końcowa</td>
-                    <td className="px-3 py-2 text-right font-black mono text-white">{rozliczenie.suma_skladniki.toFixed(2)} PLN</td>
+                    <td className="px-3 py-2 text-right font-black mono text-white">{fmtL(rozliczenie.suma_skladniki, 2)} PLN</td>
                   </tr>
                 </tfoot>
               </table>
@@ -610,23 +679,46 @@ export default function Produkcja() {
 
                   <div className="space-y-4">
                      <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest">Bilans materiałowy</h4>
-                     {selectedRecId ? (
-                       <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] space-y-2">
-                         {receptury.find(r => r.id === selectedRecId)?.skladniki.map(s => {
-                            const qty = (parseFloat(planowanaIlosc.replace(",", ".")) || 0) * s.ilosc_wymagana * (1 + (s.procent_strat || 0)/100);
-                            return (
-                              <div key={s.asortyment_skladnika.id} className="flex justify-between items-center">
-                                <span className="text-slate-400 text-sm truncate pr-4">{s.asortyment_skladnika.nazwa}</span>
-                                <span className="text-blue-300 font-mono text-sm font-bold whitespace-nowrap">
-                                  {qty.toFixed(3)} <span className="text-slate-500 text-xs">{s.czy_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary}</span>
-                                </span>
-                              </div>
-                            );
-                         })}
-                       </div>
+                     {bomData ? (
+                       <>
+                         {bomData.anyShortage && (
+                           <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--warn)' }}>
+                             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                             Niewystarczające stany magazynowe — zlecenie można zaplanować, ale rezerwacja może się nie udać.
+                           </div>
+                         )}
+                         <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] space-y-2">
+                           <div className="flex justify-between text-xs text-slate-500 font-semibold mb-1 px-0.5">
+                             <span>Składnik</span>
+                             <span className="flex gap-6 text-right">
+                               <span className="w-20">Potrzeba</span>
+                               <span className="w-20">Dostępne</span>
+                             </span>
+                           </div>
+                           {bomData.skladniki.map(s => {
+                             const req = bomData.qtyNum * s.ilosc_wymagana * (1 + (s.procent_strat || 0) / 100);
+                             const available = stockData[s.id_asortymentu_skladnika] ?? 0;
+                             const shortage = req > 0 && available < req;
+                             const jm = s.czy_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary;
+                             return (
+                               <div key={s.asortyment_skladnika.id} className="flex justify-between items-center">
+                                 <span className={`text-sm truncate pr-4 ${shortage ? 'text-red-400' : 'text-slate-400'}`}>{s.asortyment_skladnika.nazwa}</span>
+                                 <span className="flex gap-6 text-right">
+                                   <span className="text-blue-300 font-mono text-sm font-bold whitespace-nowrap w-20">
+                                     {fmtL(req, 3)} <span className="text-slate-500 text-xs">{jm}</span>
+                                   </span>
+                                   <span className={`font-mono text-sm font-bold whitespace-nowrap w-20 ${shortage ? 'text-red-400' : 'text-green-400'}`}>
+                                     {fmtL(available, 3)} <span className="text-slate-500 text-xs">{jm}</span>
+                                   </span>
+                                 </span>
+                               </div>
+                             );
+                           })}
+                         </div>
+                       </>
                      ) : (
                        <div className="h-32 flex items-center justify-center bg-[#0f172a] rounded-xl border border-dashed border-[#334155]">
-                          <p className="text-slate-600 text-xs">Wybierz recepturę by zobaczyć BOM</p>
+                         <p className="text-slate-600 text-xs">Wybierz recepturę by zobaczyć BOM</p>
                        </div>
                      )}
                   </div>
@@ -680,11 +772,14 @@ export default function Produkcja() {
             </thead>
             <tbody>
               {filtered.map(z => (
-                <tr key={z.id} className="cursor-pointer" onClick={() => setViewZlecenie(z)}>
+                <tr key={z.id} className="cursor-pointer" onClick={() => { setViewZlecenie(z); setEditIlosc(z.planowana_ilosc_wyrobu.toString()); }} style={z.status === "Anulowane" ? { opacity: 0.45 } : undefined}>
                   <td className="mono font-medium" style={{ color: 'var(--text-code)' }}>
                     {z.numer_zlecenia || z.id.substring(0, 8)}
                   </td>
-                  <td className="text-white font-medium">{z.receptura.asortyment_docelowy.nazwa}</td>
+                  <td className="text-white font-medium">
+                    {z.receptura.asortyment_docelowy.nazwa}
+                    <span className="ml-1.5 text-xs font-mono" style={{ color: 'var(--text-muted)' }}>v{z.receptura.numer_wersji}</span>
+                  </td>
                   <td>
                     <span className={`badge ${getStatusStyle(z.status)}`}>
                       {z.status === "W_toku" ? "W toku" : z.status}
@@ -707,8 +802,8 @@ export default function Produkcja() {
                           <Play className="w-3.5 h-3.5 inline mr-1" />Realizuj
                         </button>
                       )}
-                      {z.status !== "Zrealizowane" && (
-                        <button onClick={() => handleDelete(z.id)} className="px-2 py-1.5 rounded text-xs btn-hover-effect" style={{ color: 'var(--danger)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                      {z.status !== "Zrealizowane" && z.status !== "Anulowane" && (
+                        <button onClick={() => setConfirmDeleteId(z.id)} className="px-2 py-1.5 rounded text-xs btn-hover-effect" style={{ color: 'var(--danger)', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -736,7 +831,10 @@ export default function Produkcja() {
                     <h3 className="text-base font-bold text-white">{viewZlecenie.numer_zlecenia || "ZP-TEMP"}</h3>
                     <span className={`badge ${getStatusStyle(viewZlecenie.status)}`}>{viewZlecenie.status?.replace("_", " ") || "Planowane"}</span>
                   </div>
-                  <p className="text-slate-400 text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.nazwa}</p>
+                  <p className="text-slate-400 text-xs">
+                    {viewZlecenie.receptura?.asortyment_docelowy?.nazwa}
+                    <span className="ml-1.5 font-mono" style={{ color: 'var(--text-muted)' }}>· v{viewZlecenie.receptura?.numer_wersji}</span>
+                  </p>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -755,11 +853,26 @@ export default function Produkcja() {
                 <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
                   <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3">Parametry produkcji</h4>
                   <div className="space-y-2.5">
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500 text-xs">Plan</span>
-                      <span className="text-white font-mono font-bold">
-                        {viewZlecenie.planowana_ilosc_wyrobu} <span className="text-slate-500 text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
-                      </span>
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-slate-500 text-xs shrink-0">Plan</span>
+                      {viewZlecenie.status === "Planowane" ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="0.001"
+                            step="any"
+                            value={editIlosc}
+                            onChange={e => setEditIlosc(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") handleSaveEdit(); }}
+                            className="w-24 bg-[#1e293b] border border-[#334155] focus:border-blue-500 rounded-lg px-2 py-1 text-white font-mono text-sm text-right focus:outline-none"
+                          />
+                          <span className="text-slate-500 text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
+                        </div>
+                      ) : (
+                        <span className="text-white font-mono font-bold">
+                          {viewZlecenie.planowana_ilosc_wyrobu} <span className="text-slate-500 text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
+                        </span>
+                      )}
                     </div>
                     {viewZlecenie.rzeczywista_ilosc_wyrobu && (
                       <div className="flex justify-between items-center">
@@ -769,6 +882,10 @@ export default function Produkcja() {
                         </span>
                       </div>
                     )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500 text-xs">Receptura</span>
+                      <span className="text-slate-300 font-mono text-xs">v{viewZlecenie.receptura?.numer_wersji}</span>
+                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 text-xs">Kod towaru</span>
                       <span className="text-slate-300 font-mono text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.kod_towaru}</span>
@@ -780,12 +897,39 @@ export default function Produkcja() {
                   </div>
                 </div>
 
+                {viewZlecenie.opakowania && viewZlecenie.opakowania.length > 0 && (
+                  <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
+                    <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3">Pakowanie</h4>
+                    <div className="space-y-1.5">
+                      {viewZlecenie.opakowania.map((op, i) => (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="text-slate-300">{op.nazwa}</span>
+                          <span className="font-mono font-bold text-white">{fmtL(op.waga_kg, 3)} kg</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between items-center text-sm pt-1 border-t border-[#334155]">
+                        <span className="text-slate-500">Razem</span>
+                        <span className="font-mono font-bold" style={{ color: 'var(--ok)' }}>
+                          {fmtL(viewZlecenie.opakowania.reduce((s, o) => s + o.waga_kg, 0), 3)} kg
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   {viewZlecenie.status === "Planowane" && (
-                    <button onClick={() => { handleStartProduction(viewZlecenie); setViewZlecenie(null); }}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 min-h-[44px] transition-colors">
-                      <Clock className="w-4 h-4" /> Rozpocznij produkcję
-                    </button>
+                    <>
+                      <button onClick={handleSaveEdit}
+                        className="w-full text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 min-h-[44px] transition-colors"
+                        style={{ background: 'var(--accent)' }}>
+                        <Save className="w-4 h-4" /> Zapisz zmiany
+                      </button>
+                      <button onClick={() => { handleStartProduction(viewZlecenie); setViewZlecenie(null); }}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 min-h-[44px] transition-colors">
+                        <Clock className="w-4 h-4" /> Rozpocznij produkcję
+                      </button>
+                    </>
                   )}
                   {viewZlecenie.status === "W_toku" && (
                     <button onClick={() => { handleRealizuj(viewZlecenie); setViewZlecenie(null); }}
@@ -820,8 +964,8 @@ export default function Produkcja() {
                               FEFO: {s.sugerowane_partie?.[0]?.numer_partii || "—"}
                             </td>
                             <td className="text-right mono font-bold text-white">
-                              {(s.ilosc_wymagana * viewZlecenie.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100)).toFixed(3)}
-                              <span className="text-slate-500 text-xs ml-1">{s.asortyment_skladnika?.jednostka_miary}</span>
+                              {fmtL(s.ilosc_wymagana * viewZlecenie.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100), 3)}
+                              <span className="text-slate-500 text-xs ml-1">{s.czy_pomocnicza ? s.asortyment_skladnika?.jednostka_pomocnicza : s.asortyment_skladnika?.jednostka_miary}</span>
                             </td>
                           </tr>
                         ))
@@ -842,7 +986,7 @@ export default function Produkcja() {
                                 </span>
                               </td>
                               <td className="text-right mono font-bold text-white">
-                                {sumRes.toFixed(3)} <span className="text-slate-500 text-xs ml-1">{s.asortyment_skladnika?.jednostka_miary}</span>
+                                {fmtL(sumRes, 3)} <span className="text-slate-500 text-xs ml-1">{s.asortyment_skladnika?.jednostka_miary}</span>
                               </td>
                             </tr>
                           );
@@ -853,7 +997,7 @@ export default function Produkcja() {
                             <td className="font-semibold text-white">{r.partia?.asortyment?.nazwa}</td>
                             <td className="mono text-xs" style={{ color: 'var(--text-code)' }}>{r.partia?.numer_partii}</td>
                             <td className="text-right mono font-bold" style={{ color: 'var(--ok)' }}>
-                              {Math.abs(r.ilosc).toFixed(3)} <span className="text-slate-500 text-xs ml-1">{r.partia?.asortyment?.jednostka_miary}</span>
+                              {fmtL(Math.abs(r.ilosc), 3)} <span className="text-slate-500 text-xs ml-1">{r.partia?.asortyment?.jednostka_miary}</span>
                             </td>
                           </tr>
                         ))
@@ -938,7 +1082,7 @@ export default function Produkcja() {
                           <span className="text-blue-300 font-mono font-bold">
                             {(() => {
                               const baseRequired = s.ilosc_wymagana * pickListZlecenie.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100);
-                              return baseRequired.toFixed(3);
+                              return fmtL(baseRequired, 3);
                             })()}
                             <span className="text-slate-500 text-xs ml-1">{s.asortyment_skladnika.jednostka_miary}</span>
                           </span>
@@ -948,7 +1092,7 @@ export default function Produkcja() {
                             s.sugerowane_partie.map(p => (
                               <div key={p.id} className="flex justify-between items-center bg-[#1e293b] py-2 px-3 rounded-lg border border-[#334155] text-sm">
                                 <span className="mono font-semibold" style={{ color: 'var(--text-code)' }}>{p.numer_partii}</span>
-                                <span className="text-slate-500 text-xs">Stan: {p.stan.toFixed(2)}</span>
+                                <span className="text-slate-500 text-xs">Stan: {fmtL(p.stan, 2)}</span>
                               </div>
                             ))
                           ) : (
@@ -977,7 +1121,7 @@ export default function Produkcja() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-white font-bold font-mono">{r.ilosc_zarezerwowana.toFixed(3)}</div>
+                          <div className="text-white font-bold font-mono">{fmtL(r.ilosc_zarezerwowana, 3)}</div>
                           <div className="text-slate-500 text-xs mt-0.5">{asortyment.jednostka_miary}</div>
                         </div>
                       </div>
@@ -1042,7 +1186,7 @@ export default function Produkcja() {
                   <tr key={s.id_asortymentu_skladnika}>
                     <td className="py-6 font-bold text-xl uppercase tracking-tight">{s.asortyment_skladnika.nazwa}</td>
                     <td className="py-6 font-mono text-slate-400 italic">Sugestia: {s.sugerowane_partie?.[0]?.numer_partii || "---"}</td>
-                    <td className="py-6 text-right font-black text-2xl font-mono">{(s.ilosc_wymagana * viewZlecenie.planowana_ilosc_wyrobu).toFixed(3)} <span className="text-xs font-sans text-slate-400 uppercase">{s.asortyment_skladnika.jednostka_miary}</span></td>
+                    <td className="py-6 text-right font-black text-2xl font-mono">{fmtL(s.ilosc_wymagana * viewZlecenie.planowana_ilosc_wyrobu, 3)} <span className="text-xs font-sans text-slate-400 uppercase">{s.asortyment_skladnika.jednostka_miary}</span></td>
                   </tr>
                 ))
               ) : (
@@ -1050,7 +1194,7 @@ export default function Produkcja() {
                   <tr key={r.id}>
                     <td className="py-6 font-bold text-xl uppercase tracking-tight">{r.partia?.asortyment?.nazwa || r.asortyment?.nazwa}</td>
                     <td className="py-6 font-mono text-slate-400 italic font-bold">{r.partia?.numer_partii || "---"}</td>
-                    <td className="py-6 text-right font-black text-2xl font-mono">{r.ilosc_zarezerwowana.toFixed(3)} <span className="text-xs font-sans text-slate-400 uppercase">{r.partia?.asortyment?.jednostka_miary || r.asortyment?.jednostka_miary}</span></td>
+                    <td className="py-6 text-right font-black text-2xl font-mono">{fmtL(r.ilosc_zarezerwowana, 3)} <span className="text-xs font-sans text-slate-400 uppercase">{r.partia?.asortyment?.jednostka_miary || r.asortyment?.jednostka_miary}</span></td>
                   </tr>
                 ))
               )}
@@ -1119,6 +1263,56 @@ export default function Produkcja() {
                     </div>
                   </div>
 
+                  <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest">Pakowanie</h4>
+                      <button
+                        onClick={() => setOpakowaniaWpisy(prev => [...prev, { id_asortymentu: "", nazwa: "", waga_kg: "" }])}
+                        className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+                      >
+                        <Plus className="w-3 h-3" /> Dodaj
+                      </button>
+                    </div>
+                    {opakowaniaWpisy.length === 0 ? (
+                      <div className="text-center py-3 text-slate-600 text-xs border border-dashed border-[#334155] rounded-lg">
+                        Kliknij „Dodaj" aby dodać opakowanie
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {opakowaniaWpisy.map((op, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <select
+                              value={op.id_asortymentu}
+                              onChange={e => {
+                                const found = dostepneOpakowania.find(o => o.id === e.target.value);
+                                setOpakowaniaWpisy(prev => prev.map((x, i) => i === idx ? { ...x, id_asortymentu: e.target.value, nazwa: found?.nazwa || "" } : x));
+                              }}
+                              className="flex-1 rounded px-2 py-1.5 text-sm outline-none focus:ring-1"
+                              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            >
+                              <option value="">— opakowanie —</option>
+                              {dostepneOpakowania.map(o => <option key={o.id} value={o.id}>{o.nazwa}</option>)}
+                            </select>
+                            <div className="relative">
+                              <input
+                                type="text" value={op.waga_kg} placeholder="0.00"
+                                onChange={e => setOpakowaniaWpisy(prev => prev.map((x, i) => i === idx ? { ...x, waga_kg: e.target.value } : x))}
+                                className="w-24 text-right rounded px-2 py-1.5 text-sm font-mono outline-none focus:ring-1 pr-7"
+                                style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                              />
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>kg</span>
+                            </div>
+                            <button onClick={() => setOpakowaniaWpisy(prev => prev.filter((_, i) => i !== idx))} className="text-slate-600 hover:text-red-400 transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="text-right text-xs font-mono pt-1" style={{ color: 'var(--text-muted)' }}>
+                          Razem: <span className="text-white font-bold">{fmtL(opakowaniaWpisy.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0), 3)}</span> kg
+                        </div>
+                      </div>
+                    )}
+                  </div>
                </div>
 
                {/* Right: Ingredients Allocation */}
@@ -1143,7 +1337,7 @@ export default function Produkcja() {
                             <div className="flex justify-between items-start mb-2">
                                <div>
                                   <div className="text-white font-semibold text-sm line-clamp-1">{s.asortyment_skladnika?.nazwa}</div>
-                                  <div className="text-slate-500 text-xs mt-0.5">Zapotrzebowanie: {required.toFixed(3)} {s.asortyment_skladnika?.jednostka_miary}</div>
+                                  <div className="text-slate-500 text-xs mt-0.5">Zapotrzebowanie: {fmtL(required, 3)} {s.asortyment_skladnika?.jednostka_miary}</div>
                                </div>
                                <button
                                  onClick={() => setActivePicker({ ingredId: ingId, skladnik: s })}
@@ -1162,11 +1356,11 @@ export default function Produkcja() {
                                           <span className="mono font-semibold text-xs" style={{ color: 'var(--text-code)' }}>{batchInfo?.numer_partii || "PARTIA"}</span>
                                           {batchInfo?.termin_waznosci && <span className="text-slate-600 text-xs ml-2">Wazn: {new Date(batchInfo.termin_waznosci).toLocaleDateString()}</span>}
                                        </div>
-                                       <span className="mono font-bold text-sm text-blue-300">{p.ilosc.toFixed(3)} <span className="text-slate-500 text-xs">{s.asortyment_skladnika?.jednostka_miary}</span></span>
+                                       <span className="mono font-bold text-sm text-blue-300">{fmtL(p.ilosc, 3)} <span className="text-slate-500 text-xs">{s.asortyment_skladnika?.jednostka_miary}</span></span>
                                     </div>
                                   );
                                })}
-                               {!isComplete && allocatedSum > 0 && <p className="text-amber-400 text-xs mt-1 text-center">Niepełna alokacja (brakuje: {(required - allocatedSum).toFixed(3)})</p>}
+                               {!isComplete && allocatedSum > 0 && <p className="text-amber-400 text-xs mt-1 text-center">Niepełna alokacja (brakuje: {fmtL(required - allocatedSum, 3)})</p>}
                                {allocatedSum === 0 && <div className="text-center py-2 text-slate-600 text-xs border border-dashed border-[#334155] rounded-lg">Brak partii</div>}
                             </div>
                         </div>
@@ -1241,7 +1435,7 @@ export default function Produkcja() {
                                Resetuj FEFO
                              </button>
                              <span className="text-white font-mono font-bold">
-                               {(activePicker.skladnik.ilosc_wymagana * itemToRealize.planowana_ilosc_wyrobu * (1 + (activePicker.skladnik.procent_strat || 0) / 100)).toFixed(3)}
+                               {fmtL(activePicker.skladnik.ilosc_wymagana * itemToRealize.planowana_ilosc_wyrobu * (1 + (activePicker.skladnik.procent_strat || 0) / 100), 3)}
                                <span className="text-slate-500 text-xs ml-1">{activePicker.skladnik.asortyment_skladnika.jednostka_miary}</span>
                              </span>
                           </div>
@@ -1260,7 +1454,7 @@ export default function Produkcja() {
                                     <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
                                        <span>Ważn: {p.termin_waznosci ? new Date(p.termin_waznosci).toLocaleDateString() : "—"}</span>
                                        <span>·</span>
-                                       <span>SOH: <span className="text-slate-300">{p.stan.toFixed(3)}</span></span>
+                                       <span>SOH: <span className="text-slate-300">{fmtL(p.stan, 3)}</span></span>
                                        {maxForThis <= 0 && sumOthers >= pickerRequired && <span className="text-amber-500">· limit osiągnięty</span>}
                                     </div>
                                  </div>
@@ -1329,7 +1523,7 @@ export default function Produkcja() {
                     const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
                     const fmtFull = (d: string) => new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
                     const pozycjeHTML = (previewDocData as any).pozycje.map((p: any) =>
-                      `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${p.asortyment}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold">${p.ilosc.toFixed(3)} ${p.jednostka}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmt(p.termin_waznosci)}</td></tr>`
+                      `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${p.asortyment}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold">${fmtL(p.ilosc, 3)} ${p.jednostka}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmt(p.termin_waznosci)}</td></tr>`
                     ).join("");
                     win.document.write(`<!DOCTYPE html><html><head><title>${previewDocData.referencja}</title><style>body{font-family:Inter,system-ui,sans-serif;padding:40px;color:#1e293b;max-width:800px;margin:0 auto} h1{font-size:24px;margin:0 0 4px} .meta{color:#64748b;font-size:13px;margin-bottom:24px} table{width:100%;border-collapse:collapse;margin-top:16px} th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;color:#64748b} .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;margin-left:8px} @media print{body{padding:20px}}</style></head><body><h1>${previewDocData.referencja} <span class="badge" style="background:#e0e7ff;color:#4338ca">${previewDocData.typ}</span></h1><div class="meta">${fmtFull(previewDocData.data)} · Wystawił: ${previewDocData.uzytkownik}</div><table><thead><tr><th>Asortyment</th><th>Nr Partii</th><th style="text-align:right">Ilość</th><th>Ważność</th></tr></thead><tbody>${pozycjeHTML}</tbody></table></body></html>`);
                     win.document.close();
@@ -1377,13 +1571,13 @@ export default function Produkcja() {
                         </td>
                         <td className="mono text-xs font-semibold" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
                         <td className="text-right mono font-bold text-white">
-                          {poz.ilosc.toFixed(3)} <span className="text-slate-500 text-xs">{poz.jednostka}</span>
+                          {fmtL(poz.ilosc, 3)} <span className="text-slate-500 text-xs">{poz.jednostka}</span>
                         </td>
                         <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
-                          {poz.cena_jednostkowa != null ? `${poz.cena_jednostkowa.toFixed(2)} PLN` : "—"}
+                          {poz.cena_jednostkowa != null ? `${fmtL(poz.cena_jednostkowa, 2)} PLN` : "—"}
                         </td>
                         <td className="text-right font-bold" style={{ color: 'var(--ok)' }}>
-                          {poz.cena_jednostkowa != null ? `${poz.wartosc.toFixed(2)} PLN` : "—"}
+                          {poz.cena_jednostkowa != null ? `${fmtL(poz.wartosc, 2)} PLN` : "—"}
                         </td>
                       </tr>
                     ))}
@@ -1392,7 +1586,7 @@ export default function Produkcja() {
                     <tfoot>
                       <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                         <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Razem</td>
-                        <td className="px-3 py-2 text-right font-bold mono text-white">{previewDocData.wartosc_calkowita.toFixed(2)} PLN</td>
+                        <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(previewDocData.wartosc_calkowita, 2)} PLN</td>
                       </tr>
                     </tfoot>
                   )}
@@ -1407,6 +1601,16 @@ export default function Produkcja() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!confirmDeleteId}
+        title="Usuń zlecenie"
+        message="Czy na pewno chcesz usunąć to zlecenie produkcyjne? Tej operacji nie można cofnąć."
+        confirmText="Usuń"
+        cancelText="Anuluj"
+        onConfirm={() => { handleDelete(confirmDeleteId!); setConfirmDeleteId(null); }}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
     </div>
   );
 }

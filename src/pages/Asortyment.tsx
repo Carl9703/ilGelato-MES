@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Save, X, AlertCircle, Package, ArrowLeft, History, FileText, Search } from "lucide-react";
+import { fmtL } from "../utils/fmt";
+import ConfirmModal from "../components/ConfirmModal";
 
 
 
@@ -17,9 +19,9 @@ type AsortymentDetail = {
 
 const UNITS = ["kg", "L", "szt", "ml", "g", "opak"];
 
-const typy = ["Surowiec", "Polprodukt", "Wyrob_Gotowy"];
-const typLabels: Record<string, string> = { Surowiec: "Surowiec", Polprodukt: "Półprodukt", Wyrob_Gotowy: "Wyrób gotowy" };
-const typColors: Record<string, string> = { Surowiec: "bg-blue-500/20 text-blue-300", Polprodukt: "bg-amber-500/20 text-amber-300", Wyrob_Gotowy: "bg-emerald-500/20 text-emerald-300" };
+const typy = ["Surowiec", "Polprodukt", "Wyrob_Gotowy", "Opakowanie"];
+const typLabels: Record<string, string> = { Surowiec: "Surowiec", Polprodukt: "Półprodukt", Wyrob_Gotowy: "Wyrób gotowy", Opakowanie: "Opakowanie" };
+const typColors: Record<string, string> = { Surowiec: "bg-blue-500/20 text-blue-300", Polprodukt: "bg-amber-500/20 text-amber-300", Wyrob_Gotowy: "bg-emerald-500/20 text-emerald-300", Opakowanie: "bg-purple-500/20 text-purple-300" };
 
 export default function Asortyment() {
   const [items, setItems] = useState<AsortymentOgolne[]>([]);
@@ -52,6 +54,8 @@ export default function Asortyment() {
   const [alergenySaving, setAlergenySaving] = useState(false);
   const [skladnikiOpisForm, setSkladnikiOpisForm] = useState({ producent: "", zrodlo_danych: "", skladniki_opis: "", moze_zawierac: "" });
   const [kartoSaving, setKartoSaving] = useState(false);
+
+  const [confirmArchive, setConfirmArchive] = useState(false);
 
   // Document preview modal
   const [previewDocRef, setPreviewDocRef] = useState<string | null>(null);
@@ -164,16 +168,25 @@ export default function Asortyment() {
   const toggleAktywne = async () => {
     if (!selectedItem) return;
     const aktywne = selectedItem.czy_aktywne;
+    if (aktywne) { setConfirmArchive(true); return; }
     try {
-      let res;
-      if (aktywne) {
-        res = await fetch(`/api/asortyment/${selectedItem.id}?archive=true`, { method: "DELETE" });
-      } else {
-        res = await fetch(`/api/asortyment/${selectedItem.id}/restore`, { method: "PUT" });
-      }
+      const res = await fetch(`/api/asortyment/${selectedItem.id}/restore`, { method: "PUT" });
       if (!res.ok) throw new Error((await res.json()).error);
-      setSelectedItem({ ...selectedItem, czy_aktywne: !aktywne });
-      setSuccess(aktywne ? "Przeniesiono do archiwum" : "Przywrócono z archiwum");
+      setSelectedItem({ ...selectedItem, czy_aktywne: true });
+      setSuccess("Przywrócono z archiwum");
+      setTimeout(() => setSuccess(""), 2500);
+      fetchAll();
+    } catch (err: any) { setError(err.message); }
+  };
+
+  const doArchive = async () => {
+    setConfirmArchive(false);
+    if (!selectedItem) return;
+    try {
+      const res = await fetch(`/api/asortyment/${selectedItem.id}?archive=true`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setSelectedItem({ ...selectedItem, czy_aktywne: false });
+      setSuccess("Przeniesiono do archiwum");
       setTimeout(() => setSuccess(""), 2500);
       fetchAll();
     } catch (err: any) { setError(err.message); }
@@ -254,7 +267,7 @@ export default function Asortyment() {
     } catch (err: any) { setError(err.message); }
   };
 
-  const fillZero = (n: number) => n.toFixed(2);
+  const fillZero = (n: number) => fmtL(n, 2);
   const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
   const fmtDateTime = (d: string) => new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
@@ -717,9 +730,9 @@ export default function Asortyment() {
                             <div className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{poz.kod_towaru}</div>
                           </td>
                           <td className="mono" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
-                          <td className="text-right mono font-medium text-white">{poz.ilosc.toFixed(3)} <span className="text-xs opacity-50">{poz.jednostka}</span></td>
-                          <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>{poz.cena_jednostkowa !== null ? `${poz.cena_jednostkowa.toFixed(2)} PLN` : "—"}</td>
-                          <td className="text-right mono font-medium text-emerald-400">{poz.cena_jednostkowa !== null ? `${poz.wartosc.toFixed(2)} PLN` : "—"}</td>
+                          <td className="text-right mono font-medium text-white">{fmtL(poz.ilosc, 3)} <span className="text-xs opacity-50">{poz.jednostka}</span></td>
+                          <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>{poz.cena_jednostkowa !== null ? `${fmtL(poz.cena_jednostkowa, 2)} PLN` : "—"}</td>
+                          <td className="text-right mono font-medium text-emerald-400">{poz.cena_jednostkowa !== null ? `${fmtL(poz.wartosc, 2)} PLN` : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -727,7 +740,7 @@ export default function Asortyment() {
                       <tfoot>
                         <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                           <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Razem</td>
-                          <td className="px-3 py-2 text-right font-bold mono text-white">{previewDocData.wartosc_calkowita.toFixed(2)} PLN</td>
+                          <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(previewDocData.wartosc_calkowita, 2)} PLN</td>
                         </tr>
                       </tfoot>
                     )}
@@ -737,6 +750,15 @@ export default function Asortyment() {
             </div>
           </div>
         )}
+      <ConfirmModal
+        isOpen={confirmArchive}
+        title="Archiwizacja kartoteki"
+        message={`Czy na pewno chcesz zarchiwizować "${selectedItem?.nazwa}"? Kartoteka zostanie ukryta w listach systemu.`}
+        confirmText="Archiwizuj"
+        cancelText="Anuluj"
+        onConfirm={doArchive}
+        onCancel={() => setConfirmArchive(false)}
+      />
       </div>
     );
   }

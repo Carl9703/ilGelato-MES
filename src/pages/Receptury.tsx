@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Save, X, BookOpen, AlertCircle, Trash2, Edit2, Calculator, CheckCircle2 } from "lucide-react";
+import { fmtL } from "../utils/fmt";
 
 type Asortyment = {
   id: string; kod_towaru: string; nazwa: string; jednostka_miary: string;
@@ -187,9 +188,15 @@ export default function Receptury() {
     } catch (err: any) { setError(err.message); }
   };
 
-  const handleDelete = async (id: string) => {
-    await fetch(`/api/receptury/${id}`, { method: "DELETE" });
-    closeKarta();
+  const handleToggleAktywne = async (id: string, current: boolean) => {
+    if (kartaReceptura?.id === id) {
+      setKartaReceptura({ ...kartaReceptura, czy_aktywne: !current });
+    }
+    await fetch(`/api/receptury/${id}/aktywne`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ czy_aktywne: !current }),
+    });
     fetchAll();
   };
 
@@ -225,12 +232,12 @@ export default function Receptury() {
           <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-4xl border border-[#334155] overflow-hidden flex flex-col" style={{ height: '90vh' }}>
 
             {/* NAGŁÓWEK KARTY */}
-            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
-              <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+              <div className="flex items-center gap-3 min-w-0">
                 <BookOpen className="w-4 h-4 shrink-0" style={{ color: 'var(--accent)' }} />
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-base font-bold text-white">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <h3 className="text-base font-bold text-white truncate">
                       {kartaMode === "new" ? "Nowa receptura" : kartaReceptura?.asortyment_docelowy.nazwa}
                     </h3>
                     {kartaMode === "view" && <span className="badge badge-ok">Podgląd</span>}
@@ -265,7 +272,7 @@ export default function Receptury() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 {kartaMode === "view" && kartaReceptura && (
                   <>
                     <button onClick={() => openNewVersion(kartaReceptura)} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm transition-colors btn-hover-effect">
@@ -274,9 +281,18 @@ export default function Receptury() {
                     <button onClick={switchToEdit} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition-colors btn-hover-effect">
                       <Edit2 className="w-4 h-4" /> Edytuj
                     </button>
-                    <button onClick={() => handleDelete(kartaReceptura.id)} className="w-10 h-10 flex items-center justify-center text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all">
-                      <Trash2 className="w-5 h-5" />
-                    </button>
+                    <div
+                      onClick={() => handleToggleAktywne(kartaReceptura.id, kartaReceptura.czy_aktywne)}
+                      title={kartaReceptura.czy_aktywne ? "Dezaktywuj wersję" : "Aktywuj wersję"}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors hover:bg-[#334155]"
+                    >
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {kartaReceptura.czy_aktywne ? "Aktywna" : "Archiwalna"}
+                      </span>
+                      <div className={`w-10 h-5 rounded-full transition-colors relative ${kartaReceptura.czy_aktywne ? 'bg-emerald-500' : 'bg-slate-600'}`}>
+                        <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${kartaReceptura.czy_aktywne ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                      </div>
+                    </div>
                   </>
                 )}
                 {isEditMode && (
@@ -484,7 +500,7 @@ export default function Receptury() {
                                   <div className="text-[10px] font-mono" style={{ color: 'var(--text-code)' }}>{s.asortyment_skladnika.kod_towaru}</div>
                                 </div>
                                 <div className="text-right font-mono font-bold text-sm" style={{ color: '#4ade80' }}>
-                                  {Number((s.ilosc_wymagana * (kartaReceptura?.wielkosc_produkcji ?? 1)).toFixed(3))}
+                                  {fmtL(s.ilosc_wymagana * (kartaReceptura?.wielkosc_produkcji ?? 1), 3)}
                                 </div>
                                 <div className="text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>
                                   {s.czy_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary}
@@ -557,16 +573,16 @@ export default function Receptury() {
                                   <div className="font-medium text-white">{w.nazwa}</div>
                                   <div className="mono text-xs" style={{ color: 'var(--text-muted)' }}>{w.kod}</div>
                                 </td>
-                                <td className="text-right mono">{w.ilosc_wymagana.toFixed(3)} <span className="opacity-50 text-xs">{w.jednostka}</span></td>
-                                <td className="text-right mono font-medium text-white">{w.ilosc_na_batch.toFixed(3)} <span className="opacity-50 text-xs">{w.jednostka}</span></td>
+                                <td className="text-right mono">{fmtL(w.ilosc_wymagana, 3)} <span className="opacity-50 text-xs">{w.jednostka}</span></td>
+                                <td className="text-right mono font-medium text-white">{fmtL(w.ilosc_na_batch, 3)} <span className="opacity-50 text-xs">{w.jednostka}</span></td>
                                 <td className="text-right mono" style={{ color: w.cena_srednia > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                                  {w.cena_srednia > 0 ? `${w.cena_srednia.toFixed(2)} PLN` : '—'}
+                                  {w.cena_srednia > 0 ? `${fmtL(w.cena_srednia, 2)} PLN` : '—'}
                                 </td>
                                 <td className="text-right mono font-medium" style={{ color: 'var(--ok)' }}>
-                                  {w.wartosc > 0 ? `${w.wartosc.toFixed(2)} PLN` : '—'}
+                                  {w.wartosc > 0 ? `${fmtL(w.wartosc, 2)} PLN` : '—'}
                                 </td>
                                 <td className="text-right mono text-xs" style={{ color: 'var(--text-muted)' }}>
-                                  {w.udzial_procent > 0 ? `${w.udzial_procent.toFixed(1)}%` : '—'}
+                                  {w.udzial_procent > 0 ? `${fmtL(w.udzial_procent, 1)}%` : '—'}
                                 </td>
                               </tr>
                             ))}
@@ -574,24 +590,24 @@ export default function Receptury() {
                           <tfoot>
                             <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                               <td colSpan={4} className="px-3 py-2 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Koszt składników (wsad)</td>
-                              <td className="px-3 py-2 text-right font-bold mono text-white">{kalkulacja.koszt_skladnikow.toFixed(2)} PLN</td>
+                              <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(kalkulacja.koszt_skladnikow, 2)} PLN</td>
                               <td />
                             </tr>
                             <tr style={{ background: 'var(--bg-surface)' }}>
                               <td colSpan={4} className="px-3 py-2 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Koszt na 1 {kalkulacja.jednostka_miary}</td>
-                              <td className="px-3 py-2 text-right font-bold mono text-white">{kalkulacja.koszt_na_jm.toFixed(2)} PLN</td>
+                              <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(kalkulacja.koszt_na_jm, 2)} PLN</td>
                               <td />
                             </tr>
                             {kalkulacja.narzut_procent > 0 && (
                               <tr style={{ background: 'var(--bg-surface)' }}>
                                 <td colSpan={4} className="px-3 py-2 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Narzut {kalkulacja.narzut_procent}%</td>
-                                <td className="px-3 py-2 text-right mono" style={{ color: 'var(--warn)' }}>+{kalkulacja.narzut_zl.toFixed(2)} PLN</td>
+                                <td className="px-3 py-2 text-right mono" style={{ color: 'var(--warn)' }}>+{fmtL(kalkulacja.narzut_zl, 2)} PLN</td>
                                 <td />
                               </tr>
                             )}
                             <tr style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
                               <td colSpan={4} className="px-3 py-2 text-xs font-black uppercase" style={{ color: 'var(--ok)' }}>Koszt z narzutem / 1 {kalkulacja.jednostka_miary}</td>
-                              <td className="px-3 py-2 text-right font-black mono text-lg" style={{ color: 'var(--ok)' }}>{kalkulacja.koszt_z_narzotem.toFixed(2)} PLN</td>
+                              <td className="px-3 py-2 text-right font-black mono text-lg" style={{ color: 'var(--ok)' }}>{fmtL(kalkulacja.koszt_z_narzotem, 2)} PLN</td>
                               <td />
                             </tr>
                           </tfoot>
@@ -644,7 +660,6 @@ export default function Receptury() {
                 <th>Składniki</th>
                 <th>Trwałość</th>
                 <th>Status</th>
-                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -659,7 +674,7 @@ export default function Receptury() {
                 const sorted = versions.sort((a, b) => b.numer_wersji - a.numer_wersji);
                 const v = sorted[0];
                 return (
-                  <tr key={v.id} onClick={() => v.czy_aktywne && openView(v)} className={v.czy_aktywne ? 'cursor-pointer' : 'opacity-40'}>
+                  <tr key={v.id} onClick={() => openView(v)} className={`cursor-pointer ${v.czy_aktywne ? '' : 'opacity-40'}`}>
                     <td className="font-medium text-white">{v.asortyment_docelowy.nazwa}</td>
                     <td className="mono" style={{ color: 'var(--text-code)' }}>{v.asortyment_docelowy.kod_towaru}</td>
                     <td>
@@ -679,17 +694,6 @@ export default function Receptury() {
                         ? <span className="badge badge-ok">Aktywna</span>
                         : <span className="badge badge-neutral">Archiwalna</span>
                       }
-                    </td>
-                    <td onClick={e => e.stopPropagation()}>
-                      {v.czy_aktywne && (
-                        <button
-                          onClick={() => handleDelete(v.id)}
-                          title="Archiwizuj wersję"
-                          className="p-1.5 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
                     </td>
                   </tr>
                 );

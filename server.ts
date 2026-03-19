@@ -121,7 +121,7 @@ async function startServer() {
   await migrateExistingDocuments();
 
   const app = express();
-  const PORT = parseInt(process.env.PORT || "3000", 10);
+  const PORT = parseInt(process.env.PORT || "3001", 10);
 
   app.use(helmet({ contentSecurityPolicy: false })); // CSP wyłączone bo Vite dev serwuje inline scripts
   app.use(express.json());
@@ -656,7 +656,7 @@ async function startServer() {
             const stanAktywny = ruch.partia.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
             const wymagana = Math.abs(ruch.ilosc);
             if (stanAktywny < wymagana) {
-              niedobory.push(`${ruch.partia.numer_partii}: dostępne ${stanAktywny.toFixed(3)}, wymagane ${wymagana.toFixed(3)}`);
+              niedobory.push(`${ruch.partia.numer_partii}: dostępne ${stanAktywny.toFixed(3).replace('.', ',')}, wymagane ${wymagana.toFixed(3).replace('.', ',')}`);
             }
           }
           if (niedobory.length > 0) {
@@ -709,7 +709,7 @@ async function startServer() {
             // Po deaktywacji tego ruchu, stan = stanAktywny - ruch.ilosc (który jest dodatni dla PZ)
             const stanPo = stanAktywny - ruch.ilosc;
             if (stanPo < -0.001) {
-              niedobory.push(`${ruch.partia.numer_partii}: stan ${stanAktywny.toFixed(3)}, cofnięcie ${ruch.ilosc.toFixed(3)} → niedobór`);
+              niedobory.push(`${ruch.partia.numer_partii}: stan ${stanAktywny.toFixed(3).replace('.', ',')}, cofnięcie ${ruch.ilosc.toFixed(3).replace('.', ',')} → niedobór`);
             }
           }
           if (niedobory.length > 0) {
@@ -736,6 +736,39 @@ async function startServer() {
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Błąd anulowania dokumentu" });
+    }
+  });
+
+  app.delete("/api/dokumenty/:ref", async (req, res) => {
+    try {
+      const ref = decodeURIComponent(req.params.ref);
+
+      const header = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      if (!header) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (header.status !== "Bufor") return res.status(400).json({ error: "Można usunąć tylko dokument w stanie Bufor" });
+
+      await prisma.$transaction(async (tx) => {
+        const ruchy = await tx.ruchy_Magazynowe.findMany({ where: { referencja_dokumentu: ref } });
+        const partieIds = [...new Set(ruchy.map(r => r.id_partii))];
+
+        await tx.ruchy_Magazynowe.deleteMany({ where: { referencja_dokumentu: ref } });
+
+        // Dla PZ: usuń partie które nie mają już żadnych ruchów
+        if (header.typ === "PZ") {
+          for (const partiaId of partieIds) {
+            const pozostale = await tx.ruchy_Magazynowe.count({ where: { id_partii: partiaId } });
+            if (pozostale === 0) {
+              await tx.partie_Magazynowe.delete({ where: { id: partiaId } });
+            }
+          }
+        }
+
+        await tx.dokumenty_Magazynowe.delete({ where: { referencja: ref } });
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Błąd usuwania dokumentu" });
     }
   });
 
@@ -1264,6 +1297,19 @@ async function startServer() {
     }
   });
 
+  app.patch("/api/receptury/:id/aktywne", async (req, res) => {
+    try {
+      const { czy_aktywne } = req.body;
+      await prisma.receptury.update({
+        where: { id: req.params.id },
+        data: { czy_aktywne: Boolean(czy_aktywne) },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Błąd aktualizacji statusu receptury" });
+    }
+  });
+
   // --- RECEPTURY: PARAMETRY KALKULACYJNE ---
   app.put("/api/receptury/:id/parametry", async (req, res) => {
     try {
@@ -1500,7 +1546,10 @@ async function startServer() {
       });
       // Proaktywna inicjatywa: Dodajemy sugestie partii FIFO do każdego zlecenia w widoku produkcji
       const zleceniaWithSuggestions = await Promise.all(zlecenia.map(async (z) => {
-        if (z.status === "Zrealizowane" || z.status === "Anulowane") return z;
+        if (z.status === "Zrealizowane" || z.status === "Anulowane") return {
+          ...z,
+          opakowania: z.opakowania_json ? JSON.parse(z.opakowania_json) : [],
+        };
 
         const skladnikiWithBatches = await Promise.all(z.receptura.skladniki.map(async (s) => {
           const partie = await prisma.partie_Magazynowe.findMany({
@@ -1531,6 +1580,7 @@ async function startServer() {
 
         return {
           ...z,
+          opakowania: [],
           receptura: { ...z.receptura, skladniki: skladnikiWithBatches }
         };
       }));
@@ -1573,7 +1623,7 @@ async function startServer() {
   app.post("/api/produkcja/:id/realizuj", async (req, res) => {
     try {
       const { id } = req.params;
-      const { rzeczywista_ilosc, zuzyte_partie } = req.body; // zuzyte_partie: { id_partii: string, ilosc: number }[]
+      const { rzeczywista_ilosc, zuzyte_partie, opakowania } = req.body; // zuzyte_partie: { id_partii: string, ilosc: number }[]
 
       if (!rzeczywista_ilosc || isNaN(parseFloat(rzeczywista_ilosc))) {
         throw new Error("Nie podano rzeczywistej ilości wyprodukowanej");
@@ -1618,7 +1668,7 @@ async function startServer() {
             if (partia.status_partii !== "Dostepna") throw new Error(`Partia ${partia.numer_partii} nie jest dostępna (status: ${partia.status_partii})`);
             const stanPartii = partia.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0);
             const pobieranaIlosc = Math.abs(p.ilosc);
-            if (stanPartii < pobieranaIlosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}: dostępne ${stanPartii.toFixed(3)}, żądane ${pobieranaIlosc.toFixed(3)}`);
+            if (stanPartii < pobieranaIlosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}: dostępne ${stanPartii.toFixed(3).replace('.', ',')}, żądane ${pobieranaIlosc.toFixed(3).replace('.', ',')}`);
 
             // Pobranie ceny jednostkowej zarejestrowanej partii (z momentu przyjęcia - PZ lub PW)
             const docWejscia = await tx.ruchy_Magazynowe.findFirst({
@@ -1700,7 +1750,7 @@ async function startServer() {
 
             if (pozostaloDoPobrania > 0.001) {
               const nazwaSkladnika = asort?.nazwa || "nieznanego składnika";
-              throw new Error(`Brak wystarczającej ilości składnika [${nazwaSkladnika}] w magazynie. Brakuje: ${pozostaloDoPobrania.toFixed(3)} ${asort?.jednostka_miary || ""}`);
+              throw new Error(`Brak wystarczającej ilości składnika [${nazwaSkladnika}] w magazynie. Brakuje: ${pozostaloDoPobrania.toFixed(3).replace('.', ',')} ${asort?.jednostka_miary || ""}`);
             }
           }
         }
@@ -1746,7 +1796,10 @@ async function startServer() {
           where: { id: zlecenie.id },
           data: {
             status: "Zrealizowane",
-            rzeczywista_ilosc_wyrobu: rzeczywistaIloscNum
+            rzeczywista_ilosc_wyrobu: rzeczywistaIloscNum,
+            opakowania_json: opakowania && Array.isArray(opakowania) && opakowania.length > 0
+              ? JSON.stringify(opakowania)
+              : null,
           },
         });
 
@@ -1808,7 +1861,7 @@ async function startServer() {
           const dostepne = totalStan - totalZarezerwowane;
 
           if (dostepne < wymaganaIlosc - 0.001) {
-            throw new Error(`Brak wystarczającej ilości: ${skladnik.asortyment_skladnika.nazwa}. Całkowita dostępna ilość: ${dostepne.toFixed(3)} ${skladnik.asortyment_skladnika.jednostka_miary}. Potrzeba: ${wymaganaIlosc.toFixed(3)}`);
+            throw new Error(`Brak wystarczającej ilości: ${skladnik.asortyment_skladnika.nazwa}. Całkowita dostępna ilość: ${dostepne.toFixed(3).replace('.', ',')} ${skladnik.asortyment_skladnika.jednostka_miary}. Potrzeba: ${wymaganaIlosc.toFixed(3).replace('.', ',')}`);
           }
 
           // Tworzymy REZERWACJĘ ILOŚCIOWĄ (miękką) - nie przypisaną do konkretnej partii
@@ -1830,6 +1883,28 @@ async function startServer() {
     }
   });
 
+  app.put("/api/produkcja/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { planowana_ilosc_wyrobu } = req.body;
+
+      const zlecenie = await prisma.zlecenia_Produkcyjne.findUnique({ where: { id } });
+      if (!zlecenie) return res.status(404).json({ error: "Nie znaleziono zlecenia" });
+      if (zlecenie.status !== "Planowane") return res.status(400).json({ error: "Edycja możliwa tylko dla zleceń w statusie Planowane" });
+
+      const qty = parseFloat(planowana_ilosc_wyrobu);
+      if (isNaN(qty) || qty <= 0) return res.status(400).json({ error: "Nieprawidłowa ilość" });
+
+      const updated = await prisma.zlecenia_Produkcyjne.update({
+        where: { id },
+        data: { planowana_ilosc_wyrobu: qty },
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.delete("/api/produkcja/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -1841,19 +1916,27 @@ async function startServer() {
         });
 
         if (!zlecenie) throw new Error("Nie znaleziono zlecenia");
-        
+
         if (zlecenie.status === "Zrealizowane") throw new Error("Nie można usunąć zrealizowanego zlecenia");
 
-        // Jeśli są rezerwacje (stan W_toku), usuwamy je
+        // Usuń rezerwacje (jeśli istnieją)
         await tx.rezerwacje_Magazynowe.deleteMany({
           where: { id_zlecenia: id }
         });
 
-        // Soft delete zlecenia i zwolnienie numeru (przez dodanie suffixu)
-        return tx.zlecenia_Produkcyjne.update({
-          where: { id },
-          data: { status: "Anulowane" }
-        });
+        if (zlecenie.status === "Planowane") {
+          // Planowane: twarde usunięcie (soft delete)
+          return tx.zlecenia_Produkcyjne.update({
+            where: { id },
+            data: { czy_aktywne: false }
+          });
+        } else {
+          // W_toku: anulowanie (zachowujemy historię)
+          return tx.zlecenia_Produkcyjne.update({
+            where: { id },
+            data: { status: "Anulowane" }
+          });
+        }
       });
 
       res.json(result);

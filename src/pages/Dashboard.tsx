@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { AlertTriangle, Package, Factory, Clock, TrendingUp, AlertCircle, Share2, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router";
+import { fmtL } from "../utils/fmt";
 
 type DashboardData = {
   zlecenia: { planowane: number; w_toku: number; zrealizowane: number };
@@ -115,7 +116,7 @@ export default function Dashboard() {
                 <tr key={i}>
                   <td className="font-medium text-white">{a.asortyment}</td>
                   <td className="mono" style={{ color: 'var(--text-code)' }}>{a.numer_partii}</td>
-                  <td className="mono">{a.stan.toFixed(1)} <span className="text-xs uppercase" style={{ color: 'var(--text-muted)' }}>{a.jednostka}</span></td>
+                  <td className="mono">{fmtL(a.stan, 1)} <span className="text-xs uppercase" style={{ color: 'var(--text-muted)' }}>{a.jednostka}</span></td>
                   <td className="mono" style={{ color: 'var(--text-secondary)' }}>
                     {new Date(a.termin_waznosci).toLocaleDateString("pl-PL")}
                   </td>

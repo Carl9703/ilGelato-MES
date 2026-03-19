@@ -226,47 +226,38 @@ async function main() {
   console.log("✓ Receptura: Mieszanka mleczna PERPANNA 50-18 (6 składników)");
 
   // ─── RECEPTURA 2: Lody ciasteczko z karmelem ──────────────────────────────
-  // MS = 5.805 kg, WG = 5.775 kg (-0.5% strat).
-  // Przechowujem ilosc_wymagana jako per 1 kg WG.
-  // wielkosc_produkcji = 5.775 (domyślny wsad z PDF)
-
-  const WG_LODY = 5.775;
+  // Wsad = 1 kg WG, receptura v3, trwałość 60 dni.
+  // Ilości podane bezpośrednio per 1 kg WG (rozmiar wsadu).
 
   const recLody = await prisma.receptury.create({ data: {
     id_asortymentu_docelowego: lody.id,
-    numer_wersji:      1,
-    dni_trwalosci:     null,
-    wielkosc_produkcji: WG_LODY,
+    numer_wersji:      3,
+    dni_trwalosci:     60,
+    wielkosc_produkcji: 1,
     narzut_procent:    0,
   }});
 
   const skladnikiLody = [
-    { asortyment: mleko,     ilosc: 3.515 },
-    { asortyment: smietanka, ilosc: 0.740 },
-    { asortyment: cukier,    ilosc: 0.575 },
-    { asortyment: dekstroza, ilosc: 0.314 },
-    { asortyment: pasta,     ilosc: 0.275 },
-    { asortyment: omp,       ilosc: 0.183 },
-    { asortyment: perpanna50, ilosc: 0.174 },
-    { asortyment: crumbs,    ilosc: 0.020 },
-    { asortyment: variegato, ilosc: 0.010 },
+    { asortyment: mieszanka, ilosc_wymagana: 5.225 },
+    { asortyment: mleko,     ilosc_wymagana: 0.275 },
+    { asortyment: pasta,     ilosc_wymagana: 0.275 },
   ];
 
   for (const s of skladnikiLody) {
     await prisma.skladniki_Receptury.create({ data: {
       id_receptury:             recLody.id,
       id_asortymentu_skladnika: s.asortyment.id,
-      ilosc_wymagana:           Math.round((s.ilosc / WG_LODY) * 100000) / 100000,
+      ilosc_wymagana:           s.ilosc_wymagana,
     }});
   }
 
-  console.log("✓ Receptura: Lody ciasteczko z karmelem (9 składników)");
+  console.log("✓ Receptura: Lody ciasteczko z karmelem (3 składniki, v3, 60 dni)");
 
   // ─── PODSUMOWANIE ─────────────────────────────────────────────────────────
   console.log("\n✅ Seed zakończony pomyślnie!");
   console.log("   Użytkownik: admin / admin");
   console.log("   Asortyment: 9 surowców + 1 półprodukt + 1 wyrób gotowy = 11 pozycji");
-  console.log("   Receptury:  2 (Mieszanka PERPANNA 50-18 + Lody ciasteczko z karmelem)");
+  console.log("   Receptury:  2 (Mieszanka PERPANNA 50-18 + Lody ciasteczko z karmelem v3)");
 }
 
 main()

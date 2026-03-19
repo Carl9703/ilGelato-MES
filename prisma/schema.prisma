@@ -202,6 +202,7 @@ model Zlecenia_Produkcyjne {
   id_receptury           String
   planowana_ilosc_wyrobu Float
   rzeczywista_ilosc_wyrobu Float?
+  opakowania_json        String?  // JSON: [{id_asortymentu, nazwa, waga_kg}]
   status                 String   // Enum: Planowane, W_toku, Zrealizowane, Anulowane
   czy_aktywne            Boolean  @default(true)
   utworzono_dnia         DateTime @default(now())

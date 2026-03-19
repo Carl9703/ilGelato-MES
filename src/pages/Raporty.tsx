@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { BarChart2, ChevronDown, ChevronRight, TrendingUp, FileText, Users, Calendar } from "lucide-react";
+import { fmtL } from "../utils/fmt";
 
 type Pozycja = {
   kod_towaru: string;
@@ -260,7 +261,7 @@ export default function Raporty() {
                             />
                           </div>
                           <span className="font-mono text-xs w-10 text-right" style={{ color: "var(--text-secondary)" }}>
-                            {udzial.toFixed(1)}%
+                            {fmtL(udzial, 1)}%
                           </span>
                         </div>
                       </td>

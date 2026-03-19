@@ -5,6 +5,8 @@ import {
   CheckCircle, Ban, Clock
 } from "lucide-react";
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
+import { fmtL } from "../utils/fmt";
+import ConfirmModal from "../components/ConfirmModal";
 
 // ─── Typy ────────────────────────────────────────────────────────────────────
 
@@ -123,6 +125,7 @@ export default function Dokumenty() {
 
   // Akcje na dokumentach
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'anuluj' | 'usun'; ref: string } | null>(null);
 
   const openDocPreview = async (ref: string) => {
     setPreviewDocRef(ref);
@@ -153,6 +156,10 @@ export default function Dokumenty() {
 
   const handleAnuluj = async (ref: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    setConfirmAction({ type: 'anuluj', ref });
+  };
+
+  const doAnuluj = async (ref: string) => {
     setActionLoading(ref);
     setError("");
     try {
@@ -162,6 +169,28 @@ export default function Dokumenty() {
       setTimeout(() => setSuccess(""), 4000);
       fetchDokumenty();
       if (previewDocRef === ref) openDocPreview(ref);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUsun = async (ref: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setConfirmAction({ type: 'usun', ref });
+  };
+
+  const doUsun = async (ref: string) => {
+    setActionLoading(ref);
+    setError("");
+    try {
+      const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setSuccess(`Dokument ${ref} usunięty.`);
+      setTimeout(() => setSuccess(""), 4000);
+      if (previewDocRef === ref) setPreviewDocRef(null);
+      fetchDokumenty();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -445,7 +474,7 @@ export default function Dokumenty() {
     const win = window.open("", "_blank", "width=800,height=600");
     if (!win) return;
     const pozycjeHTML = doc.pozycje.map(p =>
-      `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${p.asortyment}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold">${p.ilosc.toFixed(3)} ${p.jednostka}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmt(p.termin_waznosci)}</td></tr>`
+      `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${p.asortyment}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold">${fmtL(p.ilosc, 3)} ${p.jednostka}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmt(p.termin_waznosci)}</td></tr>`
     ).join("");
     win.document.write(`<!DOCTYPE html><html><head><title>${doc.referencja}</title><style>body{font-family:Inter,system-ui,sans-serif;padding:40px;color:#1e293b;max-width:800px;margin:0 auto} h1{font-size:24px;margin:0 0 4px} .meta{color:#64748b;font-size:13px;margin-bottom:24px} table{width:100%;border-collapse:collapse;margin-top:16px} th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;color:#64748b} .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;margin-left:8px} @media print{body{padding:20px}}</style></head><body><h1>${doc.referencja} <span class="badge" style="background:#e0e7ff;color:#4338ca">${doc.typ}</span></h1><div class="meta">${fmtFull(doc.data)} · Wystawił: ${doc.uzytkownik}</div><table><thead><tr><th>Asortyment</th><th>Nr Partii</th><th style="text-align:right">Ilość</th><th>Ważność</th></tr></thead><tbody>${pozycjeHTML}</tbody></table></body></html>`);
     win.document.close();
@@ -485,7 +514,7 @@ export default function Dokumenty() {
         <div class="label-name">${e.nazwa}</div>
         <div class="label-code">${e.kod_towaru}</div>
         <div class="label-row"><span class="k">Partia</span><span class="v">${e.numer_partii}</span></div>
-        <div class="label-row"><span class="k">Ilość</span><span class="v">${e.ilosc.toFixed(3)} ${e.jednostka}</span></div>
+        <div class="label-row"><span class="k">Ilość</span><span class="v">${fmtL(e.ilosc, 3)} ${e.jednostka}</span></div>
         ${e.data_produkcji ? `<div class="label-row"><span class="k">Data produkcji</span><span class="v">${new Date(e.data_produkcji).toLocaleDateString('pl-PL')}</span></div>` : ''}
         ${e.termin_waznosci ? `<div class="label-row"><span class="k">Ważne do</span><span class="v warn">${new Date(e.termin_waznosci).toLocaleDateString('pl-PL')}</span></div>` : ''}
         <div class="label-batch">${e.numer_partii}</div>
@@ -753,13 +782,13 @@ export default function Dokumenty() {
                       </span>
                       {iloscTotal > 0 && (
                         <span style={{ color: 'var(--text-muted)' }}>
-                          łącznie <span className="font-bold text-white">{iloscTotal.toFixed(3)}</span> jedn.
+                          łącznie <span className="font-bold text-white">{fmtL(iloscTotal, 3)}</span> jedn.
                         </span>
                       )}
                       {wartoscTotal > 0 ? (
                         <span className="flex items-center gap-1">
                           <span style={{ color: 'var(--text-muted)' }}>wartość</span>
-                          <span className="font-bold text-lg" style={{ color: '#4ade80' }}>{wartoscTotal.toFixed(2)} PLN</span>
+                          <span className="font-bold text-lg" style={{ color: '#4ade80' }}>{fmtL(wartoscTotal, 2)} PLN</span>
                           {brakCen && <span style={{ color: 'var(--warn)', fontSize: 10 }}>· brak cen przy niektórych poz.</span>}
                         </span>
                       ) : (
@@ -892,7 +921,7 @@ export default function Dokumenty() {
                                         <option value="">-- wybierz partię --</option>
                                         {row.dostepnePartie.map(p => (
                                           <option key={p.id} value={p.id}>
-                                            {p.numer_partii} · dostępne: {p.stan.toFixed(2)} {row.jednostka_miary}
+                                            {p.numer_partii} · dostępne: {fmtL(p.stan, 2)} {row.jednostka_miary}
                                             {p.termin_waznosci ? ` · ww: ${fmt(p.termin_waznosci)}` : ""}
                                           </option>
                                         ))}
@@ -914,7 +943,7 @@ export default function Dokumenty() {
                                     />
                                     {selectedPartia && (
                                       <div className="text-slate-500 text-xs mt-1">
-                                        Dostępne: <span className="text-emerald-400 font-bold">{selectedPartia.stan.toFixed(2)}</span> {row.jednostka_miary}
+                                        Dostępne: <span className="text-emerald-400 font-bold">{fmtL(selectedPartia.stan, 2)}</span> {row.jednostka_miary}
                                       </div>
                                     )}
                                   </div>
@@ -989,11 +1018,19 @@ export default function Dokumenty() {
                     <CheckCircle className="w-3.5 h-3.5" /> Zatwierdź
                   </button>
                 )}
-                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status !== "Anulowany" && (
-                  <button onClick={() => handleAnuluj(previewDocRef!)}
+                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status === "Bufor" && (
+                  <button onClick={() => handleUsun(previewDocRef!)}
                     disabled={actionLoading === previewDocRef}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
                     style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
+                    <Trash2 className="w-3.5 h-3.5" /> Usuń
+                  </button>
+                )}
+                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status === "Zatwierdzony" && (
+                  <button onClick={() => handleAnuluj(previewDocRef!)}
+                    disabled={actionLoading === previewDocRef}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
+                    style={{ background: 'rgba(249,115,22,0.12)', color: '#f97316', border: '1px solid rgba(249,115,22,0.3)' }}>
                     <Ban className="w-3.5 h-3.5" /> Anuluj
                   </button>
                 )}
@@ -1068,13 +1105,13 @@ export default function Dokumenty() {
                         </td>
                         <td className="mono" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
                         <td className="text-right mono font-medium text-white">
-                          {poz.ilosc.toFixed(3)} <span className="text-xs opacity-50">{poz.jednostka}</span>
+                          {fmtL(poz.ilosc, 3)} <span className="text-xs opacity-50">{poz.jednostka}</span>
                         </td>
                         <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>
-                          {poz.cena_jednostkowa != null ? `${poz.cena_jednostkowa.toFixed(2)} PLN` : "—"}
+                          {poz.cena_jednostkowa != null ? `${fmtL(poz.cena_jednostkowa, 2)} PLN` : "—"}
                         </td>
                         <td className="text-right mono font-medium text-emerald-400">
-                          {poz.cena_jednostkowa != null ? `${poz.wartosc.toFixed(2)} PLN` : "—"}
+                          {poz.cena_jednostkowa != null ? `${fmtL(poz.wartosc, 2)} PLN` : "—"}
                         </td>
                       </tr>
                     ))}
@@ -1083,7 +1120,7 @@ export default function Dokumenty() {
                     <tfoot>
                       <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                         <td colSpan={5} className="px-3 py-2 text-right text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Razem</td>
-                        <td className="px-3 py-2 text-right font-bold mono text-white">{previewDocData.wartosc_calkowita.toFixed(2)} PLN</td>
+                        <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(previewDocData.wartosc_calkowita, 2)} PLN</td>
                       </tr>
                     </tfoot>
                   )}
@@ -1160,7 +1197,8 @@ export default function Dokumenty() {
                 const bg    = typBg[doc.typ]    || 'transparent';
                 const isLoading = actionLoading === doc.referencja;
                 const canApprove = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status === "Bufor";
-                const canCancel  = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status !== "Anulowany";
+                const canDelete  = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status === "Bufor";
+                const canCancel  = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status === "Zatwierdzony";
                 return (
                   <tr key={doc.referencja} onClick={() => openDocPreview(doc.referencja)}
                     style={{ borderBottom: '1px solid var(--border-dim)', cursor: 'pointer', transition: 'background .1s', opacity: doc.status === 'Anulowany' ? 0.55 : 1 }}
@@ -1204,7 +1242,7 @@ export default function Dokumenty() {
                     {/* Wartość */}
                     <td style={{ padding: '5px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {doc.wartosc_calkowita > 0
-                        ? <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:700, color:'#4ade80' }}>{doc.wartosc_calkowita.toFixed(2)} <span style={{ fontSize:10, color:'var(--text-muted)', fontWeight:400 }}>PLN</span></span>
+                        ? <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:700, color:'#4ade80' }}>{fmtL(doc.wartosc_calkowita, 2)} <span style={{ fontSize:10, color:'var(--text-muted)', fontWeight:400 }}>PLN</span></span>
                         : <span style={{ color:'var(--text-muted)', fontSize:11 }}>—</span>}
                     </td>
 
@@ -1226,12 +1264,20 @@ export default function Dokumenty() {
                             {isLoading ? <div className="w-3.5 h-3.5 border border-green-500 border-t-transparent rounded-full animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
                           </button>
                         )}
+                        {canDelete && (
+                          <button onClick={e => handleUsun(doc.referencja, e)} title="Usuń dokument (bufor)"
+                            disabled={isLoading}
+                            className="p-1 rounded btn-hover-effect"
+                            style={{ color:'#ef4444', background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)' }}>
+                            {isLoading ? <div className="w-3.5 h-3.5 border border-red-500 border-t-transparent rounded-full animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                         {canCancel && (
                           <button onClick={e => handleAnuluj(doc.referencja, e)} title="Anuluj dokument"
                             disabled={isLoading}
                             className="p-1 rounded btn-hover-effect"
-                            style={{ color:'#ef4444', background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)' }}>
-                            {isLoading ? <div className="w-3.5 h-3.5 border border-red-500 border-t-transparent rounded-full animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                            style={{ color:'#f97316', background:'rgba(249,115,22,0.08)', border:'1px solid rgba(249,115,22,0.2)' }}>
+                            {isLoading ? <div className="w-3.5 h-3.5 border border-orange-500 border-t-transparent rounded-full animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
                           </button>
                         )}
                         {doc.typ === "PZ" && doc.status !== "Anulowany" && (
@@ -1260,6 +1306,24 @@ export default function Dokumenty() {
           </table>
         )}
       </div>
+      <ConfirmModal
+        isOpen={!!confirmAction}
+        title={confirmAction?.type === 'anuluj' ? 'Anuluj dokument' : 'Usuń dokument'}
+        message={
+          confirmAction?.type === 'anuluj'
+            ? `Czy na pewno chcesz anulować dokument ${confirmAction?.ref}? Cofnie to wszystkie ruchy magazynowe powiązane z tym dokumentem.`
+            : `Czy na pewno chcesz usunąć dokument ${confirmAction?.ref}? Tej operacji nie można cofnąć.`
+        }
+        confirmText={confirmAction?.type === 'anuluj' ? 'Anuluj dokument' : 'Usuń'}
+        cancelText="Wróć"
+        onConfirm={() => {
+          if (!confirmAction) return;
+          if (confirmAction.type === 'anuluj') doAnuluj(confirmAction.ref);
+          else doUsun(confirmAction.ref);
+          setConfirmAction(null);
+        }}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }

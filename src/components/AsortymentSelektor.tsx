@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X, Search, Check, Package, ShoppingCart } from "lucide-react";
+import { fmtL } from "../utils/fmt";
 
 type AsortymentItem = {
   id: string;
@@ -275,7 +276,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
                       </td>
                       <td className="px-4 py-3 text-right">
                         {a.ilosc > 0
-                          ? <span className="text-emerald-400 font-bold font-mono">{a.ilosc.toFixed(2)} <span className="text-slate-500 text-[10px]">{a.jednostka_miary}</span></span>
+                          ? <span className="text-emerald-400 font-bold font-mono">{fmtL(a.ilosc, 2)} <span className="text-slate-500 text-[10px]">{a.jednostka_miary}</span></span>
                           : <span className="text-slate-600">0</span>
                         }
                       </td>
