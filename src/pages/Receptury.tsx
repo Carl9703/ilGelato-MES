@@ -53,6 +53,15 @@ export default function Receptury() {
     return () => window.removeEventListener('keydown', handler);
   }, [kartaMode]);
 
+  // Auto-wylicz rozmiar wsadu jako sumę ilości składników
+  useEffect(() => {
+    if (kartaMode !== 'edit' && kartaMode !== 'new') return;
+    const suma = skladniki.reduce((acc, s) => acc + (parseFloat(s.ilosc_wymagana) || 0), 0);
+    if (suma > 0) {
+      setWielkoscProdukcji(String(Number(suma.toFixed(3))));
+    }
+  }, [skladniki]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchAll = async (archived = showArchived) => {
     const [rRes, aRes] = await Promise.all([
       fetch(`/api/receptury${archived ? '?includeArchived=true' : ''}`),
@@ -371,20 +380,11 @@ export default function Receptury() {
                           </div>
                           <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
                           <div className="flex flex-col gap-0.5">
-                            <label className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu ({selectedAsortyment?.jednostka_miary || 'j.m.'})</label>
-                            <input type="number" value={wielkoscProdukcji} onChange={e => {
-                              const nowyWsad = parseFloat(e.target.value) || 1;
-                              const staryWsad = parseFloat(wielkoscProdukcji) || 1;
-                              if (nowyWsad !== staryWsad) {
-                                setSkladniki(prev => prev.map(s => ({
-                                  ...s,
-                                  ilosc_wymagana: String(Number((parseFloat(s.ilosc_wymagana) * nowyWsad / staryWsad).toFixed(3))),
-                                })));
-                              }
-                              setWielkoscProdukcji(e.target.value);
-                            }} min={0.001} step="any" placeholder="1"
-                              className="w-20 text-sm font-mono font-bold outline-none text-center"
-                              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', padding: '2px 6px' }} />
+                            <label className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu ({selectedAsortyment?.jednostka_miary || 'j.m.'}) <span title="Wyliczane jako suma składników" style={{ color: 'var(--accent)', opacity: 0.7 }}>Σ</span></label>
+                            <div className="w-20 text-sm font-mono font-bold text-center"
+                              style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', padding: '2px 6px', opacity: 0.7 }}>
+                              {parseFloat(wielkoscProdukcji) || 0}
+                            </div>
                           </div>
                         </>
                       ) : (

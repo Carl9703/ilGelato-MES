@@ -25,9 +25,11 @@ type Etykieta = {
   numer_partii: string; nazwa_produktu: string; kod_towaru: string;
   data_produkcji: string | null; termin_waznosci: string | null; jednostka: string; qr_code: string;
 };
+type OpakowaniePozycja = { id_asortymentu: string; nazwa: string; waga_kg: number };
 type PartiaDostepna = {
   id: string; numer_partii: string;
   asortyment: { nazwa: string; jednostka_miary: string }; stan: number; termin_waznosci: string | null;
+  opakowania?: OpakowaniePozycja[] | null;
 };
 
 // ─── Typy dla pozycji w formularzu ───────────────────────────────────────────
@@ -53,6 +55,7 @@ type WzRow = {
   jednostka_miary: string;
   id_partii: string;
   ilosc: string;
+  sztuki: Record<string, number>; // nazwa_opakowania -> szt
   dostepnePartie: PartiaDostepna[];
   loadingPartie: boolean;
 };
@@ -363,6 +366,7 @@ export default function Dokumenty() {
       jednostka_miary: w.jednostka_miary,
       id_partii: "",
       ilosc: w.ilosc || "",
+      sztuki: {},
       dostepnePartie: [],
       loadingPartie: true,
     }));
@@ -382,6 +386,7 @@ export default function Dokumenty() {
               asortyment: { nazwa: row.nazwa, jednostka_miary: row.jednostka_miary },
               stan: z.dostepne,
               termin_waznosci: z.termin_waznosci,
+              opakowania: z.opakowania || null,
             }));
           setWzRows(prev => prev.map(r =>
             r._key === row._key ? { ...r, dostepnePartie: partie, loadingPartie: false } : r
@@ -397,6 +402,16 @@ export default function Dokumenty() {
     setWzRows(prev => prev.map(r => r._key === key ? { ...r, [field]: value } : r));
   };
 
+  const updateWzSztuki = (key: string, idOp: string, szt: number, wagaKg: number, allOp: OpakowaniePozycja[]) => {
+    setWzRows(prev => prev.map(r => {
+      if (r._key !== key) return r;
+      const newSztuki = { ...r.sztuki, [idOp]: szt };
+      const unikalne = Object.values(allOp.reduce((acc: Record<string, OpakowaniePozycja>, op) => { if (!acc[op.id_asortymentu]) acc[op.id_asortymentu] = op; return acc; }, {}));
+      const totalKg = unikalne.reduce((sum, op) => sum + (newSztuki[op.id_asortymentu] || 0) * op.waga_kg, 0);
+      return { ...r, sztuki: newSztuki, ilosc: Math.round(totalKg * 1000) / 1000 + "" };
+    }));
+  };
+
   const removeWzRow = (key: string) => {
     setWzRows(prev => prev.filter(r => r._key !== key));
   };
@@ -409,7 +424,18 @@ export default function Dokumenty() {
     if (missing) { setError(`Pozycja "${missing.nazwa}" wymaga wybrania partii i podania ilości.`); return; }
     if (!wzKontrahentId) { setError("Wybierz kontrahenta (odbiorcę)."); return; }
     try {
-      const items = wzRows.map(r => ({ id_partii: r.id_partii, ilosc: parseFloat(r.ilosc) }));
+      const items = wzRows.map(r => {
+        const partia = r.dostepnePartie.find(p => p.id === r.id_partii);
+        const typy: OpakowaniePozycja[] = partia?.opakowania
+          ? Object.values(partia.opakowania.reduce((acc: Record<string, OpakowaniePozycja>, op) => { if (!acc[op.id_asortymentu]) acc[op.id_asortymentu] = op; return acc; }, {}))
+          : [];
+        const sztukiLabels: Record<string, number> = {};
+        typy.forEach(op => {
+          const szt = r.sztuki[op.id_asortymentu] || 0;
+          if (szt > 0) sztukiLabels[`${op.nazwa} (${op.waga_kg} kg)`] = szt;
+        });
+        return { id_partii: r.id_partii, ilosc: parseFloat(r.ilosc), sztuki: sztukiLabels };
+      });
       const res = await fetch("/api/magazyn/wz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -567,12 +593,7 @@ export default function Dokumenty() {
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Rejestr i wystawianie dokumentów magazynowych</p>
         </div>
         <div className="flex gap-2 items-center">
-          <button onClick={() => setShowEtykiety(!showEtykiety)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-colors btn-hover-effect"
-            style={{ background: showEtykiety ? 'rgba(245,158,11,.15)' : 'var(--bg-panel)', border: '1px solid var(--border)', color: showEtykiety ? '#fbbf24' : 'var(--text-secondary)' }}>
-            <Tag className="w-4 h-4" /> Etykiety
-          </button>
-          <button onClick={openWzModal}
+<button onClick={openWzModal}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-colors btn-hover-effect"
             style={{ background: '#c2410c', color: '#fff' }}>
             <ArrowRightCircle className="w-4 h-4" /> Nowy WZ
@@ -816,7 +837,7 @@ export default function Dokumenty() {
       {/* ═══ MODAL WZ ══════════════════════════════════════════════════════════ */}
       {showWz && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-4xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '95vh' }}>
+          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-6xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '95vh' }}>
 
             <div className="flex justify-between items-center p-5 border-b border-[#334155] bg-orange-900/20 shrink-0">
               <h3 className="text-lg font-bold text-orange-400 flex items-center gap-2">
@@ -890,6 +911,9 @@ export default function Dokumenty() {
                     <div className="space-y-2">
                       {wzRows.map(row => {
                         const selectedPartia = row.dostepnePartie.find(p => p.id === row.id_partii);
+                        const typy_opakowan: OpakowaniePozycja[] = selectedPartia?.opakowania
+                          ? Object.values(selectedPartia.opakowania.reduce((acc: Record<string, OpakowaniePozycja>, op) => { if (!acc[op.id_asortymentu]) acc[op.id_asortymentu] = op; return acc; }, {}))
+                          : [];
                         return (
                           <div key={row._key} className="bg-[#0f172a] border border-[#334155] rounded-xl p-4">
                             <div className="flex items-start gap-3">
@@ -928,24 +952,41 @@ export default function Dokumenty() {
                                       </select>
                                     )}
                                   </div>
-                                  {/* Ilość */}
+                                  {/* Opakowania */}
                                   <div>
-                                    <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">
-                                      Ilość ({row.jednostka_miary}) <span className="text-red-400">*</span>
-                                    </label>
-                                    <input
-                                      type="number" step="0.001" min="0"
-                                      max={selectedPartia?.stan || undefined}
-                                      required
-                                      value={row.ilosc}
-                                      onChange={e => updateWzRow(row._key, "ilosc", e.target.value)}
-                                      className="w-full bg-[#1e293b] border border-[#475569] text-white rounded-xl px-4 py-2.5 font-mono font-bold text-sm outline-none focus:border-orange-500"
-                                    />
-                                    {selectedPartia && (
-                                      <div className="text-slate-500 text-xs mt-1">
-                                        Dostępne: <span className="text-emerald-400 font-bold">{fmtL(selectedPartia.stan, 2)}</span> {row.jednostka_miary}
-                                      </div>
-                                    )}
+                                    {selectedPartia?.opakowania?.length ? (
+                                      <>
+                                        <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">Opakowania</label>
+                                        <div className="space-y-1.5">
+                                          {typy_opakowan.map((op, i) => {
+                                            const dostepneSzt = Math.floor(selectedPartia!.stan / op.waga_kg);
+                                            return (
+                                              <div key={i} className="flex items-center gap-3 bg-[#1e293b] rounded-lg px-3 py-1.5">
+                                                <div className="flex-1 min-w-0">
+                                                  <span className="text-sm text-white font-medium">{op.nazwa}</span>
+                                                  <span className="font-mono text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{op.waga_kg} kg/szt.</span>
+                                                  <div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>dost. {dostepneSzt} szt.</div>
+                                                </div>
+                                                <input
+                                                  type="number" min="0" max={dostepneSzt} step="1"
+                                                  value={row.sztuki[op.id_asortymentu] ?? ""}
+                                                  placeholder="0"
+                                                  className="w-16 bg-[#0f172a] border border-[#475569] text-white rounded-lg px-2 py-1.5 font-mono font-bold text-sm outline-none focus:border-orange-500 text-right shrink-0"
+                                                  onChange={e => updateWzSztuki(row._key, op.id_asortymentu, parseFloat(e.target.value) || 0, op.waga_kg, selectedPartia!.opakowania!)}
+                                                />
+                                                <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>szt.</span>
+                                              </div>
+                                            );
+                                          })}
+                                          <div className="text-xs pt-1 flex justify-between px-1" style={{ color: 'var(--text-muted)' }}>
+                                            <span>Łącznie: <span className="text-white font-mono font-bold">{fmtL(parseFloat(row.ilosc) || 0, 3)} {row.jednostka_miary}</span></span>
+                                            <span>stan: <span className="text-emerald-400 font-mono font-bold">{fmtL(selectedPartia.stan, 3)}</span></span>
+                                          </div>
+                                        </div>
+                                      </>
+                                    ) : selectedPartia ? (
+                                      <div className="text-slate-500 text-xs pt-5">Brak zdefiniowanych opakowań</div>
+                                    ) : null}
                                   </div>
                                 </div>
                               </div>
@@ -982,6 +1023,8 @@ export default function Dokumenty() {
       {showSelektor && (
         <AsortymentSelektor
           tryb={selektorTryb}
+          typy={selektorTryb === "wz" ? ["Wyrob_Gotowy"] : undefined}
+          hideIlosc={selektorTryb === "wz"}
           onClose={() => setShowSelektor(false)}
           onConfirm={selektorTryb === "pz" ? onSelektorPzConfirm : onSelektorWzConfirm}
         />
@@ -1034,7 +1077,7 @@ export default function Dokumenty() {
                     <Ban className="w-3.5 h-3.5" /> Anuluj
                   </button>
                 )}
-                {previewDocData && (
+                {previewDocData && previewDocData.typ !== 'WZ' && previewDocData.typ !== 'RW' && (
                   <button onClick={() => handlePrintAllLabels(previewDocRef!)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium btn-hover-effect"
                     style={{ background: 'rgba(245,158,11,0.12)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)' }}>
@@ -1101,11 +1144,13 @@ export default function Dokumenty() {
                         <td className="text-center mono text-xs" style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
                         <td>
                           <div className="font-medium text-white">{poz.asortyment}</div>
-                          <div className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{poz.kod_towaru}</div>
+                          {poz.wyrob && <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{poz.wyrob}</div>}
+                          {!poz.wyrob && <div className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{poz.kod_towaru}</div>}
                         </td>
                         <td className="mono" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
-                        <td className="text-right mono font-medium text-white">
-                          {fmtL(poz.ilosc, 3)} <span className="text-xs opacity-50">{poz.jednostka}</span>
+                        <td className="text-right">
+                          <div className="font-mono font-bold text-white">{fmtL(poz.ilosc, poz.jednostka === 'szt.' ? 0 : 3)} <span className="text-xs opacity-50">{poz.jednostka}</span></div>
+                          {poz.ilosc_kg != null && <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{fmtL(poz.ilosc_kg, 3)} kg</div>}
                         </td>
                         <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>
                           {poz.cena_jednostkowa != null ? `${fmtL(poz.cena_jednostkowa, 2)} PLN` : "—"}

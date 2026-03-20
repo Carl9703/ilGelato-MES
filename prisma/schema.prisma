@@ -48,6 +48,7 @@ model Dokumenty_Magazynowe {
   data_zatwierdzenia           DateTime?
   data_anulowania              DateTime?
   czy_aktywne                  Boolean   @default(true)
+  pozycje_json                 String?   // JSON: [{id_partii, ilosc, sztuki:{nazwa:szt}}]
   utworzono_dnia               DateTime  @default(now())
   zaktualizowano_dnia          DateTime  @updatedAt
 
@@ -55,6 +56,7 @@ model Dokumenty_Magazynowe {
   uzytkownik_zatwierdzenia     Uzytkownicy?  @relation("DokumentZatwierdzony", fields: [id_uzytkownika_zatwierdzenia], references: [id])
   uzytkownik_anulowania        Uzytkownicy?  @relation("DokumentAnulowany",    fields: [id_uzytkownika_anulowania],    references: [id])
   kontrahent                   Kontrahenci?  @relation(fields: [id_kontrahenta], references: [id])
+  opakowania_wz                Opakowania_Wyrobowe[]
 }
 
 model Asortyment {
@@ -81,6 +83,7 @@ model Asortyment {
   rezerwacje               Rezerwacje_Magazynowe[]
   wartosci_odzywcze        Wartosci_Odzywcze?
   alergeny                 Alergeny_Asortymentu?
+  opakowania_wyrobowe      Opakowania_Wyrobowe[]
 }
 
 model Wartosci_Odzywcze {
@@ -135,6 +138,7 @@ model Partie_Magazynowe {
   data_produkcji      DateTime?
   termin_waznosci     DateTime?
   status_partii       String   // Enum: Dostepna, Kwarantanna, Zablokowana_Kontrola_Jakosci, Zutylizowana
+  opakowania_json     String?  // JSON: [{id_asortymentu, nazwa, waga_kg}] – skopiowane z ZP przy produkcji
   czy_aktywne         Boolean  @default(true)
   utworzono_dnia      DateTime @default(now())
   zaktualizowano_dnia DateTime @updatedAt
@@ -142,6 +146,8 @@ model Partie_Magazynowe {
   asortyment          Asortyment              @relation(fields: [id_asortymentu], references: [id])
   ruchy_magazynowe    Ruchy_Magazynowe[]
   rezerwacje          Rezerwacje_Magazynowe[]
+  pozycje_sesji_baza  Pozycje_Sesji_Gelato[]
+  opakowania_baza     Opakowania_Wyrobowe[]
 }
 
 model Ruchy_Magazynowe {
@@ -178,6 +184,7 @@ model Receptury {
   asortyment_docelowy       Asortyment            @relation("AsortymentDocelowy", fields: [id_asortymentu_docelowego], references: [id])
   skladniki                 Skladniki_Receptury[]
   zlecenia_produkcyjne      Zlecenia_Produkcyjne[]
+  pozycje_sesji_gelato      Pozycje_Sesji_Gelato[]
   @@unique([id_asortymentu_docelowego, numer_wersji])
 }
 
@@ -196,10 +203,42 @@ model Skladniki_Receptury {
   asortyment_skladnika     Asortyment @relation("AsortymentSkladnika", fields: [id_asortymentu_skladnika], references: [id])
 }
 
+model Sesja_Robocza {
+  id                  String   @id @default(uuid())
+  krok                Int      @default(1)
+  dane_json           String   // pełny stan wizarda (JSON) — zawsze aktualny
+  zaktualizowano_dnia DateTime @updatedAt
+
+  log                 Sesja_Robocza_Log[]
+}
+
+model Sesja_Robocza_Log {
+  id              String   @id @default(uuid())
+  id_sesji_roboczej String
+  krok            Int
+  zdarzenie       String   // "przejscie_kroku" | "zmiana_realizacji" | "zapisano_szkic"
+  dane_json       String   // snapshot stanu w tym momencie
+  utworzono_dnia  DateTime @default(now())
+
+  sesja_robocza   Sesja_Robocza @relation(fields: [id_sesji_roboczej], references: [id])
+}
+
+model Sesje_Produkcji {
+  id                  String   @id @default(uuid())
+  numer_sesji         String   @unique  // SP-NNN/MM/RR
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  zlecenia            Zlecenia_Produkcyjne[]
+}
+
 model Zlecenia_Produkcyjne {
   id                     String   @id @default(uuid())
   numer_zlecenia         String?  @unique
   id_receptury           String
+  id_sesji               String?  // FK → Sesje_Produkcji
+  etap                   Int?     // 1 = Polprodukt, 2 = Wyrob_Gotowy
   planowana_ilosc_wyrobu Float
   rzeczywista_ilosc_wyrobu Float?
   opakowania_json        String?  // JSON: [{id_asortymentu, nazwa, waga_kg}]
@@ -209,6 +248,7 @@ model Zlecenia_Produkcyjne {
   zaktualizowano_dnia    DateTime @updatedAt
 
   receptura              Receptury            @relation(fields: [id_receptury], references: [id])
+  sesja                  Sesje_Produkcji?     @relation(fields: [id_sesji], references: [id])
   ruchy_magazynowe       Ruchy_Magazynowe[]
   rezerwacje             Rezerwacje_Magazynowe[]
 }
@@ -231,3 +271,80 @@ model Rezerwacje_Magazynowe {
   zlecenie            Zlecenia_Produkcyjne @relation(fields: [id_zlecenia], references: [id])
 }
 
+// ═══════════════════════════════════════════════════════
+// MODUŁ GELATO
+// ═══════════════════════════════════════════════════════
+
+// Słownik typów opakowań: Pozzetti, Kuweta otwarta, Plastik
+model Typy_Opakowan {
+  id               String   @id @default(uuid())
+  nazwa            String   @unique
+  pojemnosc_min_kg Float    @default(0)
+  pojemnosc_max_kg Float    @default(10)
+  czy_aktywne      Boolean  @default(true)
+  utworzono_dnia   DateTime @default(now())
+
+  opakowania       Opakowania_Wyrobowe[]
+}
+
+// Sesja produkcyjna — jeden turnus: baza → wyroby gotowe
+model Sesje_Produkcji_Gelato {
+  id                  String   @id @default(uuid())
+  numer_sesji         String   @unique  // SPG-NNN/MM/RR
+  data_sesji          DateTime
+  status              String   @default("Otwarta")  // Otwarta | Zamknieta
+  notatki             String?
+  id_uzytkownika      String
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  pozycje             Pozycje_Sesji_Gelato[]
+  opakowania          Opakowania_Wyrobowe[]
+}
+
+// Jeden smak/receptura w ramach sesji — zużycie bazy i surowców
+model Pozycje_Sesji_Gelato {
+  id                  String   @id @default(uuid())
+  id_sesji            String
+  id_receptury        String
+  id_partii_bazy      String?  // FK → Partie_Magazynowe (partia bazy)
+  ilosc_bazy_kg       Float?   // Faktyczne zużycie bazy w kg
+  liczba_wsadow       Int      @default(1)
+  surowce_json        String?  // JSON: [{id_partii, id_asortymentu, nazwa, ilosc}]
+  uwagi               String?
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  sesja               Sesje_Produkcji_Gelato @relation(fields: [id_sesji],       references: [id])
+  receptura           Receptury              @relation(fields: [id_receptury],   references: [id])
+  partia_bazy         Partie_Magazynowe?     @relation(fields: [id_partii_bazy], references: [id])
+  opakowania          Opakowania_Wyrobowe[]
+}
+
+// Fizyczna sztuka opakowania w magazynie wyrobów gotowych
+model Opakowania_Wyrobowe {
+  id                  String    @id @default(uuid())
+  numer_serii         String    @unique  // OW-0001/MM/RR — numer etykiety
+  id_sesji            String
+  id_pozycji_sesji    String?
+  id_asortymentu      String    // Smak → Asortyment.typ = Wyrob_Gotowy
+  id_typu_opakowania  String
+  id_partii_bazy      String?   // Traceability: z jakiej bazy pochodzi
+  waga_kg             Float
+  data_produkcji      DateTime  @default(now())
+  termin_waznosci     DateTime?
+  status              String    @default("Dostepne")  // Dostepne | Wydane | Zwrot | Zniszczone
+  id_dokumentu_wz     String?   // FK → Dokumenty_Magazynowe.id
+  czy_aktywne         Boolean   @default(true)
+  utworzono_dnia      DateTime  @default(now())
+  zaktualizowano_dnia DateTime  @updatedAt
+
+  sesja               Sesje_Produkcji_Gelato @relation(fields: [id_sesji],           references: [id])
+  pozycja_sesji       Pozycje_Sesji_Gelato?  @relation(fields: [id_pozycji_sesji],   references: [id])
+  asortyment          Asortyment             @relation(fields: [id_asortymentu],     references: [id])
+  typ_opakowania      Typy_Opakowan          @relation(fields: [id_typu_opakowania], references: [id])
+  partia_bazy         Partie_Magazynowe?     @relation(fields: [id_partii_bazy],     references: [id])
+  dokument_wz         Dokumenty_Magazynowe?  @relation(fields: [id_dokumentu_wz],    references: [id])
+}

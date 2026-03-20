@@ -1,6 +1,6 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router";
-import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2 } from "lucide-react";
+import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package } from "lucide-react";
 import Dashboard from "./pages/Dashboard";
 import Asortyment from "./pages/Asortyment";
 import Receptury from "./pages/Receptury";
@@ -9,16 +9,18 @@ import Dokumenty from "./pages/Dokumenty";
 import Traceability from "./pages/Traceability";
 import Kontrahenci from "./pages/Kontrahenci";
 import Raporty from "./pages/Raporty";
+import WyrobyGotowe from "./pages/WyrobyGotowe";
 
 const navItems = [
-  { to: "/dashboard", icon: LayoutDashboard, label: "Pulpit", testId: "nav-dashboard" },
-  { to: "/asortyment", icon: Database, label: "Asortyment", testId: "nav-asortyment" },
-  { to: "/receptury", icon: BookOpen, label: "Receptury", testId: "nav-receptury" },
-  { to: "/produkcja", icon: Factory, label: "Produkcja", testId: "nav-produkcja" },
-  { to: "/dokumenty", icon: FileText, label: "Dokumenty", testId: "nav-dokumenty" },
-  { to: "/kontrahenci", icon: Users, label: "Kontrahenci", testId: "nav-kontrahenci" },
-  { to: "/traceability", icon: Share2, label: "Traceability", testId: "nav-traceability" },
-  { to: "/raporty", icon: BarChart2, label: "Raporty", testId: "nav-raporty" },
+  { to: "/dashboard",  icon: LayoutDashboard, label: "Pulpit",      testId: "nav-dashboard"  },
+  { to: "/asortyment", icon: Database,         label: "Asortyment", testId: "nav-asortyment" },
+  { to: "/receptury",  icon: BookOpen,          label: "Receptury",  testId: "nav-receptury"  },
+  { to: "/produkcja",  icon: Factory,           label: "Produkcja",  testId: "nav-produkcja"  },
+  { to: "/dokumenty",  icon: FileText,          label: "Dokumenty",  testId: "nav-dokumenty"  },
+  { to: "/wyroby-gotowe", icon: Package,         label: "Wyroby gotowe", testId: "nav-wyroby-gotowe" },
+  { to: "/kontrahenci",icon: Users,             label: "Kontrahenci",testId: "nav-kontrahenci"},
+  { to: "/traceability",icon: Share2,           label: "Traceability",testId: "nav-traceability"},
+  { to: "/raporty",    icon: BarChart2,         label: "Raporty",    testId: "nav-raporty"    },
 ];
 
 function MainLayout({ children }: { children: React.ReactNode }) {
@@ -104,6 +106,7 @@ export default function App() {
               <Route path="/receptury" element={<Receptury />} />
               <Route path="/produkcja" element={<Produkcja />} />
               <Route path="/dokumenty" element={<Dokumenty />} />
+              <Route path="/wyroby-gotowe" element={<WyrobyGotowe />} />
               <Route path="/kontrahenci" element={<Kontrahenci />} />
               <Route path="/traceability" element={<Traceability />} />
               <Route path="/raporty" element={<Raporty />} />

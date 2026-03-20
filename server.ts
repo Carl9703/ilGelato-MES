@@ -87,6 +87,20 @@ async function migrateExistingDocuments() {
   }
 }
 
+async function generateSesjaNumber(tx: any) {
+  const date = new Date();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const year = date.getFullYear().toString().slice(-2);
+  const suffix = `/${month}/${year}`;
+  const sesje = await tx.sesje_Produkcji.findMany({ where: { numer_sesji: { endsWith: suffix } } });
+  let maxNum = 0;
+  for (const s of sesje) {
+    const match = s.numer_sesji.match(new RegExp(`^SP-(\\d+)/${month}/${year}$`));
+    if (match) { const num = parseInt(match[1], 10); if (num > maxNum) maxNum = num; }
+  }
+  return `SP-${(maxNum + 1).toString().padStart(3, '0')}${suffix}`;
+}
+
 async function generateZlecenieNumber(tx: any) {
   const date = new Date();
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -808,6 +822,83 @@ async function startServer() {
     }
   });
 
+  // Stan magazynowy wyrobów gotowych — per partia z info o opakowaniu
+  app.get("/api/wyroby-gotowe/stan", async (req, res) => {
+    try {
+      const partie = await prisma.partie_Magazynowe.findMany({
+        where: { czy_aktywne: true, asortyment: { typ_asortymentu: "Wyrob_Gotowy", czy_aktywne: true } },
+        include: {
+          asortyment: true,
+          ruchy_magazynowe: { where: { czy_aktywne: true } },
+        },
+        orderBy: [{ id_asortymentu: "asc" }, { data_produkcji: "asc" }],
+      });
+
+      // Zbierz wszystkie id_asortymentu z opakowania_json i pobierz nazwy z kartoteki
+      const allOpIds = new Set<string>();
+      for (const p of partie) {
+        if (p.opakowania_json) {
+          try {
+            (JSON.parse(p.opakowania_json) as { id_asortymentu: string }[]).forEach(o => {
+              if (o.id_asortymentu) allOpIds.add(o.id_asortymentu);
+            });
+          } catch {}
+        }
+      }
+      const opNazwy = await prisma.asortyment.findMany({
+        where: { id: { in: [...allOpIds] } },
+        select: { id: true, nazwa: true },
+      });
+      const opNazwyMap: Record<string, string> = {};
+      for (const a of opNazwy) opNazwyMap[a.id] = a.nazwa;
+
+      const rows = [];
+      for (const p of partie) {
+        const stan = p.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
+        if (stan < 0.001) continue;
+
+        const base = {
+          id_partii: p.id,
+          numer_partii: p.numer_partii,
+          kod_towaru: p.asortyment.kod_towaru,
+          nazwa: p.asortyment.nazwa,
+          jednostka_miary: p.asortyment.jednostka_miary,
+          data_produkcji: p.data_produkcji,
+          termin_waznosci: p.termin_waznosci,
+          status_partii: p.status_partii,
+        };
+
+        if (p.opakowania_json) {
+          try {
+            const ops = JSON.parse(p.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
+            // Grupuj po id_asortymentu — nazwa zawsze z kartoteki
+            const grupy: Record<string, { nazwa: string; ilosc_szt: number; waga_orig: number }> = {};
+            let waga_orig_total = 0;
+            for (const o of ops) {
+              const nazwaOp = opNazwyMap[o.id_asortymentu] ?? o.id_asortymentu;
+              if (!grupy[o.id_asortymentu]) grupy[o.id_asortymentu] = { nazwa: nazwaOp, ilosc_szt: 0, waga_orig: 0 };
+              grupy[o.id_asortymentu].ilosc_szt++;
+              grupy[o.id_asortymentu].waga_orig += o.waga_kg;
+              waga_orig_total += o.waga_kg;
+            }
+            // ilosc_kg per typ = proporcja z aktualnego stanu partii (Ruchy_Magazynowe)
+            for (const g of Object.values(grupy)) {
+              const udzial = waga_orig_total > 0 ? g.waga_orig / waga_orig_total : 1 / Object.keys(grupy).length;
+              const ilosc_kg = Math.round(stan * udzial * 1000) / 1000;
+              rows.push({ ...base, opakowanie: g.nazwa, ilosc_szt: g.ilosc_szt, ilosc_kg });
+            }
+            continue;
+          } catch {}
+        }
+
+        // Brak danych o opakowaniach — jeden wiersz z łącznym kg
+        rows.push({ ...base, opakowanie: null, ilosc_szt: null, ilosc_kg: Math.round(stan * 1000) / 1000 });
+      }
+
+      res.json(rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/next-doc-number/:prefix", async (req, res) => {
     try {
       const prefix = req.params.prefix.toUpperCase();
@@ -913,6 +1004,7 @@ async function startServer() {
             status: "Bufor",
             id_uzytkownika_utworzenia: user.id,
             id_kontrahenta: id_kontrahenta || null,
+            pozycje_json: JSON.stringify(items.map((it: any) => ({ id_partii: it.id_partii, ilosc: it.ilosc, sztuki: it.sztuki || {} }))),
           }
         });
 
@@ -991,25 +1083,62 @@ async function startServer() {
       const firstRuch = ruchy[0];
       const status = header?.status || "Zatwierdzony";
 
+      // Parse sztuki breakdown from header if available
+      let sztukiByPartia: Record<string, Record<string, number>> = {};
+      if (header?.pozycje_json) {
+        try {
+          const parsed = JSON.parse(header.pozycje_json) as { id_partii: string; sztuki: Record<string, number> }[];
+          parsed.forEach(p => { sztukiByPartia[p.id_partii] = p.sztuki || {}; });
+        } catch {}
+      }
+
       let wartosc_calkowita = 0;
-      const pozycje = ruchy.map(r => {
+      const pozycje: any[] = [];
+      for (const r of ruchy) {
         const ilosc = Math.abs(r.ilosc);
         const cena = r.cena_jednostkowa || 0;
-        const wartosc = ilosc * cena;
-        wartosc_calkowita += wartosc;
-        return {
-          id_asortymentu: r.partia.id_asortymentu,
-          asortyment: r.partia.asortyment.nazwa,
-          kod_towaru: r.partia.asortyment.kod_towaru,
-          numer_partii: r.partia.numer_partii,
-          ilosc,
-          jednostka: r.partia.asortyment.jednostka_miary,
-          cena_jednostkowa: r.cena_jednostkowa,
-          data_produkcji: r.partia.data_produkcji,
-          termin_waznosci: r.partia.termin_waznosci,
-          wartosc
-        };
-      });
+        const sztuki = sztukiByPartia[r.id_partii] || {};
+        const hasOp = Object.keys(sztuki).length > 0;
+
+        if (hasOp) {
+          // Rozwiń każde opakowanie jako osobną pozycję
+          for (const [label, szt] of Object.entries(sztuki) as [string, number][]) {
+            if (szt <= 0) continue;
+            // label format: "Nazwa (X kg)" — wyciągamy wagę
+            const match = label.match(/^(.*)\s+\((\d+(?:\.\d+)?)\s*kg\)$/);
+            const nazwaOp = match ? match[1] : label;
+            const wagaKg = match ? parseFloat(match[2]) : 0;
+            const iloscKg = Math.round(szt * wagaKg * 1000) / 1000;
+            const wartosc = iloscKg * cena;
+            wartosc_calkowita += wartosc;
+            pozycje.push({
+              asortyment: nazwaOp,
+              wyrob: r.partia.asortyment.nazwa,
+              kod_towaru: r.partia.asortyment.kod_towaru,
+              numer_partii: r.partia.numer_partii,
+              ilosc: szt,
+              jednostka: "szt.",
+              ilosc_kg: iloscKg,
+              cena_jednostkowa: wagaKg > 0 ? cena * wagaKg : null,
+              wartosc,
+            });
+          }
+        } else {
+          const wartosc = ilosc * cena;
+          wartosc_calkowita += wartosc;
+          pozycje.push({
+            asortyment: r.partia.asortyment.nazwa,
+            wyrob: null,
+            kod_towaru: r.partia.asortyment.kod_towaru,
+            numer_partii: r.partia.numer_partii,
+            ilosc,
+            jednostka: r.partia.asortyment.jednostka_miary,
+            ilosc_kg: null,
+            cena_jednostkowa: r.cena_jednostkowa,
+            wartosc,
+          });
+        }
+      }
 
       const typDok = firstRuch
         ? (firstRuch.typ_ruchu === "Zuzycie" ? "RW" : firstRuch.typ_ruchu === "Przyjecie_Z_Produkcji" ? "PW" : firstRuch.typ_ruchu)
@@ -1509,6 +1638,7 @@ async function startServer() {
       const zlecenia = await prisma.zlecenia_Produkcyjne.findMany({
         where: { OR: [{ czy_aktywne: true }, { status: "Anulowane" }] },
         include: {
+          sesja: true,
           receptura: {
             include: {
               asortyment_docelowy: true,
@@ -1617,6 +1747,200 @@ async function startServer() {
       res.json(zlecenie);
     } catch (error) {
       res.status(500).json({ error: "Błąd tworzenia zlecenia produkcyjnego" });
+    }
+  });
+
+  // --- SESJA ROBOCZA (draft wizarda) ---
+  app.get("/api/produkcja/sesja-robocza", async (_req, res) => {
+    try {
+      const row = await (prisma as any).sesja_Robocza.findFirst({ orderBy: { zaktualizowano_dnia: "desc" } });
+      res.json(row ?? null);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.put("/api/produkcja/sesja-robocza", async (req, res) => {
+    try {
+      const { krok, dane_json, zdarzenie = "auto" } = req.body;
+      const existing = await (prisma as any).sesja_Robocza.findFirst();
+      const row = existing
+        ? await (prisma as any).sesja_Robocza.update({ where: { id: existing.id }, data: { krok, dane_json } })
+        : await (prisma as any).sesja_Robocza.create({ data: { krok, dane_json } });
+      await (prisma as any).sesja_Robocza_Log.create({
+        data: { id_sesji_roboczej: row.id, krok, zdarzenie, dane_json },
+      });
+      res.json(row);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/produkcja/sesja-robocza/log", async (_req, res) => {
+    try {
+      const row = await (prisma as any).sesja_Robocza.findFirst({ orderBy: { zaktualizowano_dnia: "desc" } });
+      if (!row) return res.json([]);
+      const log = await (prisma as any).sesja_Robocza_Log.findMany({
+        where: { id_sesji_roboczej: row.id },
+        orderBy: { utworzono_dnia: "asc" },
+      });
+      res.json(log);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/produkcja/sesja-robocza", async (_req, res) => {
+    try {
+      await (prisma as any).sesja_Robocza_Log.deleteMany();
+      await (prisma as any).sesja_Robocza.deleteMany();
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // --- SESJA PRODUKCYJNA (wieloetapowa) ---
+  app.post("/api/produkcja/sesja", async (req, res) => {
+    try {
+      const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby } = req.body;
+      // wyroby: [{ id_receptury, ilosc, surowce: [{ id_partii, ilosc }] }]
+      if (!id_receptury_bazy || !(parseFloat(ilosc_bazy) > 0)) throw new Error("Podaj recepturę i ilość bazy");
+      if (!wyroby || wyroby.length === 0) throw new Error("Dodaj co najmniej jeden wyrób gotowy");
+
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+
+      const result = await prisma.$transaction(async (tx) => {
+        const numer_sesji = await generateSesjaNumber(tx);
+        const sesja = await tx.sesje_Produkcji.create({ data: { numer_sesji } });
+
+        // ── Etap 1: Polprodukt (baza) ──────────────────────────────────────
+        const recepturaBazy = await tx.receptury.findUnique({
+          where: { id: id_receptury_bazy },
+          include: { asortyment_docelowy: true },
+        });
+        if (!recepturaBazy) throw new Error("Nie znaleziono receptury bazy");
+
+        const numer_zp_bazy = await generateZlecenieNumber(tx);
+        const zlecenieBazy = await tx.zlecenia_Produkcyjne.create({
+          data: { numer_zlecenia: numer_zp_bazy, id_receptury: id_receptury_bazy, id_sesji: sesja.id, etap: 1, planowana_ilosc_wyrobu: parseFloat(ilosc_bazy), status: "Planowane" },
+        });
+
+        const rwBazyNr = await generateDocNumber(tx, "RW");
+        const pwBazyNr = await generateDocNumber(tx, "PW");
+        let kosztBazy = 0;
+
+        for (const s of surowce_bazy || []) {
+          if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
+          const ilosc = parseFloat(s.ilosc);
+          const partia = await tx.partie_Magazynowe.findUnique({
+            where: { id: s.id_partii },
+            include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
+          });
+          if (!partia) throw new Error(`Partia ${s.id_partii} nie istnieje`);
+          const stanPartii = partia.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
+          if (stanPartii < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
+          const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
+            where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
+            orderBy: { utworzono_dnia: "asc" },
+          });
+          kosztBazy += ilosc * (cenaDoc?.cena_jednostkowa ?? 0);
+          await tx.ruchy_Magazynowe.create({
+            data: { id_partii: s.id_partii, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwBazyNr, id_uzytkownika: user.id },
+          });
+        }
+
+        const iloscBazy = rzeczywista_ilosc_bazy != null && parseFloat(rzeczywista_ilosc_bazy) > 0
+          ? parseFloat(rzeczywista_ilosc_bazy)
+          : parseFloat(ilosc_bazy);
+        const terminWaznosci_baza = recepturaBazy.dni_trwalosci ? new Date(Date.now() + recepturaBazy.dni_trwalosci * 86400000) : null;
+        const partiaBazy = await tx.partie_Magazynowe.create({
+          data: { id_asortymentu: recepturaBazy.id_asortymentu_docelowego, numer_partii: pwBazyNr, data_produkcji: new Date(), termin_waznosci: terminWaznosci_baza, status_partii: "Dostepna" },
+        });
+        const cenaBazy = iloscBazy > 0 ? kosztBazy / iloscBazy : 0;
+        await tx.ruchy_Magazynowe.create({
+          data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Przyjecie_Z_Produkcji", ilosc: iloscBazy, cena_jednostkowa: cenaBazy, referencja_dokumentu: pwBazyNr, id_uzytkownika: user.id },
+        });
+        await tx.zlecenia_Produkcyjne.update({ where: { id: zlecenieBazy.id }, data: { status: "Zrealizowane", rzeczywista_ilosc_wyrobu: iloscBazy } });
+
+        // ── Etap 2: Wyroby gotowe ───────────────────────────────────────────
+        const zleceniaWyrobow = [];
+        for (const wyrob of wyroby) {
+          const recepturaWyrobu = await tx.receptury.findUnique({
+            where: { id: wyrob.id_receptury },
+            include: { asortyment_docelowy: true, skladniki: { include: { asortyment_skladnika: true } } },
+          });
+          if (!recepturaWyrobu) throw new Error(`Receptura ${wyrob.id_receptury} nie znaleziona`);
+
+          const iloscWyrobu = parseFloat(wyrob.ilosc);
+          const rzeczywistaIloscWyrobu = wyrob.rzeczywista_ilosc ? parseFloat(wyrob.rzeczywista_ilosc) : iloscWyrobu;
+          const numer_zp = await generateZlecenieNumber(tx);
+          const zlecenieWyrobu = await tx.zlecenia_Produkcyjne.create({
+            data: { numer_zlecenia: numer_zp, id_receptury: wyrob.id_receptury, id_sesji: sesja.id, etap: 2, planowana_ilosc_wyrobu: iloscWyrobu, status: "Planowane" },
+          });
+
+          const rwNr = await generateDocNumber(tx, "RW");
+          const pwNr = await generateDocNumber(tx, "PW");
+          let kosztWyrobu = 0;
+
+          // Zużycie bazy (Polprodukt) z partii z Etapu 1
+          const skladnikBazy = recepturaWyrobu.skladniki.find(
+            (s: any) => s.asortyment_skladnika.id === recepturaBazy.id_asortymentu_docelowego
+          );
+          if (skladnikBazy) {
+            const iloscBazyDo = skladnikBazy.ilosc_wymagana * iloscWyrobu * (1 + (skladnikBazy.procent_strat || 0) / 100);
+            kosztWyrobu += iloscBazyDo * cenaBazy;
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -iloscBazyDo, cena_jednostkowa: cenaBazy, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
+            });
+          }
+
+          // Zużycie pozostałych surowców
+          for (const s of wyrob.surowce || []) {
+            if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
+            const ilosc = parseFloat(s.ilosc);
+            const partia = await tx.partie_Magazynowe.findUnique({
+              where: { id: s.id_partii },
+              include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
+            });
+            if (!partia) throw new Error(`Partia ${s.id_partii} nie istnieje`);
+            const stanPartii = partia.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
+            if (stanPartii < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
+            const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
+              where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
+              orderBy: { utworzono_dnia: "asc" },
+            });
+            kosztWyrobu += ilosc * (cenaDoc?.cena_jednostkowa ?? 0);
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: s.id_partii, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
+            });
+          }
+
+          const terminWaznosci_wyrob = recepturaWyrobu.dni_trwalosci ? new Date(Date.now() + recepturaWyrobu.dni_trwalosci * 86400000) : null;
+          const partiaWyrobu = await tx.partie_Magazynowe.create({
+            data: {
+              id_asortymentu: recepturaWyrobu.id_asortymentu_docelowego,
+              numer_partii: pwNr,
+              data_produkcji: new Date(),
+              termin_waznosci: terminWaznosci_wyrob,
+              status_partii: "Dostepna",
+              opakowania_json: wyrob.opakowania?.length > 0 ? JSON.stringify(wyrob.opakowania) : null,
+            },
+          });
+          const cenaWyrobu = rzeczywistaIloscWyrobu > 0 ? kosztWyrobu / rzeczywistaIloscWyrobu : 0;
+          await tx.ruchy_Magazynowe.create({
+            data: { id_partii: partiaWyrobu.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Przyjecie_Z_Produkcji", ilosc: rzeczywistaIloscWyrobu, cena_jednostkowa: cenaWyrobu, referencja_dokumentu: pwNr, id_uzytkownika: user.id },
+          });
+          await tx.zlecenia_Produkcyjne.update({
+            where: { id: zlecenieWyrobu.id },
+            data: {
+              status: "Zrealizowane",
+              rzeczywista_ilosc_wyrobu: rzeczywistaIloscWyrobu,
+              opakowania_json: wyrob.opakowania?.length > 0 ? JSON.stringify(wyrob.opakowania) : null,
+            },
+          });
+          zleceniaWyrobow.push({ id: zlecenieWyrobu.id, numer: numer_zp, wyrob: recepturaWyrobu.asortyment_docelowy.nazwa, ilosc: rzeczywistaIloscWyrobu, pw: pwNr });
+        }
+
+        return { sesja: { id: sesja.id, numer_sesji }, baza: { numer_zp: numer_zp_bazy, pw: pwBazyNr, ilosc: iloscBazy }, wyroby: zleceniaWyrobow };
+      }, { timeout: 30000 });
+
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message || "Błąd sesji produkcyjnej" });
     }
   });
 
@@ -1946,6 +2270,28 @@ async function startServer() {
   });
 
 
+  // --- PARTIE wg asortymentu (wielokrotnego użytku) ---
+  app.get("/api/partie/:id_asortymentu", async (req, res) => {
+    try {
+      const partie = await prisma.partie_Magazynowe.findMany({
+        where: { id_asortymentu: req.params.id_asortymentu, status_partii: "Dostepna", czy_aktywne: true },
+        include: {
+          ruchy_magazynowe: { where: { czy_aktywne: true } },
+          rezerwacje: { where: { czy_aktywne: true, status: "Aktywna" } },
+        },
+        orderBy: [{ termin_waznosci: "asc" }, { utworzono_dnia: "asc" }],
+      });
+      const result = partie.map(p => ({
+        id: p.id,
+        numer_partii: p.numer_partii,
+        termin_waznosci: p.termin_waznosci,
+        stan: p.ruchy_magazynowe.reduce((s: number, r: any) => s + r.ilosc, 0)
+             - p.rezerwacje.reduce((s: number, r: any) => s + r.ilosc_zarezerwowana, 0),
+      })).filter(p => p.stan > 0.001);
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // --- TRACEABILITY (Genealogia) ---
   app.get("/api/trace/partia/:numer_partii/genealogia", async (req, res) => {
     try {
@@ -2113,6 +2459,18 @@ async function startServer() {
         orderBy: { utworzono_dnia: 'asc' }
       });
 
+      // Zbierz wszystkie id_asortymentu z opakowania_json by pobrać nazwy jednym zapytaniem
+      const allOpIds = new Set<string>();
+      partie.forEach(p => {
+        if (p.opakowania_json) {
+          try { (JSON.parse(p.opakowania_json) as { id_asortymentu: string }[]).forEach(o => allOpIds.add(o.id_asortymentu)); } catch {}
+        }
+      });
+      const opAsortyment = allOpIds.size > 0
+        ? await prisma.asortyment.findMany({ where: { id: { in: [...allOpIds] } }, select: { id: true, nazwa: true } })
+        : [];
+      const opNazwyMap = Object.fromEntries(opAsortyment.map(a => [a.id, a.nazwa]));
+
       // ZASOBY (per partia)
       const zasoby = partie.map(p => {
         const stan = p.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
@@ -2122,6 +2480,14 @@ async function startServer() {
         const pzDoc = p.ruchy_magazynowe.find(r => (r.typ_ruchu === "PZ" || r.typ_ruchu === "Przyjecie_Z_Produkcji") && r.ilosc > 0);
         const cena_jednostkowa = pzDoc?.cena_jednostkowa || 0;
         const dokument_przyjecia = pzDoc?.referencja_dokumentu || null;
+
+        let opakowania = null;
+        if (p.opakowania_json) {
+          try {
+            opakowania = (JSON.parse(p.opakowania_json) as { id_asortymentu: string; nazwa: string; waga_kg: number }[])
+              .map(o => ({ id_asortymentu: o.id_asortymentu, nazwa: opNazwyMap[o.id_asortymentu] || o.nazwa, waga_kg: o.waga_kg }));
+          } catch {}
+        }
 
         return {
           id_partii: p.id,
@@ -2134,8 +2500,8 @@ async function startServer() {
           data_produkcji: p.data_produkcji,
           termin_waznosci: p.termin_waznosci,
           status_partii: p.status_partii,
-
-          dokument_przyjecia
+          dokument_przyjecia,
+          opakowania,
         };
       }).filter(z => z.stan > 0.001 || z.zarezerwowane > 0);
 
@@ -2327,6 +2693,573 @@ async function startServer() {
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Błąd generowania raportu" });
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // MODUŁ GELATO
+  // ═══════════════════════════════════════════════════════════
+
+  async function generateSesjaGelato(tx: any): Promise<string> {
+    const date = new Date();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear().toString().slice(-2);
+    const suffix = `/${month}/${year}`;
+    const existing = await tx.sesje_Produkcji_Gelato.findMany({ where: { numer_sesji: { endsWith: suffix } } });
+    let maxNum = 0;
+    for (const s of existing) {
+      const m = s.numer_sesji.match(/^SPG-(\d+)/);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1]));
+    }
+    return `SPG-${(maxNum + 1).toString().padStart(3, '0')}${suffix}`;
+  }
+
+  async function generateOwaNumber(tx: any): Promise<string> {
+    const date = new Date();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear().toString().slice(-2);
+    const suffix = `/${month}/${year}`;
+    const existing = await tx.opakowania_Wyrobowe.findMany({ where: { numer_serii: { endsWith: suffix } } });
+    let maxNum = 0;
+    for (const o of existing) {
+      const m = o.numer_serii.match(/^OW-(\d+)/);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1]));
+    }
+    return `OW-${(maxNum + 1).toString().padStart(4, '0')}${suffix}`;
+  }
+
+  // --- Typy opakowań ---
+  app.get("/api/gelato/typy-opakowan", async (req, res) => {
+    try {
+      const typy = await prisma.typy_Opakowan.findMany({ where: { czy_aktywne: true }, orderBy: { nazwa: "asc" } });
+      res.json(typy);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/gelato/typy-opakowan", async (req, res) => {
+    try {
+      const { nazwa, pojemnosc_min_kg, pojemnosc_max_kg } = req.body;
+      if (!nazwa?.trim()) return res.status(400).json({ error: "Nazwa wymagana" });
+      const typ = await prisma.typy_Opakowan.create({
+        data: { nazwa: nazwa.trim(), pojemnosc_min_kg: parseFloat(pojemnosc_min_kg) || 0, pojemnosc_max_kg: parseFloat(pojemnosc_max_kg) || 10 }
+      });
+      res.json(typ);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.delete("/api/gelato/typy-opakowan/:id", async (req, res) => {
+    try {
+      await prisma.typy_Opakowan.update({ where: { id: req.params.id }, data: { czy_aktywne: false } });
+      res.json({ success: true });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // --- Partie dostępne dla danego asortymentu (do wyboru bazy/surowców) ---
+  app.get("/api/gelato/partie/:id_asortymentu", async (req, res) => {
+    try {
+      const partie = await prisma.partie_Magazynowe.findMany({
+        where: { id_asortymentu: req.params.id_asortymentu, status_partii: "Dostepna", czy_aktywne: true },
+        include: { ruchy_magazynowe: { where: { czy_aktywne: true }, select: { ilosc: true } } },
+        orderBy: { termin_waznosci: "asc" },
+      });
+      const result = partie
+        .map(p => ({ id: p.id, numer_partii: p.numer_partii, termin_waznosci: p.termin_waznosci, stan: p.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0) }))
+        .filter(p => p.stan > 0.001);
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // --- Sesje produkcyjne ---
+  app.get("/api/gelato/sesje", async (req, res) => {
+    try {
+      const sesje = await prisma.sesje_Produkcji_Gelato.findMany({
+        where: { czy_aktywne: true },
+        include: { _count: { select: { pozycje: true, opakowania: true } } },
+        orderBy: { data_sesji: "desc" },
+      });
+      res.json(sesje);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/gelato/sesje", async (req, res) => {
+    try {
+      const { data_sesji, notatki } = req.body;
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+      const sesja = await prisma.$transaction(async (tx) => {
+        const numer_sesji = await generateSesjaGelato(tx);
+        return tx.sesje_Produkcji_Gelato.create({
+          data: { numer_sesji, data_sesji: data_sesji ? new Date(data_sesji) : new Date(), notatki: notatki || null, id_uzytkownika: user.id },
+        });
+      });
+      res.json(sesja);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.get("/api/gelato/sesje/:id", async (req, res) => {
+    try {
+      const sesja = await prisma.sesje_Produkcji_Gelato.findUnique({
+        where: { id: req.params.id },
+        include: {
+          pozycje: {
+            where: { czy_aktywne: true },
+            include: {
+              receptura: { include: { asortyment_docelowy: true, skladniki: { where: { czy_aktywne: true }, include: { asortyment_skladnika: true } } } },
+              partia_bazy: true,
+            },
+            orderBy: { utworzono_dnia: "asc" },
+          },
+          opakowania: {
+            where: { czy_aktywne: true },
+            include: { asortyment: true, typ_opakowania: true },
+            orderBy: { numer_serii: "asc" },
+          },
+        },
+      });
+      if (!sesja) return res.status(404).json({ error: "Nie znaleziono sesji" });
+      res.json(sesja);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Dodaj smak (pozycję) do sesji
+  app.post("/api/gelato/sesje/:id/pozycje", async (req, res) => {
+    try {
+      const sesja = await prisma.sesje_Produkcji_Gelato.findUnique({ where: { id: req.params.id } });
+      if (!sesja) return res.status(404).json({ error: "Brak sesji" });
+      if (sesja.status !== "Otwarta") return res.status(400).json({ error: "Sesja jest zamknięta" });
+      const { id_receptury, id_partii_bazy, ilosc_bazy_kg, liczba_wsadow, surowce_json } = req.body;
+      if (!id_receptury) return res.status(400).json({ error: "id_receptury wymagane" });
+      const pozycja = await prisma.pozycje_Sesji_Gelato.create({
+        data: {
+          id_sesji: req.params.id,
+          id_receptury,
+          id_partii_bazy: id_partii_bazy || null,
+          ilosc_bazy_kg: ilosc_bazy_kg ? parseFloat(ilosc_bazy_kg) : null,
+          liczba_wsadow: parseInt(liczba_wsadow) || 1,
+          surowce_json: surowce_json ? JSON.stringify(surowce_json) : null,
+        },
+        include: { receptura: { include: { asortyment_docelowy: true } }, partia_bazy: true },
+      });
+      res.json(pozycja);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.put("/api/gelato/sesje/:id/pozycje/:pid", async (req, res) => {
+    try {
+      const sesja = await prisma.sesje_Produkcji_Gelato.findUnique({ where: { id: req.params.id } });
+      if (sesja?.status !== "Otwarta") return res.status(400).json({ error: "Sesja jest zamknięta" });
+      const { id_partii_bazy, ilosc_bazy_kg, liczba_wsadow, surowce_json, uwagi } = req.body;
+      const updated = await prisma.pozycje_Sesji_Gelato.update({
+        where: { id: req.params.pid },
+        data: {
+          id_partii_bazy: id_partii_bazy || null,
+          ilosc_bazy_kg: ilosc_bazy_kg ? parseFloat(ilosc_bazy_kg) : null,
+          liczba_wsadow: parseInt(liczba_wsadow) || 1,
+          surowce_json: surowce_json ? JSON.stringify(surowce_json) : null,
+          uwagi: uwagi || null,
+        },
+        include: { receptura: { include: { asortyment_docelowy: true } }, partia_bazy: true },
+      });
+      res.json(updated);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.delete("/api/gelato/sesje/:id/pozycje/:pid", async (req, res) => {
+    try {
+      const sesja = await prisma.sesje_Produkcji_Gelato.findUnique({ where: { id: req.params.id } });
+      if (sesja?.status !== "Otwarta") return res.status(400).json({ error: "Sesja jest zamknięta" });
+      await prisma.pozycje_Sesji_Gelato.update({ where: { id: req.params.pid }, data: { czy_aktywne: false } });
+      res.json({ success: true });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Dodaj opakowanie (sztukę) do sesji
+  app.post("/api/gelato/sesje/:id/opakowania", async (req, res) => {
+    try {
+      const sesja = await prisma.sesje_Produkcji_Gelato.findUnique({ where: { id: req.params.id } });
+      if (!sesja) return res.status(404).json({ error: "Brak sesji" });
+      if (sesja.status !== "Otwarta") return res.status(400).json({ error: "Sesja jest zamknięta" });
+      const { id_asortymentu, id_typu_opakowania, id_pozycji_sesji, id_partii_bazy, waga_kg, termin_waznosci } = req.body;
+      if (!id_asortymentu || !id_typu_opakowania || !waga_kg) {
+        return res.status(400).json({ error: "id_asortymentu, id_typu_opakowania i waga_kg są wymagane" });
+      }
+      const opakowanie = await prisma.$transaction(async (tx) => {
+        const numer_serii = await generateOwaNumber(tx);
+        return tx.opakowania_Wyrobowe.create({
+          data: {
+            numer_serii,
+            id_sesji: req.params.id,
+            id_asortymentu,
+            id_typu_opakowania,
+            id_pozycji_sesji: id_pozycji_sesji || null,
+            id_partii_bazy: id_partii_bazy || null,
+            waga_kg: parseFloat(waga_kg),
+            data_produkcji: sesja.data_sesji,
+            termin_waznosci: termin_waznosci ? new Date(termin_waznosci) : null,
+          },
+          include: { asortyment: true, typ_opakowania: true },
+        });
+      });
+      res.json(opakowanie);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.delete("/api/gelato/sesje/:id/opakowania/:oid", async (req, res) => {
+    try {
+      const sesja = await prisma.sesje_Produkcji_Gelato.findUnique({ where: { id: req.params.id } });
+      if (sesja?.status !== "Otwarta") return res.status(400).json({ error: "Sesja jest zamknięta" });
+      const op = await prisma.opakowania_Wyrobowe.findUnique({ where: { id: req.params.oid } });
+      if (op?.status !== "Dostepne") return res.status(400).json({ error: "Opakowanie jest już wydane" });
+      await prisma.opakowania_Wyrobowe.update({ where: { id: req.params.oid }, data: { czy_aktywne: false } });
+      res.json({ success: true });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Zamknięcie sesji — rejestruje rozchody bazy i surowców
+  app.put("/api/gelato/sesje/:id/zamknij", async (req, res) => {
+    try {
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+      const sesja = await prisma.sesje_Produkcji_Gelato.findUnique({
+        where: { id: req.params.id },
+        include: { pozycje: { where: { czy_aktywne: true } } },
+      });
+      if (!sesja) return res.status(404).json({ error: "Nie znaleziono sesji" });
+      if (sesja.status !== "Otwarta") return res.status(400).json({ error: "Sesja jest już zamknięta" });
+
+      await prisma.$transaction(async (tx) => {
+        const rwNumber = await generateDocNumber(tx, "RW");
+
+        for (const poz of sesja.pozycje) {
+          // Rozchód bazy
+          if (poz.id_partii_bazy && poz.ilosc_bazy_kg && poz.ilosc_bazy_kg > 0) {
+            const stanAgg = await tx.ruchy_Magazynowe.aggregate({
+              where: { id_partii: poz.id_partii_bazy, czy_aktywne: true },
+              _sum: { ilosc: true },
+            });
+            const stan = stanAgg._sum.ilosc ?? 0;
+            if (stan < poz.ilosc_bazy_kg) {
+              const partia = await tx.partie_Magazynowe.findUnique({ where: { id: poz.id_partii_bazy } });
+              throw new Error(`Niewystarczający stan bazy (${partia?.numer_partii}): jest ${stan.toFixed(2)} kg, potrzeba ${poz.ilosc_bazy_kg} kg`);
+            }
+            const docBazy = await tx.ruchy_Magazynowe.findFirst({
+              where: { id_partii: poz.id_partii_bazy, ilosc: { gt: 0 }, czy_aktywne: true },
+              orderBy: { utworzono_dnia: "asc" },
+            });
+            await tx.ruchy_Magazynowe.create({
+              data: {
+                id_partii: poz.id_partii_bazy,
+                typ_ruchu: "Zuzycie",
+                ilosc: -poz.ilosc_bazy_kg,
+                cena_jednostkowa: docBazy?.cena_jednostkowa ?? 0,
+                referencja_dokumentu: rwNumber,
+                id_uzytkownika: user.id,
+              },
+            });
+          }
+
+          // Rozchód dodatkowych surowców z surowce_json
+          if (poz.surowce_json) {
+            let surowce: Array<{ id_partii: string; ilosc: number }> = [];
+            try { surowce = JSON.parse(poz.surowce_json); } catch { /* ignore */ }
+            for (const s of surowce) {
+              if (!s.id_partii || !(s.ilosc > 0)) continue;
+              const docS = await tx.ruchy_Magazynowe.findFirst({
+                where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
+                orderBy: { utworzono_dnia: "asc" },
+              });
+              await tx.ruchy_Magazynowe.create({
+                data: {
+                  id_partii: s.id_partii,
+                  typ_ruchu: "Zuzycie",
+                  ilosc: -s.ilosc,
+                  cena_jednostkowa: docS?.cena_jednostkowa ?? 0,
+                  referencja_dokumentu: rwNumber,
+                  id_uzytkownika: user.id,
+                },
+              });
+            }
+          }
+        }
+
+        await tx.sesje_Produkcji_Gelato.update({ where: { id: req.params.id }, data: { status: "Zamknieta" } });
+      });
+
+      const updated = await prisma.sesje_Produkcji_Gelato.findUnique({ where: { id: req.params.id } });
+      res.json(updated);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // --- Stan magazynu wyrobów gotowych (opakowania) ---
+  app.get("/api/gelato/stan", async (req, res) => {
+    try {
+      const opakowania = await prisma.opakowania_Wyrobowe.findMany({
+        where: { status: "Dostepne", czy_aktywne: true },
+        include: { asortyment: true, typ_opakowania: true },
+        orderBy: [{ id_asortymentu: "asc" }, { numer_serii: "asc" }],
+      });
+      const grouped: Record<string, { id_asortymentu: string; nazwa: string; kod_towaru: string; typy: Record<string, any> }> = {};
+      for (const op of opakowania) {
+        if (!grouped[op.id_asortymentu]) {
+          grouped[op.id_asortymentu] = { id_asortymentu: op.id_asortymentu, nazwa: op.asortyment.nazwa, kod_towaru: op.asortyment.kod_towaru, typy: {} };
+        }
+        const g = grouped[op.id_asortymentu];
+        if (!g.typy[op.id_typu_opakowania]) {
+          g.typy[op.id_typu_opakowania] = { id_typu: op.id_typu_opakowania, nazwa_typu: op.typ_opakowania.nazwa, opakowania: [], ilosc_szt: 0, waga_total_kg: 0 };
+        }
+        const t = g.typy[op.id_typu_opakowania];
+        t.opakowania.push({ id: op.id, numer_serii: op.numer_serii, waga_kg: op.waga_kg, data_produkcji: op.data_produkcji, termin_waznosci: op.termin_waznosci });
+        t.ilosc_szt++;
+        t.waga_total_kg = Math.round((t.waga_total_kg + op.waga_kg) * 1000) / 1000;
+      }
+      const result = Object.values(grouped).map(g => ({
+        ...g,
+        typy: Object.values(g.typy),
+        ilosc_szt_total: Object.values(g.typy).reduce((s: number, t: any) => s + t.ilosc_szt, 0),
+        waga_total_kg: Math.round(Object.values(g.typy).reduce((s: number, t: any) => s + t.waga_total_kg, 0) * 1000) / 1000,
+      })).sort((a, b) => a.nazwa.localeCompare(b.nazwa));
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Lista dostępnych opakowań do wyboru w WZ
+  app.get("/api/gelato/opakowania", async (req, res) => {
+    try {
+      const opakowania = await prisma.opakowania_Wyrobowe.findMany({
+        where: { status: "Dostepne", czy_aktywne: true },
+        include: { asortyment: true, typ_opakowania: true },
+        orderBy: [{ id_asortymentu: "asc" }, { data_produkcji: "asc" }],
+      });
+      res.json(opakowania);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // --- WZ Gelato ---
+  app.get("/api/gelato/wz", async (req, res) => {
+    try {
+      const docs = await prisma.dokumenty_Magazynowe.findMany({
+        where: { typ: "WZ", czy_aktywne: true, opakowania_wz: { some: {} } },
+        include: { kontrahent: true, opakowania_wz: { include: { asortyment: true, typ_opakowania: true } } },
+        orderBy: { utworzono_dnia: "desc" },
+      });
+      res.json(docs);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/gelato/wz/:id", async (req, res) => {
+    try {
+      const doc = await prisma.dokumenty_Magazynowe.findUnique({
+        where: { id: req.params.id },
+        include: {
+          kontrahent: true,
+          uzytkownik_utworzenia: true,
+          uzytkownik_zatwierdzenia: true,
+          opakowania_wz: { include: { asortyment: true, typ_opakowania: true } },
+        },
+      });
+      if (!doc) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      res.json(doc);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Tworzenie WZ gelato — w stanie Bufor
+  app.post("/api/gelato/wz", async (req, res) => {
+    try {
+      const { id_kontrahenta, ids_opakowan } = req.body;
+      if (!Array.isArray(ids_opakowan) || ids_opakowan.length === 0) {
+        return res.status(400).json({ error: "Brak wybranych opakowań" });
+      }
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+
+      const result = await prisma.$transaction(async (tx) => {
+        const opakowania = await tx.opakowania_Wyrobowe.findMany({ where: { id: { in: ids_opakowan }, czy_aktywne: true } });
+        if (opakowania.length !== ids_opakowan.length) throw new Error("Niektóre opakowania nie istnieją");
+        const niedostepne = opakowania.filter(o => o.status !== "Dostepne");
+        if (niedostepne.length > 0) throw new Error(`Opakowania ${niedostepne.map(o => o.numer_serii).join(", ")} nie są dostępne`);
+
+        const referencja = await generateDocNumber(tx, "WZ");
+        const doc = await tx.dokumenty_Magazynowe.create({
+          data: { referencja, typ: "WZ", status: "Bufor", id_uzytkownika_utworzenia: user.id, id_kontrahenta: id_kontrahenta || null },
+        });
+        await tx.opakowania_Wyrobowe.updateMany({ where: { id: { in: ids_opakowan } }, data: { id_dokumentu_wz: doc.id } });
+        return doc;
+      });
+      res.json(result);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Zatwierdzenie WZ gelato
+  app.put("/api/gelato/wz/:id/zatwierdz", async (req, res) => {
+    try {
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika");
+      const doc = await prisma.dokumenty_Magazynowe.findUnique({ where: { id: req.params.id } });
+      if (!doc) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (doc.status !== "Bufor") return res.status(400).json({ error: "Dokument nie jest w stanie Bufor" });
+      await prisma.$transaction(async (tx) => {
+        await tx.dokumenty_Magazynowe.update({
+          where: { id: req.params.id },
+          data: { status: "Zatwierdzony", id_uzytkownika_zatwierdzenia: user.id, data_zatwierdzenia: new Date() },
+        });
+        await tx.opakowania_Wyrobowe.updateMany({ where: { id_dokumentu_wz: req.params.id }, data: { status: "Wydane" } });
+      });
+      res.json({ success: true });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Kompletna produkcja gelato — jeden request tworzy sesję, rejestruje rozchody i opakowania
+  app.post("/api/gelato/produkcja-kompletna", async (req, res) => {
+    try {
+      const { data_sesji, notatki, id_receptury_bazy, ilosc_bazy_kg, surowce_bazy, pozycje, opakowania } = req.body;
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+
+      const result = await prisma.$transaction(async (tx) => {
+        const numer_sesji = await generateSesjaGelato(tx);
+        const rwNumber = await generateDocNumber(tx, "RW");
+        const pwNumber = await generateDocNumber(tx, "PW");
+
+        const dataSesji = data_sesji ? new Date(data_sesji) : new Date();
+
+        const sesja = await tx.sesje_Produkcji_Gelato.create({
+          data: {
+            numer_sesji,
+            data_sesji: dataSesji,
+            notatki: notatki || null,
+            id_uzytkownika: user.id,
+            status: "Zamknieta",
+          },
+        });
+
+        // Rozchód składników bazy (RW)
+        for (const s of surowce_bazy || []) {
+          if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
+          const ilosc = parseFloat(s.ilosc);
+          const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
+            where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
+            orderBy: { utworzono_dnia: "asc" },
+          });
+          await tx.ruchy_Magazynowe.create({
+            data: { id_partii: s.id_partii, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwNumber, id_uzytkownika: user.id },
+          });
+        }
+
+        // PW — przyjęcie bazy do magazynu (Przyjecie_Z_Produkcji)
+        let partiaBazyId: string | null = null;
+        if (id_receptury_bazy && ilosc_bazy_kg && parseFloat(ilosc_bazy_kg) > 0) {
+          const recepturaBazy = await tx.receptury.findUnique({
+            where: { id: id_receptury_bazy },
+            include: { asortyment_docelowy: true },
+          });
+          if (recepturaBazy) {
+            const dniBazy = recepturaBazy.dni_trwalosci ?? null;
+            const terminWaznosci = dniBazy ? new Date(dataSesji.getTime() + dniBazy * 86400000) : null;
+            const numerPartii = `${numer_sesji}/BAZA`;
+
+            const partiaBazy = await tx.partie_Magazynowe.create({
+              data: {
+                id_asortymentu: recepturaBazy.id_asortymentu_docelowego,
+                numer_partii: numerPartii,
+                data_produkcji: dataSesji,
+                termin_waznosci: terminWaznosci,
+                status_partii: "Dostepna",
+              },
+            });
+            partiaBazyId = partiaBazy.id;
+
+            await tx.ruchy_Magazynowe.create({
+              data: {
+                id_partii: partiaBazy.id,
+                typ_ruchu: "Przyjecie_Z_Produkcji",
+                ilosc: parseFloat(ilosc_bazy_kg),
+                referencja_dokumentu: pwNumber,
+                id_uzytkownika: user.id,
+              },
+            });
+          }
+        }
+
+        // Pozycje (smaki) + rozchód bazy per smak + rozchód surowców smakowych
+        const pozycjeDb: { idx: number; id: string }[] = [];
+        for (const poz of pozycje || []) {
+          const nowaPos = await tx.pozycje_Sesji_Gelato.create({
+            data: {
+              id_sesji: sesja.id,
+              id_receptury: poz.id_receptury,
+              id_partii_bazy: partiaBazyId,
+              liczba_wsadow: parseInt(poz.liczba_wsadow) || 1,
+              ilosc_bazy_kg: poz.ilosc_bazy_kg ? parseFloat(poz.ilosc_bazy_kg) : null,
+            },
+          });
+          pozycjeDb.push({ idx: poz._idx ?? pozycjeDb.length, id: nowaPos.id });
+
+          // Rozchód bazy dla tego smaku
+          if (partiaBazyId && poz.ilosc_bazy_kg && parseFloat(poz.ilosc_bazy_kg) > 0) {
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: partiaBazyId, typ_ruchu: "Zuzycie", ilosc: -parseFloat(poz.ilosc_bazy_kg), referencja_dokumentu: rwNumber, id_uzytkownika: user.id },
+            });
+          }
+
+          // Rozchód pozostałych surowców smakowych
+          for (const s of poz.surowce || []) {
+            if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
+            const ilosc = parseFloat(s.ilosc);
+            const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
+              where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
+              orderBy: { utworzono_dnia: "asc" },
+            });
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: s.id_partii, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwNumber, id_uzytkownika: user.id },
+            });
+          }
+        }
+
+        // Opakowania
+        const opakowaniaCt = [];
+        for (const op of opakowania || []) {
+          if (!op.id_asortymentu || !op.id_typu_opakowania || !(parseFloat(op.waga_kg) > 0)) continue;
+          const numer_serii = await generateOwaNumber(tx);
+          const pozId = op._pozIdx != null ? pozycjeDb.find(p => p.idx === op._pozIdx)?.id ?? null : null;
+          const o = await tx.opakowania_Wyrobowe.create({
+            data: {
+              numer_serii,
+              id_sesji: sesja.id,
+              id_pozycji_sesji: pozId,
+              id_asortymentu: op.id_asortymentu,
+              id_typu_opakowania: op.id_typu_opakowania,
+              id_partii_bazy: partiaBazyId,
+              waga_kg: parseFloat(op.waga_kg),
+              data_produkcji: dataSesji,
+              termin_waznosci: op.termin_waznosci ? new Date(op.termin_waznosci) : null,
+            },
+          });
+          opakowaniaCt.push(o);
+        }
+
+        return { sesja, opakowania: opakowaniaCt, rwNumber, pwNumber, partiaBazyNumer: partiaBazyId ? `${numer_sesji}/BAZA` : null };
+      });
+
+      res.json(result);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Anulowanie WZ gelato
+  app.put("/api/gelato/wz/:id/anuluj", async (req, res) => {
+    try {
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika");
+      const doc = await prisma.dokumenty_Magazynowe.findUnique({ where: { id: req.params.id } });
+      if (!doc) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (doc.status === "Zatwierdzony") return res.status(400).json({ error: "Zatwierdzony dokument nie może być anulowany" });
+      await prisma.$transaction(async (tx) => {
+        await tx.dokumenty_Magazynowe.update({
+          where: { id: req.params.id },
+          data: { status: "Anulowany", id_uzytkownika_anulowania: user.id, data_anulowania: new Date() },
+        });
+        await tx.opakowania_Wyrobowe.updateMany({ where: { id_dokumentu_wz: req.params.id }, data: { id_dokumentu_wz: null } });
+      });
+      res.json({ success: true });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
   // Vite middleware for development

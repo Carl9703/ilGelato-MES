@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, MapPin, FileText, ChevronDown, ChevronUp, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator } from "lucide-react";
+import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, MapPin, FileText, ChevronDown, ChevronUp, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers } from "lucide-react";
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
 import { fmtL } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
@@ -20,6 +20,9 @@ type Zlecenie = {
   id: string;
   numer_zlecenia: string | null;
   id_receptury: string;
+  id_sesji?: string | null;
+  etap?: number | null;
+  sesja?: { id: string; numer_sesji: string } | null;
   planowana_ilosc_wyrobu: number;
   rzeczywista_ilosc_wyrobu?: number;
   opakowania?: OpakowaniePozycja[];
@@ -30,6 +33,11 @@ type Zlecenie = {
   rezerwacje?: any[];
   numer_partii_wyrobu?: string;
 };
+
+type WizPartia = { id: string; numer_partii: string; termin_waznosci: string | null; stan: number };
+type WizSurowiecBaza = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; id_partii: string; partie: WizPartia[] };
+type WizWyrob = { _key: string; id_receptury: string; liczba_porcji: string };
+type WizSurowiecWyrob = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; id_partii: string; partie: WizPartia[] };
 
 export default function Produkcja() {
   const [zlecenia, setZlecenia] = useState<Zlecenie[]>([]);
@@ -80,6 +88,91 @@ export default function Produkcja() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editIlosc, setEditIlosc] = useState("");
 
+  // ── Wizard sesji produkcyjnej ────────────────────────────────────────────────
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizStep, setWizStep] = useState<1|2|3>(1);
+  const [wizLoading, setWizLoading] = useState(false);
+  const [wizBazaRecId, setWizBazaRecId] = useState("");
+  const [wizBazaIlosc, setWizBazaIlosc] = useState("");
+  const [wizBazaRzeczywistaIlosc, setWizBazaRzeczywistaIlosc] = useState("");
+  const [wizBazaSurowce, setWizBazaSurowce] = useState<WizSurowiecBaza[]>([]);
+  const [wizWyroby, setWizWyroby] = useState<WizWyrob[]>([]);
+  const [wizAddRecId, setWizAddRecId] = useState("");
+  const [wizWyrobySurowceMap, setWizWyrobySurowceMap] = useState<Record<string, WizSurowiecWyrob[]>>({});
+  type WizRealizacjaItem = { rzeczywista_ilosc: string; opakowania: Array<{ id_asortymentu: string; nazwa: string; waga_kg: string }> };
+  const [wizRealizacja, setWizRealizacja] = useState<Record<string, WizRealizacjaItem>>({});
+  const [wizDraftInfo, setWizDraftInfo] = useState<{ savedAt: string } | null>(null);
+  const [hasDraft, setHasDraft] = useState(false);
+
+  // ── Draft w bazie danych ──────────────────────────────────────────────────
+  const dbSaveDraft = async (krok: number, data: object, zdarzenie = "auto") => {
+    try {
+      await fetch("/api/produkcja/sesja-robocza", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ krok, dane_json: JSON.stringify(data), zdarzenie }),
+      });
+    } catch { /* ignoruj błędy zapisu draftu */ }
+  };
+
+  const dbClearDraft = async () => {
+    try { await fetch("/api/produkcja/sesja-robocza", { method: "DELETE" }); } catch { /* ignoruj */ }
+  };
+
+  const saveDraft = () => {
+    const draft = {
+      wizStep, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc,
+      wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja,
+      savedAt: new Date().toISOString(),
+    };
+    dbSaveDraft(wizStep, draft, "zapisano_szkic");
+    setShowWizard(false);
+  };
+
+  const openWizardWithDraftCheck = async () => {
+    try {
+      const res = await fetch("/api/produkcja/sesja-robocza");
+      if (res.ok) {
+        const row = await res.json();
+        if (row?.dane_json) {
+          const draft = JSON.parse(row.dane_json);
+          setWizDraftInfo({ savedAt: draft.savedAt ?? row.zaktualizowano_dnia });
+          return;
+        }
+      }
+    } catch { /* brak draftu */ }
+    wizReset(); fetchData(); setShowWizard(true);
+  };
+
+  const restoreDraft = async () => {
+    try {
+      const res = await fetch("/api/produkcja/sesja-robocza");
+      if (!res.ok) return;
+      const row = await res.json();
+      if (!row?.dane_json) return;
+      const draft = JSON.parse(row.dane_json);
+      setWizStep(draft.wizStep);
+      setWizBazaRecId(draft.wizBazaRecId);
+      setWizBazaIlosc(draft.wizBazaIlosc);
+      setWizBazaRzeczywistaIlosc(draft.wizBazaRzeczywistaIlosc ?? draft.wizBazaIlosc ?? "");
+      setWizBazaSurowce(draft.wizBazaSurowce);
+      setWizWyroby(draft.wizWyroby);
+      setWizWyrobySurowceMap(draft.wizWyrobySurowceMap);
+      setWizRealizacja(draft.wizRealizacja);
+      setWizDraftInfo(null);
+      fetchData();
+      setShowWizard(true);
+      if (draft.wizStep >= 3 && dostepneOpakowania.length === 0) {
+        fetch("/api/asortyment").then(r => r.json())
+          .then((items: any[]) => setDostepneOpakowania(items.filter((a: any) => a.typ_asortymentu === "Opakowanie" && a.czy_aktywne)))
+          .catch(() => {});
+      }
+    } catch { /* ignoruj */ }
+  };
+
+  // Alias dla starego clearDraft
+  const clearDraft = dbClearDraft;
+
   // Pakowanie w realizacji
   const [opakowaniaWpisy, setOpakowaniaWpisy] = useState<Array<{ id_asortymentu: string; nazwa: string; waga_kg: string }>>([]);
   const [dostepneOpakowania, setDostepneOpakowania] = useState<Array<{ id: string; nazwa: string }>>([]);
@@ -100,7 +193,10 @@ export default function Produkcja() {
     } catch {} finally { setPreviewDocLoading(false); }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchData();
+    fetch("/api/produkcja/sesja-robocza").then(r => r.json()).then(row => setHasDraft(!!row?.dane_json)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!selectedRecId) { setStockData({}); return; }
@@ -123,6 +219,7 @@ export default function Produkcja() {
       if (previewDocRef) { setPreviewDocRef(null); return; }
       if (activePicker) { setActivePicker(null); return; }
       if (showSelektor) { setShowSelektor(false); return; }
+      if (showWizard) { setShowWizard(false); return; }
       if (itemToRealize) { setItemToRealize(null); return; }
       if (pickListZlecenie) { setPickListZlecenie(null); return; }
       if (viewZlecenie) { setViewZlecenie(null); return; }
@@ -130,7 +227,7 @@ export default function Produkcja() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [previewDocRef, activePicker, showSelektor, itemToRealize, pickListZlecenie, viewZlecenie, isAdding]);
+  }, [previewDocRef, activePicker, showSelektor, showWizard, itemToRealize, pickListZlecenie, viewZlecenie, isAdding]);
 
   const fetchData = async () => {
     try {
@@ -351,6 +448,269 @@ export default function Produkcja() {
     win.print();
   };
 
+  // ── Wizard helpers ───────────────────────────────────────────────────────────
+  const loadPartieForAsortyment = async (id_asortymentu: string): Promise<WizPartia[]> => {
+    try { const r = await fetch(`/api/partie/${id_asortymentu}`); return r.ok ? r.json() : []; }
+    catch { return []; }
+  };
+
+  React.useEffect(() => {
+    if (!wizBazaRecId || !showWizard) { setWizBazaSurowce([]); return; }
+    const rec = receptury.find(r => r.id === wizBazaRecId);
+    if (!rec) return;
+    const iloscNum = parseFloat(wizBazaIlosc.replace(",", ".")) || 0;
+    if (iloscNum <= 0) { setWizBazaSurowce([]); return; }
+    const surowce: WizSurowiecBaza[] = rec.skladniki.map(s => {
+      const ilosc_wymagana = Math.round(s.ilosc_wymagana * iloscNum * 1000) / 1000;
+      const przelicznik = s.asortyment_skladnika.przelicznik_jednostki ?? 1;
+      const ilosc_jm = s.czy_pomocnicza && przelicznik > 0
+        ? Math.round(ilosc_wymagana / przelicznik * 1000) / 1000
+        : ilosc_wymagana;
+      return {
+        id_asortymentu: s.id_asortymentu_skladnika,
+        nazwa: s.asortyment_skladnika.nazwa,
+        jednostka: s.czy_pomocnicza && s.asortyment_skladnika.jednostka_pomocnicza
+          ? s.asortyment_skladnika.jednostka_pomocnicza
+          : s.asortyment_skladnika.jednostka_miary,
+        jednostka_glowna: s.asortyment_skladnika.jednostka_miary,
+        czy_pomocnicza: s.czy_pomocnicza,
+        przelicznik,
+        ilosc_wymagana,
+        ilosc_jm,
+        id_partii: "",
+        partie: [],
+      };
+    });
+    setWizBazaSurowce(surowce);
+    surowce.forEach(s => {
+      loadPartieForAsortyment(s.id_asortymentu).then(partie =>
+        // Auto-wybierz pierwszą partię FIFO
+        setWizBazaSurowce(prev => prev.map(x => x.id_asortymentu === s.id_asortymentu
+          ? { ...x, partie, id_partii: x.id_partii || partie[0]?.id || "" }
+          : x))
+      );
+    });
+  }, [wizBazaRecId, wizBazaIlosc, showWizard]);
+
+  // Auto-przelicz surowce wyrobów gdy lista wyrobów się zmienia (step 2)
+  React.useEffect(() => {
+    if (wizStep === 1 || wizWyroby.length === 0) { setWizWyrobySurowceMap({}); return; }
+    if (wizStep === 2) computeWyrobySurowce();
+    // wizStep === 3: mapa zachowana bez zmian (dane surowców przekazywane do submitu)
+  }, [wizWyroby, wizStep]);
+
+  // Auto-zapis kroku 3 po każdej zmianie wizRealizacja
+  React.useEffect(() => {
+    if (wizStep !== 3 || Object.keys(wizRealizacja).length === 0) return;
+    const state = { wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
+    dbSaveDraft(3, state, "zmiana_realizacji");
+  }, [wizRealizacja]);
+
+  const wizReset = () => {
+    setWizStep(1);
+    setWizBazaRecId(""); setWizBazaIlosc(""); setWizBazaRzeczywistaIlosc("");
+    setWizBazaSurowce([]);
+    setWizWyroby([]); setWizAddRecId("");
+    setWizWyrobySurowceMap({});
+    setWizRealizacja({});
+  };
+
+  const wizPolproduktAsortId = receptury.find(r => r.id === wizBazaRecId)?.asortyment_docelowy.id;
+
+  const getBazaUsageForWyrob = (recId: string, ilosc: number): number => {
+    const rec = receptury.find(r => r.id === recId);
+    if (!rec || !wizPolproduktAsortId) return 0;
+    const bazaSkladnik = rec.skladniki.find(s => s.id_asortymentu_skladnika === wizPolproduktAsortId);
+    if (!bazaSkladnik) return 0;
+    return Math.round(bazaSkladnik.ilosc_wymagana * ilosc * 1000) / 1000;
+  };
+
+  const getIloscWyrobu = (w: WizWyrob) => {
+    const rec = receptury.find(r => r.id === w.id_receptury);
+    const porcje = parseFloat(w.liczba_porcji.replace(",", ".")) || 0;
+    return Math.round(porcje * (rec?.wielkosc_produkcji ?? 1) * 1000) / 1000;
+  };
+
+  const wizTotalBazaUsed = wizWyroby.reduce((sum, w) => {
+    return sum + getBazaUsageForWyrob(w.id_receptury, getIloscWyrobu(w));
+  }, 0);
+  const wizBazaAvail = parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", ".")) || 0;
+  const wizBazaOk = !wizBazaAvail || wizTotalBazaUsed <= wizBazaAvail + 0.001;
+
+  const computeWyrobySurowce = async () => {
+    const iloscBazyNum = parseFloat(wizBazaIlosc.replace(",", ".")) || 0;
+    const newMap: Record<string, WizSurowiecWyrob[]> = {};
+    for (const wyrob of wizWyroby) {
+      const rec = receptury.find(r => r.id === wyrob.id_receptury);
+      if (!rec) continue;
+      const ilosc = getIloscWyrobu(wyrob);
+      if (ilosc <= 0) continue;
+      newMap[wyrob._key] = rec.skladniki.map(s => {
+        const ilosc_wymagana = Math.round(s.ilosc_wymagana * ilosc * 1000) / 1000;
+        const przelicznik = s.asortyment_skladnika.przelicznik_jednostki ?? 1;
+        const ilosc_jm = s.czy_pomocnicza && przelicznik > 0
+          ? Math.round(ilosc_wymagana / przelicznik * 1000) / 1000
+          : ilosc_wymagana;
+        return {
+          id_asortymentu: s.id_asortymentu_skladnika,
+          nazwa: s.asortyment_skladnika.nazwa,
+          jednostka: s.czy_pomocnicza && s.asortyment_skladnika.jednostka_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary,
+          jednostka_glowna: s.asortyment_skladnika.jednostka_miary,
+          czy_pomocnicza: s.czy_pomocnicza,
+          przelicznik,
+          ilosc_wymagana,
+          ilosc_jm,
+          id_partii: s.id_asortymentu_skladnika === wizPolproduktAsortId ? "__etap1__" : "",
+          partie: s.id_asortymentu_skladnika === wizPolproduktAsortId
+            ? [{ id: "__etap1__", numer_partii: "Etap 1 (auto)", termin_waznosci: null, stan: iloscBazyNum }]
+            : [],
+        };
+      });
+    }
+    setWizWyrobySurowceMap(newMap);
+    // Mapa zużycia z etapu 1 per partia (w JM głównej) — do korekty stanu w etapie 2
+    const consumedInStep1: Record<string, number> = {};
+    for (const s of wizBazaSurowce) {
+      if (s.id_partii) consumedInStep1[s.id_partii] = (consumedInStep1[s.id_partii] || 0) + s.ilosc_jm;
+    }
+    // Załaduj partie dla surowców (nie dla bazy)
+    for (const wyrob of wizWyroby) {
+      const surowce = newMap[wyrob._key] || [];
+      for (const s of surowce) {
+        if (s.id_asortymentu === wizPolproduktAsortId) continue;
+        const partie = await loadPartieForAsortyment(s.id_asortymentu);
+        // Odejmij zużycie etapu 1 od stanu partii
+        const partieAdjusted = partie.map(p => ({
+          ...p,
+          stan: Math.max(0, Math.round((p.stan - (consumedInStep1[p.id] || 0)) * 1000) / 1000),
+        }));
+        setWizWyrobySurowceMap(prev => ({
+          ...prev,
+          [wyrob._key]: (prev[wyrob._key] || []).map(x =>
+            x.id_asortymentu === s.id_asortymentu ? { ...x, partie: partieAdjusted, id_partii: partieAdjusted[0]?.id || "" } : x
+          ),
+        }));
+      }
+    }
+  };
+
+  const handleWizNext = () => {
+    setError("");
+    if (wizStep === 1) {
+      if (!wizBazaRecId) { setError("Wybierz recepturę półproduktu (bazy)"); return; }
+      const iloscNum = parseFloat(wizBazaIlosc.replace(",", "."));
+      if (isNaN(iloscNum) || iloscNum <= 0) { setError("Podaj ilość bazy > 0"); return; }
+      for (const s of wizBazaSurowce) {
+        if (!s.id_partii) { setError(`Wybierz partię dla: ${s.nazwa}`); return; }
+        const partia = s.partie.find(p => p.id === s.id_partii);
+        const wymagane = s.ilosc_jm ?? s.ilosc_wymagana;
+        if (!partia || partia.stan < wymagane - 0.001) {
+          setError(`Niewystarczający stan: ${s.nazwa} — wymagane ${wymagane.toFixed(3)} ${s.jednostka}, dostępne ${(partia?.stan ?? 0).toFixed(3)} ${s.jednostka}`);
+          return;
+        }
+      }
+      const stateStep2 = { wizStep: 2, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
+      dbSaveDraft(2, stateStep2, "przejscie_kroku");
+      setHasDraft(true);
+      setWizStep(2);
+    } else if (wizStep === 2) {
+      if (wizWyroby.length === 0) { setError("Dodaj co najmniej jeden wyrób gotowy"); return; }
+      for (const w of wizWyroby) {
+        const porcje = parseFloat(w.liczba_porcji.replace(",", "."));
+        if (isNaN(porcje) || porcje <= 0) { setError("Wszystkie wyroby muszą mieć liczbę porcji > 0"); return; }
+      }
+      if (!wizBazaOk) { setError(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`); return; }
+      // Inicjalizuj krok 3
+      const init: Record<string, WizRealizacjaItem> = {};
+      for (const w of wizWyroby) {
+        init[w._key] = { rzeczywista_ilosc: "", opakowania: [] };
+      }
+      setWizRealizacja(init);
+      const stateStep3 = { wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja: init, savedAt: new Date().toISOString() };
+      dbSaveDraft(3, stateStep3, "przejscie_kroku");
+      setHasDraft(true);
+      if (dostepneOpakowania.length === 0) {
+        fetch("/api/asortyment").then(r => r.json())
+          .then((items: any[]) => setDostepneOpakowania(items.filter((a: any) => a.typ_asortymentu === "Opakowanie" && a.czy_aktywne)))
+          .catch(() => {});
+      }
+      setWizStep(3);
+    }
+  };
+
+  const handleAddWyrob = () => {
+    if (!wizAddRecId) return;
+    if (wizWyroby.find(w => w.id_receptury === wizAddRecId)) return;
+    const rec = receptury.find(r => r.id === wizAddRecId);
+    setWizWyroby(prev => [...prev, { _key: wizAddRecId + Date.now(), id_receptury: wizAddRecId, liczba_porcji: "1" }]);
+    setWizAddRecId("");
+  };
+
+  const handleSubmitWizard = async () => {
+    setError("");
+    // Czytaj dane kroku 3 z DB aby uniknąć problemów z React state
+    let realizacjaDB: Record<string, WizRealizacjaItem> = wizRealizacja;
+    try {
+      const dbRes = await fetch("/api/produkcja/sesja-robocza");
+      if (dbRes.ok) {
+        const row = await dbRes.json();
+        if (row?.dane_json) {
+          const draft = JSON.parse(row.dane_json);
+          if (draft.wizRealizacja) realizacjaDB = draft.wizRealizacja;
+        }
+      }
+    } catch { /* fallback do React state */ }
+
+    for (const w of wizWyroby) {
+      const real = realizacjaDB[w._key];
+      const rzeczywista = parseFloat((real?.rzeczywista_ilosc || "").replace(",", "."));
+      if (isNaN(rzeczywista) || rzeczywista <= 0) { setError("Podaj rzeczywistą ilość > 0 dla każdego wyrobu"); return; }
+      const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+      const rec = receptury.find(r => r.id === w.id_receptury);
+      if (totalOp <= 0) { setError(`Dodaj opakowania dla: ${rec?.asortyment_docelowy.nazwa}`); return; }
+      if (totalOp < rzeczywista - 0.001) {
+        setError(`Nie wszystko zapakowane — ${rec?.asortyment_docelowy.nazwa}: pozostało ${fmtL(rzeczywista - totalOp, 3)} kg`);
+        return;
+      }
+    }
+    setWizLoading(true);
+    try {
+      const payload = {
+        id_receptury_bazy: wizBazaRecId,
+        ilosc_bazy: parseFloat(wizBazaIlosc.replace(",", ".")),
+        rzeczywista_ilosc_bazy: parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", ".")),
+        surowce_bazy: wizBazaSurowce
+          .filter(s => s.id_partii && s.ilosc_jm > 0)
+          .map(s => ({ id_partii: s.id_partii, ilosc: s.ilosc_jm })),
+        wyroby: wizWyroby
+          .filter(w => getIloscWyrobu(w) > 0)
+          .map(w => {
+            const ilosc = getIloscWyrobu(w);
+            const real = realizacjaDB[w._key];
+            const rzeczywista_ilosc = parseFloat((real?.rzeczywista_ilosc || "").replace(",", ".")) || ilosc;
+            const surowce = (wizWyrobySurowceMap[w._key] || [])
+              .filter(s => s.id_partii && s.id_partii !== "__etap1__" && s.ilosc_jm > 0)
+              .map(s => ({ id_partii: s.id_partii, ilosc: s.ilosc_jm }));
+            const opakowania = (real?.opakowania || [])
+              .filter(o => o.id_asortymentu && parseFloat(o.waga_kg.replace(",", ".")) > 0)
+              .map(o => ({ id_asortymentu: o.id_asortymentu, nazwa: o.nazwa, waga_kg: parseFloat(o.waga_kg.replace(",", ".")) }));
+            return { id_receptury: w.id_receptury, ilosc, rzeczywista_ilosc, surowce, opakowania };
+          }),
+      };
+      const res = await fetch("/api/produkcja/sesja", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
+      const data = await res.json();
+      clearDraft();
+      setShowWizard(false); wizReset();
+      fetchData();
+      setSuccess(`Sesja ${data.sesja.numer_sesji} zarejestrowana — ${data.wyroby.length + 1} ZP zrealizowane.`);
+      setTimeout(() => setSuccess(""), 4000);
+    } catch (e: any) { setError(e.message); }
+    finally { setWizLoading(false); }
+  };
+
   const getStatusStyle = (s: string) => {
     switch (s) {
       case "Planowane": return "badge-info";
@@ -387,9 +747,15 @@ export default function Produkcja() {
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Zlecenia i realizacja produkcji</p>
         </div>
         {pageTab === "zlecenia" && !isAdding && (
-          <button onClick={() => setShowSelektor(true)} data-testid="btn-nowe-zlecenie" className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white btn-hover-effect">
-            <Plus className="w-4 h-4" /> Nowe zlecenie
-          </button>
+          <div className="flex gap-2">
+            <button onClick={openWizardWithDraftCheck} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect" style={{ background: 'var(--accent)' }}>
+              <Zap className="w-4 h-4" /> Nowa sesja
+              {hasDraft && <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" title="Zapisany szkic" />}
+            </button>
+            <button onClick={() => setShowSelektor(true)} data-testid="btn-nowe-zlecenie" className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+              <Plus className="w-4 h-4" /> Nowe ZP
+            </button>
+          </div>
         )}
         {pageTab === "rozliczenie" && (
           <button onClick={handleRozlicz} disabled={rozliczLoading} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect disabled:opacity-50" style={{ background: 'var(--accent)' }}>
@@ -762,6 +1128,7 @@ export default function Produkcja() {
             <thead>
               <tr>
                 <th>Nr zlecenia</th>
+                <th>Sesja</th>
                 <th>Produkt</th>
                 <th>Status</th>
                 <th className="text-right">Plan</th>
@@ -775,6 +1142,14 @@ export default function Produkcja() {
                 <tr key={z.id} className="cursor-pointer" onClick={() => { setViewZlecenie(z); setEditIlosc(z.planowana_ilosc_wyrobu.toString()); }} style={z.status === "Anulowane" ? { opacity: 0.45 } : undefined}>
                   <td className="mono font-medium" style={{ color: 'var(--text-code)' }}>
                     {z.numer_zlecenia || z.id.substring(0, 8)}
+                  </td>
+                  <td>
+                    {(z as any).sesja ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="mono text-xs font-semibold" style={{ color: 'var(--accent)' }}>{(z as any).sesja.numer_sesji}</span>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Etap {(z as any).etap === 1 ? "1 — Baza" : "2 — Wyrób"}</span>
+                      </div>
+                    ) : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
                   <td className="text-white font-medium">
                     {z.receptura.asortyment_docelowy.nazwa}
@@ -942,6 +1317,60 @@ export default function Produkcja() {
 
               {/* Right Column: Tables */}
               <div className="lg:col-span-8 space-y-4">
+
+                {/* Panel sesji produkcyjnej */}
+                {viewZlecenie.id_sesji && (() => {
+                  const sesjaZlecenia = zlecenia
+                    .filter(z => z.id_sesji === viewZlecenie.id_sesji)
+                    .sort((a, b) => (a.etap || 0) - (b.etap || 0));
+                  if (sesjaZlecenia.length <= 1) return null;
+                  return (
+                    <div className="mes-panel rounded overflow-hidden">
+                      <div className="px-4 py-2.5 border-b border-[#334155] flex items-center gap-2" style={{ background: 'var(--bg-surface)' }}>
+                        <Layers className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+                        <span className="text-white font-semibold text-sm">Sesja produkcyjna</span>
+                        <span className="ml-auto font-mono text-xs" style={{ color: 'var(--text-muted)' }}>{viewZlecenie.sesja?.numer_sesji}</span>
+                      </div>
+                      <div className="divide-y divide-[#334155]">
+                        {sesjaZlecenia.map(z => {
+                          const zuzyte = (z.ruchy_magazynowe || []).filter((r: RuchMagazynowy) => r.typ_ruchu === "Zuzycie");
+                          const wytworzone = (z.ruchy_magazynowe || []).find((r: RuchMagazynowy) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
+                          const isCurrent = z.id === viewZlecenie.id;
+                          return (
+                            <div key={z.id} className="p-3" style={isCurrent ? { background: 'rgba(37,99,235,0.07)' } : {}}>
+                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                <span className={`badge ${z.etap === 1 ? 'badge-info' : 'badge-ok'} shrink-0`}>
+                                  {z.etap === 1 ? 'Etap 1 · Półprodukt' : 'Etap 2 · Wyrób'}
+                                </span>
+                                <span className="font-semibold text-white text-sm flex-1 truncate">{z.receptura?.asortyment_docelowy?.nazwa}</span>
+                                {isCurrent && <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>← to zlecenie</span>}
+                              </div>
+                              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs mb-1.5">
+                                <span style={{ color: 'var(--text-muted)' }}>Plan: <span className="font-mono text-white">{fmtL(z.planowana_ilosc_wyrobu, 3)} {z.receptura?.asortyment_docelowy?.jednostka_miary}</span></span>
+                                {z.rzeczywista_ilosc_wyrobu != null && (
+                                  <span style={{ color: 'var(--text-muted)' }}>Wykonano: <span className="font-mono" style={{ color: 'var(--ok)' }}>{fmtL(z.rzeczywista_ilosc_wyrobu, 3)} {z.receptura?.asortyment_docelowy?.jednostka_miary}</span></span>
+                                )}
+                                {wytworzone && (
+                                  <span style={{ color: 'var(--text-muted)' }}>Partia: <span className="font-mono" style={{ color: 'var(--text-code)' }}>{wytworzone.partia?.numer_partii || '—'}</span></span>
+                                )}
+                              </div>
+                              {zuzyte.length > 0 && (
+                                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                                  {zuzyte.map((r: RuchMagazynowy) => (
+                                    <span key={r.id} className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                      {r.partia?.asortyment?.nazwa}: <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{fmtL(Math.abs(r.ilosc), 3)} {r.partia?.asortyment?.jednostka_miary}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="mes-panel rounded overflow-hidden">
                   <div className="px-4 py-2.5 border-b border-[#334155] flex items-center gap-2" style={{ background: 'var(--bg-surface)' }}>
                     <Database className="w-4 h-4" style={{ color: 'var(--accent)' }} />
@@ -1213,6 +1642,473 @@ export default function Produkcja() {
           </div>
         </div>
       )}
+      {/* Modal: przywróć zapisany szkic sesji */}
+      {wizDraftInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-sm border border-[#334155] p-6 flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.3)' }}>
+                <Save className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-bold text-sm">Niezakończona sesja</h3>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Zapisano: {new Date(wizDraftInfo.savedAt).toLocaleString("pl-PL")}
+                </p>
+              </div>
+            </div>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              Znaleziono zapisany szkic sesji produkcyjnej. Chcesz kontynuować od miejsca, w którym skończyłeś?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { clearDraft(); setWizDraftInfo(null); wizReset(); fetchData(); setShowWizard(true); }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                Zacznij od nowa
+              </button>
+              <button onClick={restoreDraft}
+                className="px-4 py-2 rounded-lg text-sm font-bold text-white transition-colors"
+                style={{ background: 'var(--accent)' }}>
+                Kontynuuj sesję
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ WIZARD SESJI PRODUKCYJNEJ ═══════════════════════════════════════ */}
+      {showWizard && (() => {
+        const inp2 = { background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' } as const;
+        const bazaRec = receptury.find(r => r.id === wizBazaRecId);
+
+        const SurowceTable = ({ rows, setter }: {
+          rows: WizSurowiecBaza[] | WizSurowiecWyrob[];
+          setter: (fn: (prev: any[]) => any[]) => void;
+        }) => (
+          <table className="mes-table">
+            <thead>
+              <tr>
+                <th>Składnik</th>
+                <th className="text-right">Wymagane</th>
+                <th>Partia (FEFO)</th>
+                <th className="text-right">Dostępne</th>
+                <th className="text-center w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s: any) => {
+                const wybranaPartia = s.partie.find((p: WizPartia) => p.id === s.id_partii);
+                const dostepne = wybranaPartia?.stan ?? null;
+                // porównanie zawsze w jednostce głównej (JM)
+                const ok = dostepne !== null && dostepne >= (s.ilosc_jm ?? s.ilosc_wymagana) - 0.001;
+                const brak = s.partie.length === 0;
+                return (
+                  <tr key={s.id_asortymentu}>
+                    <td className="font-medium text-white">{s.nazwa}</td>
+                    <td className="text-right mono font-bold text-white">{fmtL(s.ilosc_wymagana, 3)} <span className="text-xs opacity-50">{s.jednostka}</span></td>
+                    <td>
+                      {s.id_partii === "__etap1__" ? (
+                        <span className="text-xs text-indigo-400 flex items-center gap-1"><Check className="w-3 h-3" />Etap 1 — auto</span>
+                      ) : brak ? (
+                        <span className="text-xs text-red-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" />Brak partii</span>
+                      ) : (
+                        <select value={s.id_partii}
+                          onChange={e => setter((prev: any[]) => prev.map((x: any) => x.id_asortymentu === s.id_asortymentu ? { ...x, id_partii: e.target.value } : x))}
+                          className="rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--accent)] w-full max-w-[220px]" style={inp2}>
+                          <option value="">— wybierz —</option>
+                          {s.partie.map((p: WizPartia) => (
+                            <option key={p.id} value={p.id}>
+                              {p.numer_partii}{p.termin_waznosci ? ` · ${new Date(p.termin_waznosci).toLocaleDateString("pl-PL")}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </td>
+                    <td className="text-right">
+                      {s.id_partii === "__etap1__" ? (
+                        <span className="mono text-sm font-bold text-indigo-300">
+                          {fmtL(s.czy_pomocnicza ? (wybranaPartia?.stan ?? 0) * s.przelicznik : (wybranaPartia?.stan ?? 0), 3)} <span className="text-xs opacity-60">{s.jednostka}</span>
+                        </span>
+                      ) : dostepne !== null ? (
+                        <span className={`mono text-sm font-bold ${ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {fmtL(s.czy_pomocnicza ? dostepne * s.przelicznik : dostepne, 3)} <span className="text-xs opacity-60">{s.czy_pomocnicza ? s.jednostka : s.jednostka_glowna}</span>
+                        </span>
+                      ) : <span className="text-slate-600 text-xs">—</span>}
+                    </td>
+                    <td className="text-center">
+                      {s.id_partii === "__etap1__" ? (
+                        <Check className="w-3.5 h-3.5 text-indigo-400 inline" />
+                      ) : !ok && dostepne !== null ? (
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 inline" />
+                      ) : ok ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400 inline" />
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        );
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-4xl border border-[#334155] overflow-hidden flex flex-col" style={{ maxHeight: '92vh' }}>
+
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#334155] shrink-0" style={{ background: 'rgba(99,102,241,0.1)' }}>
+                <div className="flex items-center gap-3">
+                  <Zap className="w-5 h-5 text-indigo-400" />
+                  <div>
+                    <h3 className="text-base font-bold text-white">Sesja produkcyjna</h3>
+                    <p className="text-slate-500 text-xs">{wizStep === 1 ? "Krok 1/3 — Półprodukt (Baza)" : wizStep === 2 ? "Krok 2/3 — Wyroby gotowe i surowce" : "Krok 3/3 — Ilości rzeczywiste i pakowanie"}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-1.5">
+                    {[1,2,3].map(n => (
+                      <div key={n} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+                        style={{ background: n <= wizStep ? 'var(--accent)' : 'var(--bg-surface)', color: n <= wizStep ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                        {n < wizStep ? <Check className="w-3 h-3" /> : n}
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => setShowWizard(false)} className="text-slate-500 hover:text-white p-1.5 rounded-lg hover:bg-[#334155]"><X className="w-5 h-5" /></button>
+                </div>
+              </div>
+
+              {error && (
+                <div className="mx-5 mt-3 bg-red-500/10 border border-red-500/30 text-red-300 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shrink-0">
+                  <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+                  <button onClick={() => setError("")} className="ml-auto"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              )}
+
+              <div className="flex-1 overflow-y-auto">
+
+                {/* ─── KROK 1: Baza ─────────────────────────────────────────────── */}
+                {wizStep === 1 && (
+                  <div>
+                    {/* Selektor receptury + ilość */}
+                    <div className="px-5 py-4 border-b border-[#334155] flex items-end gap-4" style={{ background: 'var(--bg-surface)' }}>
+                      <div className="flex-1 space-y-1">
+                        <label className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Receptura półproduktu</label>
+                        <select value={wizBazaRecId} onChange={e => { setWizBazaRecId(e.target.value); const rec = receptury.find(r => r.id === e.target.value); if (rec) { setWizBazaIlosc(String(rec.wielkosc_produkcji)); setWizBazaRzeczywistaIlosc(String(rec.wielkosc_produkcji)); } }}
+                          className="w-full rounded px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2}>
+                          <option value="">— wybierz recepturę —</option>
+                          {receptury.filter(r => r.asortyment_docelowy.typ_asortymentu === "Polprodukt").map(r => (
+                            <option key={r.id} value={r.id}>{r.asortyment_docelowy.nazwa} v{r.numer_wersji}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="w-32 space-y-1">
+                        <label className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Ilość (plan)</label>
+                        <div className="relative">
+                          <input type="text" value={wizBazaIlosc} onChange={e => setWizBazaIlosc(e.target.value)} placeholder="0"
+                            className="w-full rounded px-3 py-2 pr-10 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>{bazaRec?.asortyment_docelowy.jednostka_miary}</span>
+                        </div>
+                      </div>
+                      <div className="w-32 space-y-1">
+                        <label className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Ilość (rzeczyw.)</label>
+                        <div className="relative">
+                          <input type="text" value={wizBazaRzeczywistaIlosc} onChange={e => setWizBazaRzeczywistaIlosc(e.target.value)} placeholder={wizBazaIlosc || "0"}
+                            className="w-full rounded px-3 py-2 pr-10 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>{bazaRec?.asortyment_docelowy.jednostka_miary}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tabela surowców bazy */}
+                    {wizBazaSurowce.length > 0 ? (
+                      <div className="mes-panel">
+                        <div className="px-4 py-2 border-b text-xs font-bold uppercase tracking-widest" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                          Surowce bazy — pobranie FEFO
+                        </div>
+                        <SurowceTable rows={wizBazaSurowce} setter={setWizBazaSurowce} />
+                      </div>
+                    ) : wizBazaRecId ? (
+                      <div className="p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Podaj ilość aby zobaczyć BOM</div>
+                    ) : (
+                      <div className="p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Wybierz recepturę półproduktu</div>
+                    )}
+                  </div>
+                )}
+
+                {/* ─── KROK 2: Wyroby + Surowce wyrobów ────────────────────────── */}
+                {wizStep === 2 && (
+                  <div>
+                    {/* Bilans bazy */}
+                    <div className="px-5 py-3 border-b border-[#334155] flex items-center gap-6" style={{ background: wizBazaOk ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.07)' }}>
+                      <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Bilans bazy</span>
+                      <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Dostępne </span><strong className="text-white font-mono">{fmtL(wizBazaAvail, 3)} {bazaRec?.asortyment_docelowy.jednostka_miary}</strong></span>
+                      <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Użyte </span><strong className="font-mono" style={{ color: wizBazaOk ? 'var(--ok)' : 'var(--danger)' }}>{fmtL(wizTotalBazaUsed, 3)}</strong></span>
+                      <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Pozostaje </span><strong className="font-mono text-white">{fmtL(Math.max(0, wizBazaAvail - wizTotalBazaUsed), 3)}</strong></span>
+                      {!wizBazaOk && <AlertTriangle className="w-4 h-4 text-red-400 ml-auto" />}
+                    </div>
+
+                    {/* Dodaj wyrób */}
+                    <div className="px-5 py-3 border-b border-[#334155] flex gap-2" style={{ background: 'var(--bg-surface)' }}>
+                      <select value={wizAddRecId} onChange={e => setWizAddRecId(e.target.value)}
+                        className="flex-1 rounded px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2}>
+                        <option value="">— wybierz recepturę wyrobu gotowego —</option>
+                        {receptury.filter(r => r.asortyment_docelowy.typ_asortymentu === "Wyrob_Gotowy" && !wizWyroby.find(w => w.id_receptury === r.id)).map(r => (
+                          <option key={r.id} value={r.id}>{r.asortyment_docelowy.nazwa} v{r.numer_wersji}</option>
+                        ))}
+                      </select>
+                      <button onClick={handleAddWyrob} disabled={!wizAddRecId}
+                        className="px-4 py-2 rounded text-sm font-semibold text-white disabled:opacity-40 flex items-center gap-1.5"
+                        style={{ background: 'var(--accent)' }}>
+                        <Plus className="w-4 h-4" />Dodaj
+                      </button>
+                    </div>
+
+                    {/* Lista wyrobów z ilościami i bilansem bazy */}
+                    {wizWyroby.length === 0 ? (
+                      <div className="p-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Dodaj wyroby gotowe, które powstaną z bazy</div>
+                    ) : (
+                      <>
+                        <table className="mes-table">
+                          <thead>
+                            <tr>
+                              <th>Wyrób gotowy</th>
+                              <th className="text-right">Porcje</th>
+                              <th className="text-right">Łączna ilość</th>
+                              <th className="text-right">Zużycie bazy</th>
+                              <th className="w-8"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {wizWyroby.map(w => {
+                              const rec = receptury.find(r => r.id === w.id_receptury);
+                              const ilosc = getIloscWyrobu(w);
+                              const bazaUse = getBazaUsageForWyrob(w.id_receptury, ilosc);
+                              const bazaPerPorcja = getBazaUsageForWyrob(w.id_receptury, rec?.wielkosc_produkcji ?? 1);
+                              const maxPorcje = bazaPerPorcja > 0 ? Math.max(0, Math.floor((wizBazaAvail - wizTotalBazaUsed + bazaUse) / bazaPerPorcja)) : 0;
+                              const surowceWyrobu = wizWyrobySurowceMap[w._key] || [];
+                              return (
+                                <React.Fragment key={w._key}>
+                                  <tr>
+                                    <td className="font-medium text-white">
+                                      {rec?.asortyment_docelowy.nazwa}
+                                      <span className="ml-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        (wsad: {rec?.wielkosc_produkcji} {rec?.asortyment_docelowy.jednostka_miary})
+                                      </span>
+                                    </td>
+                                    <td className="text-right">
+                                      <div className="flex items-center justify-end gap-1.5">
+                                        {maxPorcje > 0 && (
+                                          <button onClick={() => setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: String(maxPorcje) } : x))}
+                                            className="px-1.5 py-0.5 rounded text-xs font-mono font-bold transition-colors"
+                                            style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}
+                                            title={`Maksymalna ilość przy dostępnej bazie: ${maxPorcje} szt.`}>
+                                            max
+                                          </button>
+                                        )}
+                                        <input type="text" value={w.liczba_porcji}
+                                          onChange={e => setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: e.target.value } : x))}
+                                          className="w-20 rounded px-2 py-1 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
+                                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>szt.</span>
+                                      </div>
+                                    </td>
+                                    <td className="text-right mono font-bold text-white">
+                                      {fmtL(ilosc, 3)} <span className="text-xs opacity-50">{rec?.asortyment_docelowy.jednostka_miary}</span>
+                                    </td>
+                                    <td className="text-right mono text-sm" style={{ color: bazaUse > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
+                                      {bazaUse > 0 ? `${fmtL(bazaUse, 3)} ${bazaRec?.asortyment_docelowy.jednostka_miary}` : '—'}
+                                    </td>
+                                    <td>
+                                      <button onClick={() => setWizWyroby(prev => prev.filter(x => x._key !== w._key))}
+                                        className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                  {surowceWyrobu.length > 0 && (
+                                    <tr>
+                                      <td colSpan={5} style={{ padding: 0, background: 'rgba(15,23,42,0.6)' }}>
+                                        <div className="px-4 pt-1 pb-3">
+                                          <div className="text-xs font-semibold uppercase tracking-wider mb-1 mt-2" style={{ color: 'var(--text-muted)' }}>
+                                            Surowce — {rec?.asortyment_docelowy.nazwa}
+                                          </div>
+                                          <SurowceTable
+                                            rows={surowceWyrobu}
+                                            setter={fn => setWizWyrobySurowceMap(prev => ({ ...prev, [w._key]: fn(prev[w._key] || []) }))}
+                                          />
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Krok 3 — Ilości rzeczywiste i pakowanie */}
+                {wizStep === 3 && (
+                  <div className="overflow-y-auto">
+                    {wizWyroby.map(w => {
+                      const rec = receptury.find(r => r.id === w.id_receptury);
+                      const planowana = getIloscWyrobu(w);
+                      const real = wizRealizacja[w._key] || { rzeczywista_ilosc: "", opakowania: [] };
+                      const setReal = (fn: (prev: WizRealizacjaItem) => WizRealizacjaItem) =>
+                        setWizRealizacja(prev => ({ ...prev, [w._key]: fn(prev[w._key] || { rzeczywista_ilosc: "", opakowania: [] }) }));
+                      return (
+                        <div key={w._key} className="border-b border-[#334155]">
+                          <div className="px-5 py-3 flex items-center gap-4" style={{ background: 'var(--bg-surface)' }}>
+                            <Package className="w-4 h-4 shrink-0" style={{ color: 'var(--accent)' }} />
+                            <span className="font-semibold text-white text-sm flex-1">{rec?.asortyment_docelowy.nazwa}</span>
+                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                              Planowane: <span className="text-white font-mono">{fmtL(planowana, 3)} {rec?.asortyment_docelowy.jednostka_miary}</span>
+                            </span>
+                          </div>
+                          <div className="px-5 py-4 grid grid-cols-2 gap-6">
+                            {/* Ilość rzeczywista */}
+                            <div>
+                              <label className="text-xs font-bold uppercase tracking-wider mb-2 block" style={{ color: 'var(--text-muted)' }}>
+                                Ilość rzeczywista
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  value={real.rzeczywista_ilosc}
+                                  onChange={e => setReal(prev => ({ ...prev, rzeczywista_ilosc: e.target.value }))}
+                                  placeholder={fmtL(planowana, 3)}
+                                  className="w-full rounded-lg px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-[var(--accent)] pr-12"
+                                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>
+                                  {rec?.asortyment_docelowy.jednostka_miary}
+                                </span>
+                              </div>
+                              {(() => {
+                                const rv = parseFloat(real.rzeczywista_ilosc.replace(",", "."));
+                                if (!isNaN(rv) && planowana > 0) {
+                                  const diff = rv - planowana;
+                                  const pct = (diff / planowana * 100).toFixed(1);
+                                  return (
+                                    <div className={`text-xs mt-1.5 font-mono ${diff >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                      {diff >= 0 ? '+' : ''}{fmtL(diff, 3)} {rec?.asortyment_docelowy.jednostka_miary} ({pct}%)
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
+                            {/* Pakowanie */}
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Pakowanie</label>
+                                <button
+                                  onClick={() => setReal(prev => ({ ...prev, opakowania: [...prev.opakowania, { id_asortymentu: "", nazwa: "", waga_kg: "" }] }))}
+                                  className="flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors"
+                                  style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                                  <Plus className="w-3 h-3" />Dodaj
+                                </button>
+                              </div>
+                              {real.opakowania.length === 0 ? (
+                                <div className="text-xs py-2 text-center rounded border border-dashed" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)' }}>
+                                  Brak opakowań
+                                </div>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  {real.opakowania.map((op, idx) => (
+                                    <div key={idx} className="flex items-center gap-1.5">
+                                      <select
+                                        value={op.id_asortymentu}
+                                        onChange={e => {
+                                          const found = dostepneOpakowania.find(o => o.id === e.target.value);
+                                          setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, id_asortymentu: e.target.value, nazwa: found?.nazwa || "" } : x) }));
+                                        }}
+                                        className="flex-1 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                                        <option value="">— opakowanie —</option>
+                                        {dostepneOpakowania.map(o => <option key={o.id} value={o.id}>{o.nazwa}</option>)}
+                                      </select>
+                                      <div className="relative">
+                                        <input type="text" value={op.waga_kg} placeholder="0.00"
+                                          onChange={e => setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, waga_kg: e.target.value } : x) }))}
+                                          className="w-20 text-right rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-[var(--accent)] pr-6"
+                                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>kg</span>
+                                      </div>
+                                      <button onClick={() => setReal(prev => ({ ...prev, opakowania: prev.opakowania.filter((_, i) => i !== idx) }))}
+                                        className="text-slate-600 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                                    </div>
+                                  ))}
+                                  {(() => {
+                                    const totalOp = real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+                                    const rzeczywista = parseFloat(real.rzeczywista_ilosc.replace(",", ".")) || 0;
+                                    const pozostalo = rzeczywista - totalOp;
+                                    return (
+                                      <div className="text-xs font-mono pt-0.5 space-y-0.5">
+                                        <div className="text-right" style={{ color: 'var(--text-muted)' }}>
+                                          Razem: <span className="text-white font-bold">{fmtL(totalOp, 3)}</span> kg
+                                        </div>
+                                        {rzeczywista > 0 && (
+                                          <div className={`text-right font-bold ${pozostalo > 0.001 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                            {pozostalo > 0.001 ? `Pozostało: ${fmtL(pozostalo, 3)} kg` : '✓ Zapakowano w całości'}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3 border-t border-[#334155] bg-[#0f172a]/50 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => wizStep === 1 ? setShowWizard(false) : setWizStep(prev => (prev - 1) as 1|2|3)}
+                    className="px-4 py-2 text-slate-400 hover:bg-[#334155] rounded-lg font-semibold transition-colors text-sm">
+                    {wizStep === 1 ? "Anuluj" : "← Wstecz"}
+                  </button>
+                  <button onClick={saveDraft}
+                    className="px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5"
+                    style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}
+                    title="Zapisz postęp i wyjdź — możesz wrócić później">
+                    <Save className="w-3.5 h-3.5" /> Zapisz i wyjdź
+                  </button>
+                </div>
+                <div className="flex items-center gap-3">
+                  {wizStep === 3 && (
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {1 + wizWyroby.length} ZP · jedna transakcja
+                    </span>
+                  )}
+                  {wizStep < 3 ? (
+                    <button onClick={handleWizNext}
+                      className="px-5 py-2 rounded-lg font-bold text-white text-sm flex items-center gap-2 transition-colors"
+                      style={{ background: 'var(--accent)' }}>
+                      {wizStep === 1 ? "Dalej — Wyroby →" : "Dalej — Realizacja →"}
+                    </button>
+                  ) : (
+                    <button onClick={handleSubmitWizard} disabled={wizLoading}
+                      className="px-5 py-2 rounded-lg font-bold text-white text-sm flex items-center gap-2 transition-colors disabled:opacity-50"
+                      style={{ background: '#16a34a' }}>
+                      {wizLoading ? <><RotateCcw className="w-4 h-4 animate-spin" />Tworzę…</> : <><CheckCircle2 className="w-4 h-4" />Utwórz sesję</>}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ═══ REALIZACJA ZLECENIA (KARTA REALIZACJI) ══════════════════════════ */}
       {itemToRealize && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

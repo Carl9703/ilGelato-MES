@@ -29,6 +29,8 @@ type Props = {
   typy?: string[];
   /** Czy można wybrać tylko jeden element? */
   singleSelect?: boolean;
+  /** Ukryj kolumnę ilości (np. dla WZ gdzie ilość wynika z opakowań) */
+  hideIlosc?: boolean;
 };
 
 const typColors: Record<string, string> = {
@@ -42,7 +44,7 @@ const typLabels: Record<string, string> = {
   Wyrob_Gotowy: "Wyrób gotowy",
 };
 
-export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", typy, singleSelect = false }: Props) {
+export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", typy, singleSelect = false, hideIlosc = false }: Props) {
   const [items, setItems] = useState<AsortymentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -243,7 +245,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
                   <th className="px-4 py-3 font-semibold">Nazwa</th>
                   <th className="px-4 py-3 font-semibold">Typ</th>
                   <th className="px-4 py-3 font-semibold text-right">Stan</th>
-                  <th className="px-4 py-3 font-semibold text-right w-36">Ilość</th>
+                  {!hideIlosc && <th className="px-4 py-3 font-semibold text-right w-36">Ilość</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1e293b]">
@@ -280,20 +282,22 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
                           : <span className="text-slate-600">0</span>
                         }
                       </td>
-                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                        {isChecked && (
-                          <input
-                            type="number"
-                            step="0.001"
-                            min="0"
-                            autoFocus
-                            value={sel.ilosc}
-                            onChange={e => setIlosc(a.id, e.target.value)}
-                            placeholder="0"
-                            className="w-full bg-[#0f172a] border border-blue-500 text-white rounded-lg px-3 py-1.5 text-right font-mono font-bold outline-none focus:ring-2 focus:ring-blue-500/30 text-sm"
-                          />
-                        )}
-                      </td>
+                      {!hideIlosc && (
+                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                          {isChecked && (
+                            <input
+                              type="number"
+                              step="0.001"
+                              min="0"
+                              autoFocus
+                              value={sel.ilosc}
+                              onChange={e => setIlosc(a.id, e.target.value)}
+                              placeholder="0"
+                              className="w-full bg-[#0f172a] border border-blue-500 text-white rounded-lg px-3 py-1.5 text-right font-mono font-bold outline-none focus:ring-2 focus:ring-blue-500/30 text-sm"
+                            />
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
