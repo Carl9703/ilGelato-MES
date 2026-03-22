@@ -38,17 +38,7 @@ function MainLayout({ children }: { children: React.ReactNode }) {
       >
         {/* Logo */}
         <div className="flex items-center gap-3 px-4 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 font-bold text-sm"
-            style={{
-              background: 'linear-gradient(135deg, var(--accent) 0%, #0e7490 100%)',
-              boxShadow: '0 0 12px var(--accent-glow)',
-              color: '#080c14',
-              letterSpacing: '-0.02em',
-            }}
-          >
-            iG
-          </div>
+          <img src="/logo.png" alt="ilGelato Logo" className="w-8 h-8 rounded-lg object-contain shrink-0" style={{ boxShadow: '0 0 10px rgba(0,0,0,0.5)' }} />
           <div className="hidden lg:block overflow-hidden">
             <h1 className="font-bold text-sm leading-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>ilGelato MES</h1>
             <p className="text-[10px] font-medium leading-none mt-0.5 uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
