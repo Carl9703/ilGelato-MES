@@ -1,6 +1,7 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router";
 import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package } from "lucide-react";
+import logoImg from "./assets/logo.png";
 import Dashboard from "./pages/Dashboard";
 import Asortyment from "./pages/Asortyment";
 import Receptury from "./pages/Receptury";
@@ -38,7 +39,7 @@ function MainLayout({ children }: { children: React.ReactNode }) {
       >
         {/* Logo */}
         <div className="flex items-center gap-3 px-4 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
-          <img src="/logo.png" alt="ilGelato Logo" className="w-8 h-8 rounded-lg object-contain shrink-0" style={{ boxShadow: '0 0 10px rgba(0,0,0,0.5)' }} />
+          <img src={logoImg} alt="ilGelato Logo" className="w-8 h-8 rounded-lg object-contain shrink-0" style={{ boxShadow: '0 0 10px rgba(0,0,0,0.5)' }} />
           <div className="hidden lg:block overflow-hidden">
             <h1 className="font-bold text-sm leading-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>ilGelato MES</h1>
             <p className="text-[10px] font-medium leading-none mt-0.5 uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
