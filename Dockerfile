@@ -36,6 +36,7 @@ COPY server.ts ./
 COPY tsconfig.json ./
 COPY vite.config.ts ./
 COPY src ./src/
+COPY scripts ./scripts/
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
 
