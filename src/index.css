@@ -1,28 +1,34 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 :root {
-  --bg-app:     #0b0f1a;
-  --bg-surface: #111827;
-  --bg-panel:   #1a2235;
-  --bg-input:   #1e2d40;
-  --bg-hover:   #243047;
+  --bg-app:     #080c14;
+  --bg-surface: #0d1320;
+  --bg-panel:   #121929;
+  --bg-input:   #172030;
+  --bg-hover:   #1c2840;
 
-  --border:     #2d3f55;
-  --border-dim: #1e2d3d;
+  --border:     #1e3048;
+  --border-dim: #152236;
+  --border-accent: rgba(6, 182, 212, 0.2);
 
-  --text-primary:   #e2e8f0;
-  --text-secondary: #7c93b0;
-  --text-muted:     #4a6080;
-  --text-code:      #94c5f8;
+  --text-primary:   #dde8f5;
+  --text-secondary: #6b8aaa;
+  --text-muted:     #3d5570;
+  --text-code:      #67e8f9;
 
-  --accent:     #3b82f6;
-  --accent-dim: rgba(59, 130, 246, 0.15);
+  --accent:     #06b6d4;
+  --accent-dim: rgba(6, 182, 212, 0.12);
+  --accent-glow: rgba(6, 182, 212, 0.25);
 
-  --ok:      #22c55e;
+  --ok:      #10b981;
   --warn:    #f59e0b;
-  --danger:  #ef4444;
+  --danger:  #f43f5e;
   --info:    #38bdf8;
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+  --shadow-glow: 0 0 20px rgba(6,182,212,0.15);
 }
 
 * {
@@ -38,7 +44,7 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
@@ -49,22 +55,26 @@ body {
 .mes-panel {
   background: var(--bg-panel);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .mes-panel-surface {
   background: var(--bg-surface);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Kompatybilność wsteczna — glass-card zastąpiony solidnym panelem */
 .glass-card {
   background: var(--bg-panel);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .glass-effect {
   background: var(--bg-panel);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 /* --- TABELE --- */
@@ -79,18 +89,23 @@ body {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   color: var(--text-muted);
-  padding: 8px 12px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+  background: var(--bg-surface);
 }
 
 .mes-table td {
-  padding: 9px 12px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--border-dim);
   color: var(--text-primary);
   vertical-align: middle;
+}
+
+.mes-table tbody tr {
+  transition: background 0.12s;
 }
 
 .mes-table tbody tr:hover {
@@ -122,24 +137,113 @@ body {
   white-space: nowrap;
 }
 
-.badge-ok      { background: rgba(34,197,94,0.12);  color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
-.badge-warn    { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.25); }
-.badge-danger  { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
-.badge-info    { background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); }
-.badge-neutral { background: rgba(100,120,150,0.12); color: #7c93b0; border: 1px solid rgba(100,120,150,0.2); }
+.badge-ok      { background: rgba(16,185,129,0.1);  color: #34d399; border: 1px solid rgba(16,185,129,0.25); }
+.badge-warn    { background: rgba(245,158,11,0.1);  color: #fbbf24; border: 1px solid rgba(245,158,11,0.25); }
+.badge-danger  { background: rgba(244,63,94,0.1);   color: #fb7185; border: 1px solid rgba(244,63,94,0.25); }
+.badge-info    { background: rgba(6,182,212,0.1);   color: #22d3ee; border: 1px solid rgba(6,182,212,0.25); }
+.badge-neutral { background: rgba(100,120,150,0.08); color: #6b8aaa; border: 1px solid rgba(100,120,150,0.18); }
 
-/* --- PRZYCISKI --- */
+/* ============================================================
+   DESIGN SYSTEM — STANDARDOWE KLASY
+   ============================================================ */
+
+/* --- PRZYCISKI — standardowe warianty ---
+   Użycie: <button className="btn btn-primary">Zapisz</button>
+           <button className="btn btn-ghost">Anuluj</button>
+           <button className="btn btn-danger">Usuń</button>
+*/
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.1s;
+  white-space: nowrap;
+  line-height: 1;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #080c14;
+  border-color: var(--accent);
+}
+.btn-primary:hover {
+  background: #22d3ee;
+  border-color: #22d3ee;
+  box-shadow: 0 0 14px rgba(6,182,212,0.3);
+  transform: translateY(-1px);
+}
+.btn-primary:active { transform: translateY(0); }
+
+.btn-secondary {
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.btn-secondary:hover {
+  border-color: var(--border-accent);
+  color: var(--accent);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+.btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.btn-danger {
+  background: rgba(244,63,94,0.1);
+  color: #fb7185;
+  border-color: rgba(244,63,94,0.25);
+}
+.btn-danger:hover {
+  background: rgba(244,63,94,0.18);
+  box-shadow: 0 0 10px rgba(244,63,94,0.2);
+}
+
+/* Kompatybilność wsteczna */
 .btn-hover-effect {
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
+.btn-hover-effect:hover  { filter: brightness(1.1); }
+.btn-hover-effect:active { filter: brightness(0.95); }
 
-.btn-hover-effect:hover {
-  filter: brightness(1.1);
+/* --- INPUTS — standardowe ---
+   Użycie: <input className="mes-input" />
+           <select className="mes-input" />
+*/
+.mes-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-
-.btn-hover-effect:active {
-  filter: brightness(0.95);
+.mes-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
+.mes-input::placeholder { color: var(--text-muted); }
 
 /* --- SCROLLBAR --- */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -147,11 +251,10 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* --- INPUTS --- */
+/* --- INPUTS OGÓLNE (tranzycja) --- */
 input, select, textarea {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-
 select option {
   background: var(--bg-surface);
   color: var(--text-primary);
@@ -159,13 +262,27 @@ select option {
 
 /* --- ANIMACJE --- */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-.animate-view {
-  animation: fadeIn 0.2s ease forwards;
-}
+.animate-view      { animation: fadeIn 0.25s ease forwards; }
+.animate-slide-in  { animation: slideInLeft 0.2s ease forwards; }
 
 /* --- NUMBER INPUT — ukryj strzałki spinnera --- */
 input[type=number]::-webkit-inner-spin-button,

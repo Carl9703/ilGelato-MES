@@ -8,6 +8,7 @@ type Row = {
   nazwa: string;
   jednostka_miary: string;
   opakowanie: string | null;
+  waga_jednostkowa: number | null;
   ilosc_szt: number | null;
   ilosc_kg: number;
   data_produkcji: string | null;
@@ -121,6 +122,7 @@ export default function WyrobyGotowe() {
                 <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Kod</th>
                 <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Nazwa</th>
                 <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Opakowanie</th>
+                <th className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Masa/szt.</th>
                 <th className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Ilość szt</th>
                 <th className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Ilość kg</th>
                 <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Partia</th>
@@ -133,11 +135,14 @@ export default function WyrobyGotowe() {
                   <td className="px-4 py-2.5 font-mono text-xs" style={{ color: "var(--accent)" }}>{row.kod_towaru}</td>
                   <td className="px-4 py-2.5 font-medium" style={{ color: "var(--text-primary)" }}>{row.nazwa}</td>
                   <td className="px-4 py-2.5" style={{ color: "var(--text-secondary)" }}>{row.opakowanie ?? "—"}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
+                  <td className="px-4 py-2.5 text-right font-mono text-xs" style={{ color: "var(--text-muted)" }}>
+                    {row.waga_jednostkowa ? `${row.waga_jednostkowa.toFixed(2)} kg` : "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums font-mono" style={{ color: "var(--text-primary)" }}>
                     {row.ilosc_szt != null ? row.ilosc_szt : "—"}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums font-medium" style={{ color: "var(--ok)" }}>
-                    {row.ilosc_kg.toFixed(2)} kg
+                  <td className="px-4 py-2.5 text-right tabular-nums font-medium font-mono" style={{ color: "var(--ok)" }}>
+                    {row.ilosc_kg.toFixed(3)} kg
                   </td>
                   <td className="px-4 py-2.5 font-mono text-xs" style={{ color: "var(--text-muted)" }}>{row.numer_partii}</td>
                   <td className="px-4 py-2.5 text-sm" style={{ color: row.termin_waznosci ? "var(--text-secondary)" : "var(--text-muted)" }}>

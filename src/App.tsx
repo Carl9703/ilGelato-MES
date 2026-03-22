@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router";
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router";
 import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package } from "lucide-react";
 import Dashboard from "./pages/Dashboard";
 import Asortyment from "./pages/Asortyment";
@@ -24,45 +24,56 @@ const navItems = [
 ];
 
 function MainLayout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
   return (
-    <div className="h-full flex text-slate-200 overflow-hidden" style={{ background: 'var(--bg-app)', fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div className="h-full flex overflow-hidden" style={{ background: 'var(--bg-app)', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", color: 'var(--text-primary)' }}>
       {/* Sidebar */}
       <aside
-        className="w-16 lg:w-64 flex flex-col shrink-0 print-hidden"
-        style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
+        className="w-16 lg:w-60 flex flex-col shrink-0 print-hidden"
+        style={{
+          background: 'linear-gradient(180deg, #0d1825 0%, #080c14 100%)',
+          borderRight: '1px solid var(--border)',
+          boxShadow: '4px 0 24px rgba(0,0,0,0.4)',
+        }}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 px-4 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex items-center gap-3 px-4 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <div
-            className="w-8 h-8 rounded flex items-center justify-center shrink-0"
-            style={{ background: 'var(--accent)', opacity: 0.9 }}
+            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 font-bold text-sm"
+            style={{
+              background: 'linear-gradient(135deg, var(--accent) 0%, #0e7490 100%)',
+              boxShadow: '0 0 12px var(--accent-glow)',
+              color: '#080c14',
+              letterSpacing: '-0.02em',
+            }}
           >
-            <Factory className="w-4 h-4 text-white" />
+            iG
           </div>
           <div className="hidden lg:block overflow-hidden">
-            <h1 className="text-white font-bold text-sm leading-tight tracking-wide">ilGelato MES</h1>
-            <p className="text-xs leading-none mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              Produkcja i Magazyn
+            <h1 className="font-bold text-sm leading-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>ilGelato MES</h1>
+            <p className="text-[10px] font-medium leading-none mt-0.5 uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+              Produkcja · Magazyn
             </p>
           </div>
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 py-2 overflow-y-auto">
+        <nav className="flex-1 py-3 overflow-y-auto" style={{ gap: '1px', display: 'flex', flexDirection: 'column' }}>
           {navItems.map(({ to, icon: Icon, label, testId }) => (
             <NavLink
               key={to}
               to={to}
               data-testid={testId}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors relative ${
-                  isActive ? "text-white" : "hover:text-white"
+                `flex items-center gap-3 mx-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 relative ${
+                  isActive ? "" : "hover:text-white"
                 }`
               }
               style={({ isActive }) => ({
                 background: isActive ? 'var(--accent-dim)' : 'transparent',
-                color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                borderLeft: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+                color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+                border: isActive ? '1px solid var(--border-accent)' : '1px solid transparent',
+                boxShadow: isActive ? 'inset 0 0 20px rgba(6,182,212,0.05)' : 'none',
               })}
             >
               <Icon className="w-4 h-4 shrink-0" />
@@ -72,12 +83,12 @@ function MainLayout({ children }: { children: React.ReactNode }) {
         </nav>
 
         {/* Status systemu */}
-        <div className="hidden lg:block px-4 py-3 border-t text-xs" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+        <div className="hidden lg:block px-4 py-3 text-xs" style={{ borderTop: '1px solid var(--border)', color: 'var(--text-muted)' }}>
           <div className="flex items-center gap-2 mb-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
-            <span className="font-medium" style={{ color: 'var(--ok)' }}>Operacyjny</span>
+            <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: 'var(--ok)', boxShadow: '0 0 6px var(--ok)' }} />
+            <span className="font-semibold" style={{ color: 'var(--ok)' }}>Operacyjny</span>
           </div>
-          <div>
+          <div style={{ color: 'var(--text-muted)' }}>
             {new Date().toLocaleDateString("pl-PL", { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
           </div>
         </div>

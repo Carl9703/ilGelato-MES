@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Search, Share2, ArrowRight, ArrowLeft, Package, Factory, ClipboardList, Truck } from "lucide-react";
+import { useToast } from "../components/Toast";
+import { Spinner } from "../components/Spinner";
+import { EmptyState } from "../components/EmptyState";
 
 type TraceData = {
   partia: { id: string; numer_partii: string; asortyment: string; status: string };
@@ -9,26 +12,25 @@ type TraceData = {
 };
 
 export default function Traceability() {
+  const { showToast } = useToast();
   const [query, setQuery] = useState("");
   const [data, setData] = useState<TraceData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   const handleSearch = async (numer?: string) => {
     const q = numer || query;
     if (!q) return;
     setLoading(true);
-    setError("");
     try {
       const res = await fetch(`/api/trace/partia/${encodeURIComponent(q)}/genealogia`);
       if (res.ok) {
         setData(await res.json());
       } else {
-        setError("Nie znaleziono partii o takim numerze.");
+        showToast("Nie znaleziono partii o takim numerze.", "error");
         setData(null);
       }
     } catch {
-      setError("Błąd połączenia z serwerem.");
+      showToast("Błąd połączenia z serwerem.", "error");
     } finally {
       setLoading(false);
     }
@@ -69,13 +71,6 @@ export default function Traceability() {
           {loading ? "Szukanie…" : "Analizuj"}
         </button>
       </div>
-
-      {error && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}>
-          <Share2 className="w-4 h-4 shrink-0" />
-          {error}
-        </div>
-      )}
 
       {data && (
         <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
@@ -122,9 +117,7 @@ export default function Traceability() {
                   </tbody>
                 </table>
               ) : (
-                <div className="px-4 py-6 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
-                  Brak danych — surowiec pierwotny
-                </div>
+                <EmptyState message="Brak danych — surowiec pierwotny" />
               )}
             </div>
 
@@ -155,9 +148,7 @@ export default function Traceability() {
                   </tbody>
                 </table>
               ) : (
-                <div className="px-4 py-6 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
-                  Ostatni etap — produkt końcowy
-                </div>
+                <EmptyState message="Ostatni etap — produkt końcowy" />
               )}
             </div>
           </div>
@@ -189,22 +180,6 @@ export default function Traceability() {
             </div>
           )}
 
-          {/* Sekcja informacyjna */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[
-              { icon: ClipboardList, label: "Kontrola jakości", text: "Wyniki laboratoryjne przypisane do tej partii są zgodne z normą.", color: 'var(--accent)' },
-              { icon: Factory,       label: "Proces produkcji", text: "Partia wyprodukowana na Linii #1. Czas procesowania: 45 min.",    color: 'var(--warn)' },
-              { icon: Share2,        label: "Zgodność FIFO",    text: "Surowce zostały pobrane zgodnie z zasadą FIFO. Brak odchyleń.",   color: 'var(--ok)' },
-            ].map(({ icon: Icon, label, text, color }) => (
-              <div key={label} className="mes-panel rounded p-4 flex gap-3">
-                <Icon className="w-4 h-4 shrink-0 mt-0.5" style={{ color }} />
-                <div>
-                  <div className="text-xs font-bold uppercase tracking-widest text-white mb-1">{label}</div>
-                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{text}</p>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       )}
     </div>

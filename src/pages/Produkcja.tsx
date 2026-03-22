@@ -3,6 +3,9 @@ import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertT
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
 import { fmtL } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
+import { useToast } from "../components/Toast";
+import { Spinner } from "../components/Spinner";
+import { EmptyState } from "../components/EmptyState";
 
 type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null };
 type SkladnikReceptury = { 
@@ -35,11 +38,12 @@ type Zlecenie = {
 };
 
 type WizPartia = { id: string; numer_partii: string; termin_waznosci: string | null; stan: number };
-type WizSurowiecBaza = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; id_partii: string; partie: WizPartia[] };
+type WizSurowiecBaza = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
 type WizWyrob = { _key: string; id_receptury: string; liczba_porcji: string };
-type WizSurowiecWyrob = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; id_partii: string; partie: WizPartia[] };
+type WizSurowiecWyrob = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
 
 export default function Produkcja() {
+  const { showToast } = useToast();
   const [zlecenia, setZlecenia] = useState<Zlecenie[]>([]);
   const [receptury, setReceptury] = useState<Receptura[]>([]);
   const [isAdding, setIsAdding] = useState(false);
@@ -49,8 +53,6 @@ export default function Produkcja() {
   const [activePicker, setActivePicker] = useState<{ ingredId: string, skladnik: SkladnikReceptury } | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
 
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [recepturaId, setRecepturaId] = useState("");
   const [ilosc, setIlosc] = useState(1);
   const [filter, setFilter] = useState<string>("all");
@@ -231,7 +233,7 @@ export default function Produkcja() {
 
   const fetchData = async () => {
     try {
-      const [zlecRes, recRes] = await Promise.all([fetch("/api/produkcja"), fetch("/api/receptury")]);
+      const [zlecRes, recRes, asortRes] = await Promise.all([fetch("/api/produkcja"), fetch("/api/receptury"), fetch("/api/asortyment")]);
       if (zlecRes.ok) {
         const data: Zlecenie[] = await zlecRes.json();
         setZlecenia(data);
@@ -239,12 +241,16 @@ export default function Produkcja() {
         setViewZlecenie(prev => prev ? data.find(z => z.id === prev.id) || null : null);
       }
       if (recRes.ok) { const rec = await recRes.json(); setReceptury(rec); setRecepturyAll(rec); }
+      if (asortRes.ok) {
+        const asortData = await asortRes.json();
+        setDostepneOpakowania(asortData.filter((a: any) => a.typ_asortymentu === "Opakowanie" && a.czy_aktywne));
+      }
     } catch {}
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError("");
-    if (!selectedProduct || !selectedRecId) { setError("Wybierz produkt i recepturę."); return; }
+    e.preventDefault();
+    if (!selectedProduct || !selectedRecId) { showToast("Wybierz produkt i recepturę.", "error"); return; }
     
     try {
       const qtyNum = parseFloat(planowanaIlosc.replace(",", "."));
@@ -260,15 +266,14 @@ export default function Produkcja() {
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
 
-      setIsAdding(false); 
-      setSelectedProduct(null); 
+      setIsAdding(false);
+      setSelectedProduct(null);
       setSelectedRecId("");
       setPlanowanaIlosc("1");
-      setSuccess("Zlecenie zostało utworzone!"); 
-      fetchData(); 
-      setTimeout(() => setSuccess(""), 2000);
-    } catch (err: any) { 
-      setError(err.message); 
+      showToast("Zlecenie zostało utworzone!", "ok");
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message, "error");
     }
   };
 
@@ -278,7 +283,7 @@ export default function Produkcja() {
     const availableRecs = receptury.filter(r => r.asortyment_docelowy.id === product.id_asortymentu);
     
     if (availableRecs.length === 0) {
-       setError(`Produkt ${product.nazwa} nie posiada aktywnej receptury.`);
+       showToast(`Produkt ${product.nazwa} nie posiada aktywnej receptury.`, "error");
        return;
     }
 
@@ -292,32 +297,30 @@ export default function Produkcja() {
   };
 
   const handleStartProduction = async (z: Zlecenie) => {
-    setError("");
     try {
       const res = await fetch(`/api/produkcja/${z.id}/rozpocznij`, { method: "POST" });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
-      setSuccess("Zlecenie rozpoczęte! Surowce zarezerwowane."); fetchData(); setTimeout(() => setSuccess(""), 2000);
-    } catch (err: any) { setError(err.message); }
+      showToast("Zlecenie rozpoczęte! Surowce zarezerwowane.", "ok"); fetchData();
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   const handleSaveEdit = async () => {
     if (!viewZlecenie) return;
-    setError("");
     try {
       const qty = parseFloat(editIlosc.replace(",", "."));
-      if (isNaN(qty) || qty <= 0) { setError("Podaj prawidłową ilość."); return; }
+      if (isNaN(qty) || qty <= 0) { showToast("Podaj prawidłową ilość.", "error"); return; }
       const res = await fetch(`/api/produkcja/${viewZlecenie.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ planowana_ilosc_wyrobu: qty }),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
-      setSuccess("Zlecenie zaktualizowane."); fetchData(); setTimeout(() => setSuccess(""), 2000);
-    } catch (err: any) { setError(err.message); }
+      showToast("Zlecenie zaktualizowane.", "ok"); fetchData();
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   const handleRealizuj = async (z: Zlecenie) => {
-    setError(""); setItemToRealize(z); setRzeczywistaIlosc(z.planowana_ilosc_wyrobu.toString());
+    setItemToRealize(z); setRzeczywistaIlosc(z.planowana_ilosc_wyrobu.toString());
     setOpakowaniaWpisy([]);
     fetch("/api/asortyment")
       .then(r => r.json())
@@ -364,20 +367,24 @@ export default function Produkcja() {
     if (!itemToRealize) return;
     const qtyStr = rzeczywistaIlosc.toString().replace(",", ".");
     const qtyNum = parseFloat(qtyStr);
-    if (isNaN(qtyNum) || qtyNum <= 0) { setError("Ilość musi być > 0"); return; }
+    if (isNaN(qtyNum) || qtyNum <= 0) { showToast("Ilość musi być > 0", "error"); return; }
     const payload = (Object.values(zuzytePartie) as Array<Array<{ id_partii: string; ilosc: number }>>).flatMap(arr => arr).filter(p => p.id_partii && p.ilosc > 0);
     try {
       const opakowaniaDo = opakowaniaWpisy
         .filter(o => o.id_asortymentu && parseFloat(o.waga_kg.replace(",", ".")) > 0)
         .map(o => ({ id_asortymentu: o.id_asortymentu, nazwa: o.nazwa, waga_kg: parseFloat(o.waga_kg.replace(",", ".")) }));
       const res = await fetch(`/api/produkcja/${itemToRealize.id}/realizuj`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rzeczywista_ilosc: qtyNum, zuzyte_partie: payload, opakowania: opakowaniaDo }) });
-      if (!res.ok) { const d = await res.json(); setError(d.error); return; }
-      setItemToRealize(null); setSuccess("Zlecenie zrealizowane!"); fetchData(); setTimeout(() => setSuccess(""), 2000);
-    } catch { setError("Błąd realizacji"); }
+      if (!res.ok) { const d = await res.json(); showToast(d.error, "error"); return; }
+      setItemToRealize(null); showToast("Zlecenie zrealizowane!", "ok"); fetchData();
+    } catch { showToast("Błąd realizacji", "error"); }
   };
 
   const handleDelete = async (id: string) => {
-    try { await fetch(`/api/produkcja/${id}`, { method: "DELETE" }); fetchData(); } catch {}
+    try {
+      const res = await fetch(`/api/produkcja/${id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); showToast(d.error || "Błąd usuwania zlecenia", "error"); return; }
+      fetchData();
+    } catch { showToast("Błąd połączenia", "error"); }
   };
 
   const handlePrintZP = (z: Zlecenie) => {
@@ -477,18 +484,29 @@ export default function Produkcja() {
         przelicznik,
         ilosc_wymagana,
         ilosc_jm,
-        id_partii: "",
+        zuzyte_partie: [{ _uid: Math.random().toString(36), id_partii: "", ilosc: ilosc_jm }],
         partie: [],
       };
     });
     setWizBazaSurowce(surowce);
     surowce.forEach(s => {
-      loadPartieForAsortyment(s.id_asortymentu).then(partie =>
-        // Auto-wybierz pierwszą partię FIFO
-        setWizBazaSurowce(prev => prev.map(x => x.id_asortymentu === s.id_asortymentu
-          ? { ...x, partie, id_partii: x.id_partii || partie[0]?.id || "" }
-          : x))
-      );
+      loadPartieForAsortyment(s.id_asortymentu).then(partie => {
+        setWizBazaSurowce(prev => prev.map(x => {
+          if (x.id_asortymentu !== s.id_asortymentu || partie.length === 0) return x;
+          const zp: typeof x.zuzyte_partie = [];
+          let remaining = x.ilosc_jm;
+          for (const p of partie) {
+            if (remaining <= 0) break;
+            if (p.stan > 0) {
+              const take = Math.round(Math.min(p.stan, remaining) * 1000) / 1000;
+              zp.push({ _uid: Math.random().toString(36), id_partii: p.id, ilosc: take });
+              remaining -= take;
+            }
+          }
+          if (zp.length === 0 || remaining > 0.001) zp.push({ _uid: Math.random().toString(36), id_partii: "", ilosc: remaining > 0 ? remaining : x.ilosc_jm });
+          return { ...x, partie, zuzyte_partie: zp };
+        }));
+      });
     });
   }, [wizBazaRecId, wizBazaIlosc, showWizard]);
 
@@ -537,7 +555,10 @@ export default function Produkcja() {
   const wizBazaAvail = parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", ".")) || 0;
   const wizBazaOk = !wizBazaAvail || wizTotalBazaUsed <= wizBazaAvail + 0.001;
 
+  const computeRunRef = React.useRef(0);
+
   const computeWyrobySurowce = async () => {
+    const runId = ++computeRunRef.current;
     const iloscBazyNum = parseFloat(wizBazaIlosc.replace(",", ".")) || 0;
     const newMap: Record<string, WizSurowiecWyrob[]> = {};
     for (const wyrob of wizWyroby) {
@@ -560,18 +581,24 @@ export default function Produkcja() {
           przelicznik,
           ilosc_wymagana,
           ilosc_jm,
-          id_partii: s.id_asortymentu_skladnika === wizPolproduktAsortId ? "__etap1__" : "",
+          id_partii: "",
+          zuzyte_partie: [{ _uid: Math.random().toString(36), id_partii: s.id_asortymentu_skladnika === wizPolproduktAsortId ? "__etap1__" : "", ilosc: ilosc_jm }],
           partie: s.id_asortymentu_skladnika === wizPolproduktAsortId
             ? [{ id: "__etap1__", numer_partii: "Etap 1 (auto)", termin_waznosci: null, stan: iloscBazyNum }]
             : [],
         };
       });
     }
+    if (runId !== computeRunRef.current) return; // stale run — inny efekt uruchomił nową wersję
     setWizWyrobySurowceMap(newMap);
     // Mapa zużycia z etapu 1 per partia (w JM głównej) — do korekty stanu w etapie 2
     const consumedInStep1: Record<string, number> = {};
     for (const s of wizBazaSurowce) {
-      if (s.id_partii) consumedInStep1[s.id_partii] = (consumedInStep1[s.id_partii] || 0) + s.ilosc_jm;
+      for (const zp of s.zuzyte_partie) {
+        if (zp.id_partii && zp.id_partii !== "__etap1__") {
+          consumedInStep1[zp.id_partii] = (consumedInStep1[zp.id_partii] || 0) + zp.ilosc;
+        }
+      }
     }
     // Załaduj partie dla surowców (nie dla bazy)
     for (const wyrob of wizWyroby) {
@@ -579,6 +606,7 @@ export default function Produkcja() {
       for (const s of surowce) {
         if (s.id_asortymentu === wizPolproduktAsortId) continue;
         const partie = await loadPartieForAsortyment(s.id_asortymentu);
+        if (runId !== computeRunRef.current) return; // przerwij stale run przed zapisem stanu
         // Odejmij zużycie etapu 1 od stanu partii
         const partieAdjusted = partie.map(p => ({
           ...p,
@@ -586,27 +614,50 @@ export default function Produkcja() {
         }));
         setWizWyrobySurowceMap(prev => ({
           ...prev,
-          [wyrob._key]: (prev[wyrob._key] || []).map(x =>
-            x.id_asortymentu === s.id_asortymentu ? { ...x, partie: partieAdjusted, id_partii: partieAdjusted[0]?.id || "" } : x
-          ),
+          [wyrob._key]: (prev[wyrob._key] || []).map(x => {
+            if (x.id_asortymentu !== s.id_asortymentu) return x;
+            const zp: typeof x.zuzyte_partie = [];
+            let remaining = x.ilosc_jm;
+            for (const p of partieAdjusted) {
+              if (remaining <= 0) break;
+              if (p.stan > 0) {
+                const take = Math.round(Math.min(p.stan, remaining) * 1000) / 1000;
+                zp.push({ _uid: Math.random().toString(36), id_partii: p.id, ilosc: take });
+                remaining -= take;
+              }
+            }
+            if (zp.length === 0 || remaining > 0.001) zp.push({ _uid: Math.random().toString(36), id_partii: "", ilosc: remaining > 0 ? remaining : x.ilosc_jm });
+            return { ...x, partie: partieAdjusted, zuzyte_partie: zp };
+          })
         }));
       }
     }
   };
 
   const handleWizNext = () => {
-    setError("");
     if (wizStep === 1) {
-      if (!wizBazaRecId) { setError("Wybierz recepturę półproduktu (bazy)"); return; }
+      if (!wizBazaRecId) { showToast("Wybierz recepturę półproduktu (bazy)", "error"); return; }
       const iloscNum = parseFloat(wizBazaIlosc.replace(",", "."));
-      if (isNaN(iloscNum) || iloscNum <= 0) { setError("Podaj ilość bazy > 0"); return; }
+      if (isNaN(iloscNum) || iloscNum <= 0) { showToast("Podaj ilość bazy > 0", "error"); return; }
       for (const s of wizBazaSurowce) {
-        if (!s.id_partii) { setError(`Wybierz partię dla: ${s.nazwa}`); return; }
-        const partia = s.partie.find(p => p.id === s.id_partii);
-        const wymagane = s.ilosc_jm ?? s.ilosc_wymagana;
-        if (!partia || partia.stan < wymagane - 0.001) {
-          setError(`Niewystarczający stan: ${s.nazwa} — wymagane ${wymagane.toFixed(3)} ${s.jednostka}, dostępne ${(partia?.stan ?? 0).toFixed(3)} ${s.jednostka}`);
-          return;
+        let total = 0;
+        const sums: Record<string, number> = {};
+        for (const zp of s.zuzyte_partie) {
+           if (!zp.id_partii && zp.ilosc > 0) { showToast(`Wybierz partię dla: ${s.nazwa} (ilość ${zp.ilosc})`, "error"); return; }
+           if (zp.id_partii) {
+             sums[zp.id_partii] = (sums[zp.id_partii] || 0) + zp.ilosc;
+           }
+           total += zp.ilosc;
+        }
+        if (Math.abs(total - s.ilosc_jm) > 0.002) {
+           showToast(`Suma ilości partii dla ${s.nazwa} nie zgadza się z wymaganą ilością ${s.ilosc_jm}`, "error"); return;
+        }
+        for (const [id_partii, amt] of Object.entries(sums)) {
+           const partia = s.partie.find(p => p.id === id_partii);
+           if (!partia || partia.stan < amt - 0.001) {
+             showToast(`Niewystarczający stan: ${s.nazwa} (partia ${partia?.numer_partii}) — przypisane ${amt.toFixed(3)}, dostępne ${(partia?.stan ?? 0).toFixed(3)}`, "error");
+             return;
+           }
         }
       }
       const stateStep2 = { wizStep: 2, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
@@ -614,26 +665,25 @@ export default function Produkcja() {
       setHasDraft(true);
       setWizStep(2);
     } else if (wizStep === 2) {
-      if (wizWyroby.length === 0) { setError("Dodaj co najmniej jeden wyrób gotowy"); return; }
+      if (wizWyroby.length === 0) { showToast("Dodaj co najmniej jeden wyrób gotowy", "error"); return; }
       for (const w of wizWyroby) {
         const porcje = parseFloat(w.liczba_porcji.replace(",", "."));
-        if (isNaN(porcje) || porcje <= 0) { setError("Wszystkie wyroby muszą mieć liczbę porcji > 0"); return; }
+        if (isNaN(porcje) || porcje <= 0) { showToast("Wszystkie wyroby muszą mieć liczbę porcji > 0", "error"); return; }
       }
-      if (!wizBazaOk) { setError(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`); return; }
+      if (!wizBazaOk) { showToast(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`, "error"); return; }
       // Inicjalizuj krok 3
       const init: Record<string, WizRealizacjaItem> = {};
+      const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
       for (const w of wizWyroby) {
-        init[w._key] = { rzeczywista_ilosc: "", opakowania: [] };
+        init[w._key] = {
+           rzeczywista_ilosc: "",
+           opakowania: pozzetti ? [{ id_asortymentu: pozzetti.id, nazwa: pozzetti.nazwa, waga_kg: "" }] : []
+        };
       }
       setWizRealizacja(init);
       const stateStep3 = { wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja: init, savedAt: new Date().toISOString() };
       dbSaveDraft(3, stateStep3, "przejscie_kroku");
       setHasDraft(true);
-      if (dostepneOpakowania.length === 0) {
-        fetch("/api/asortyment").then(r => r.json())
-          .then((items: any[]) => setDostepneOpakowania(items.filter((a: any) => a.typ_asortymentu === "Opakowanie" && a.czy_aktywne)))
-          .catch(() => {});
-      }
       setWizStep(3);
     }
   };
@@ -647,7 +697,6 @@ export default function Produkcja() {
   };
 
   const handleSubmitWizard = async () => {
-    setError("");
     // Czytaj dane kroku 3 z DB aby uniknąć problemów z React state
     let realizacjaDB: Record<string, WizRealizacjaItem> = wizRealizacja;
     try {
@@ -663,15 +712,11 @@ export default function Produkcja() {
 
     for (const w of wizWyroby) {
       const real = realizacjaDB[w._key];
-      const rzeczywista = parseFloat((real?.rzeczywista_ilosc || "").replace(",", "."));
-      if (isNaN(rzeczywista) || rzeczywista <= 0) { setError("Podaj rzeczywistą ilość > 0 dla każdego wyrobu"); return; }
       const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+      const rzeczywista = totalOp;
+      if (rzeczywista <= 0) { showToast("Suma wag opakowań musi być > 0 dla każdego wyrobu", "error"); return; }
       const rec = receptury.find(r => r.id === w.id_receptury);
-      if (totalOp <= 0) { setError(`Dodaj opakowania dla: ${rec?.asortyment_docelowy.nazwa}`); return; }
-      if (totalOp < rzeczywista - 0.001) {
-        setError(`Nie wszystko zapakowane — ${rec?.asortyment_docelowy.nazwa}: pozostało ${fmtL(rzeczywista - totalOp, 3)} kg`);
-        return;
-      }
+      if (totalOp <= 0) { showToast(`Dodaj opakowania dla: ${rec?.asortyment_docelowy.nazwa}`, "error"); return; }
     }
     setWizLoading(true);
     try {
@@ -680,17 +725,19 @@ export default function Produkcja() {
         ilosc_bazy: parseFloat(wizBazaIlosc.replace(",", ".")),
         rzeczywista_ilosc_bazy: parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", ".")),
         surowce_bazy: wizBazaSurowce
-          .filter(s => s.id_partii && s.ilosc_jm > 0)
-          .map(s => ({ id_partii: s.id_partii, ilosc: s.ilosc_jm })),
+          .flatMap(s => s.zuzyte_partie.map(zp => ({ id_partii: zp.id_partii, ilosc: zp.ilosc })))
+          .filter(x => x.id_partii && x.id_partii !== "__etap1__" && x.ilosc > 0),
         wyroby: wizWyroby
           .filter(w => getIloscWyrobu(w) > 0)
           .map(w => {
             const ilosc = getIloscWyrobu(w);
             const real = realizacjaDB[w._key];
-            const rzeczywista_ilosc = parseFloat((real?.rzeczywista_ilosc || "").replace(",", ".")) || ilosc;
+            const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+            const rzeczywista_ilosc = totalOp || ilosc;
             const surowce = (wizWyrobySurowceMap[w._key] || [])
-              .filter(s => s.id_partii && s.id_partii !== "__etap1__" && s.ilosc_jm > 0)
-              .map(s => ({ id_partii: s.id_partii, ilosc: s.ilosc_jm }));
+              .flatMap(s => s.zuzyte_partie.map(zp => ({ id_partii: zp.id_partii, ilosc: zp.ilosc, isAuto: zp.id_partii === "__etap1__" })))
+              .filter(x => x.id_partii && !x.isAuto && x.ilosc > 0)
+              .map(x => ({ id_partii: x.id_partii, ilosc: x.ilosc }));
             const opakowania = (real?.opakowania || [])
               .filter(o => o.id_asortymentu && parseFloat(o.waga_kg.replace(",", ".")) > 0)
               .map(o => ({ id_asortymentu: o.id_asortymentu, nazwa: o.nazwa, waga_kg: parseFloat(o.waga_kg.replace(",", ".")) }));
@@ -705,9 +752,8 @@ export default function Produkcja() {
       clearDraft();
       setShowWizard(false); wizReset();
       fetchData();
-      setSuccess(`Sesja ${data.sesja.numer_sesji} zarejestrowana — ${data.wyroby.length + 1} ZP zrealizowane.`);
-      setTimeout(() => setSuccess(""), 4000);
-    } catch (e: any) { setError(e.message); }
+      showToast(`Sesja ${data.sesja.numer_sesji} zarejestrowana — ${data.wyroby.length + 1} ZP zrealizowane.`, "ok");
+    } catch (e: any) { showToast(e.message, "error"); }
     finally { setWizLoading(false); }
   };
 
@@ -738,8 +784,6 @@ export default function Produkcja() {
 
   return (
     <div className="h-full flex flex-col gap-3 animate-view">
-      {success && <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 p-3 rounded-xl text-sm font-semibold flex items-center gap-2 shrink-0"><CheckCircle2 className="w-4 h-4 shrink-0" /> {success}</div>}
-      {error && !itemToRealize && <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-xl text-sm font-semibold flex items-center gap-2 shrink-0"><AlertCircle className="w-4 h-4 shrink-0" /> {error}</div>}
 
       <div className="flex items-center justify-between shrink-0">
         <div>
@@ -988,18 +1032,12 @@ export default function Produkcja() {
                   <p className="text-slate-500 text-xs">{selectedProduct?.kod_towaru || "Kreator zlecenia ZP"}</p>
                 </div>
               </div>
-              <button onClick={() => { setIsAdding(false); setSelectedProduct(null); setError(""); }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155] transition-colors">
+              <button onClick={() => { setIsAdding(false); setSelectedProduct(null); }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155] transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
-               {error && (
-                 <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-xl text-sm font-semibold flex items-center gap-2">
-                   <AlertCircle className="w-4 h-4 shrink-0" /> {error}
-                 </div>
-               )}
-
                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div className="space-y-4">
                      <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest">Parametry wyjściowe</h4>
@@ -1092,7 +1130,7 @@ export default function Produkcja() {
             </div>
 
             <div className="p-4 border-t border-[#334155] bg-[#0f172a]/50 flex justify-between items-center shrink-0">
-              <button onClick={() => { setIsAdding(false); setSelectedProduct(null); setError(""); }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
+              <button onClick={() => { setIsAdding(false); setSelectedProduct(null); }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
                 Anuluj
               </button>
               <button
@@ -1276,10 +1314,19 @@ export default function Produkcja() {
                   <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
                     <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3">Pakowanie</h4>
                     <div className="space-y-1.5">
-                      {viewZlecenie.opakowania.map((op, i) => (
+                      {(Object.values(viewZlecenie.opakowania.reduce((acc: any, op: any) => {
+                        const k = `${op.id_asortymentu}_${op.waga_kg}`;
+                        if (!acc[k]) acc[k] = { ...op, count: 0 };
+                        acc[k].count++;
+                        return acc;
+                      }, {})) as any[]).sort((a, b) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg).map((op: any, i: number) => (
                         <div key={i} className="flex justify-between items-center text-sm">
-                          <span className="text-slate-300">{op.nazwa}</span>
-                          <span className="font-mono font-bold text-white">{fmtL(op.waga_kg, 3)} kg</span>
+                          <span className="text-slate-300">
+                            {op.count > 1 ? <><span className="text-slate-500 font-bold">{op.count} x</span> </> : ""}
+                            {op.nazwa}
+                            <span className="text-xs text-slate-500 ml-1">({fmtL(op.waga_kg, 3)} kg)</span>
+                          </span>
+                          <span className="font-mono font-bold text-white">{fmtL(op.waga_kg * op.count, 3)} kg</span>
                         </div>
                       ))}
                       <div className="flex justify-between items-center text-sm pt-1 border-t border-[#334155]">
@@ -1681,68 +1728,124 @@ export default function Produkcja() {
         const inp2 = { background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' } as const;
         const bazaRec = receptury.find(r => r.id === wizBazaRecId);
 
-        const SurowceTable = ({ rows, setter }: {
-          rows: WizSurowiecBaza[] | WizSurowiecWyrob[];
-          setter: (fn: (prev: any[]) => any[]) => void;
-        }) => (
+        const renderSurowceTable = (
+          rows: WizSurowiecBaza[] | WizSurowiecWyrob[],
+          setter: (fn: (prev: any[]) => any[]) => void
+        ) => (
           <table className="mes-table">
             <thead>
               <tr>
                 <th>Składnik</th>
-                <th className="text-right">Wymagane</th>
-                <th>Partia (FEFO)</th>
-                <th className="text-right">Dostępne</th>
-                <th className="text-center w-8"></th>
+                <th className="text-right">Wymagane łącznie</th>
+                <th>Partie / Ilość (w JM gł.)</th>
+                <th className="text-right">Dostępne w partii</th>
+                <th className="text-center w-12">Akcja</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((s: any) => {
-                const wybranaPartia = s.partie.find((p: WizPartia) => p.id === s.id_partii);
-                const dostepne = wybranaPartia?.stan ?? null;
-                // porównanie zawsze w jednostce głównej (JM)
-                const ok = dostepne !== null && dostepne >= (s.ilosc_jm ?? s.ilosc_wymagana) - 0.001;
                 const brak = s.partie.length === 0;
+                let usedTotal = 0; s.zuzyte_partie.forEach((zp: any) => usedTotal += zp.ilosc);
+                const isAuto = s.zuzyte_partie[0]?.id_partii === "__etap1__";
+
                 return (
                   <tr key={s.id_asortymentu}>
-                    <td className="font-medium text-white">{s.nazwa}</td>
-                    <td className="text-right mono font-bold text-white">{fmtL(s.ilosc_wymagana, 3)} <span className="text-xs opacity-50">{s.jednostka}</span></td>
-                    <td>
-                      {s.id_partii === "__etap1__" ? (
-                        <span className="text-xs text-indigo-400 flex items-center gap-1"><Check className="w-3 h-3" />Etap 1 — auto</span>
-                      ) : brak ? (
-                        <span className="text-xs text-red-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" />Brak partii</span>
-                      ) : (
-                        <select value={s.id_partii}
-                          onChange={e => setter((prev: any[]) => prev.map((x: any) => x.id_asortymentu === s.id_asortymentu ? { ...x, id_partii: e.target.value } : x))}
-                          className="rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--accent)] w-full max-w-[220px]" style={inp2}>
-                          <option value="">— wybierz —</option>
-                          {s.partie.map((p: WizPartia) => (
-                            <option key={p.id} value={p.id}>
-                              {p.numer_partii}{p.termin_waznosci ? ` · ${new Date(p.termin_waznosci).toLocaleDateString("pl-PL")}` : ""}
-                            </option>
-                          ))}
-                        </select>
+                    <td className="font-medium text-white align-top pt-3">{s.nazwa}</td>
+                    <td className="text-right mono font-bold text-white align-top pt-3">
+                      <div>{fmtL(s.ilosc_wymagana, 3)} <span className="text-xs opacity-50">{s.jednostka}</span></div>
+                      {!isAuto && Math.abs(usedTotal - s.ilosc_jm) > 0.002 && (
+                        <div className="text-xs mt-1 text-amber-400 font-bold">
+                          Różnica: {fmtL(s.ilosc_jm - usedTotal, 3)}
+                        </div>
                       )}
                     </td>
-                    <td className="text-right">
-                      {s.id_partii === "__etap1__" ? (
-                        <span className="mono text-sm font-bold text-indigo-300">
-                          {fmtL(s.czy_pomocnicza ? (wybranaPartia?.stan ?? 0) * s.przelicznik : (wybranaPartia?.stan ?? 0), 3)} <span className="text-xs opacity-60">{s.jednostka}</span>
-                        </span>
-                      ) : dostepne !== null ? (
-                        <span className={`mono text-sm font-bold ${ok ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {fmtL(s.czy_pomocnicza ? dostepne * s.przelicznik : dostepne, 3)} <span className="text-xs opacity-60">{s.czy_pomocnicza ? s.jednostka : s.jednostka_glowna}</span>
-                        </span>
-                      ) : <span className="text-slate-600 text-xs">—</span>}
+                    <td className="align-top">
+                      {isAuto ? (
+                         <span className="text-xs text-indigo-400 flex items-center gap-1 mt-3"><Check className="w-3 h-3" />Etap 1 — automatycznie z bazy</span>
+                      ) : brak ? (
+                         <span className="text-xs text-red-400 flex items-center gap-1 mt-3"><AlertCircle className="w-3 h-3" />Brak partii w magazynie</span>
+                      ) : (
+                         <div className="flex flex-col gap-2 pt-1 pb-1">
+                           {s.zuzyte_partie.map((zp: any, idx: number) => {
+                              const wybranaPartia = s.partie.find((p: WizPartia) => p.id === zp.id_partii);
+                              return (
+                                <div key={zp._uid} className="flex gap-2 items-center">
+                                  <select value={zp.id_partii}
+                                    onChange={e => setter((prev: any[]) => prev.map((x: any) => x.id_asortymentu === s.id_asortymentu ? { ...x, zuzyte_partie: x.zuzyte_partie.map((z: any) => z._uid === zp._uid ? { ...z, id_partii: e.target.value } : z) } : x))}
+                                    className="rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--accent)] w-[180px]" style={inp2}>
+                                    <option value="">— wybierz partię —</option>
+                                    {s.partie.filter((p: WizPartia) => p.id === zp.id_partii || !s.zuzyte_partie.some((z: any) => z.id_partii === p.id)).map((p: WizPartia) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.numer_partii}{p.termin_waznosci ? ` · ${new Date(p.termin_waznosci).toLocaleDateString("pl-PL")}` : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <input type="number" step="0.001" value={zp.ilosc}
+                                    onChange={e => {
+                                       let val = parseFloat(e.target.value);
+                                       if(isNaN(val)) val = 0;
+                                       setter((prev: any[]) => prev.map((x: any) => {
+                                          if (x.id_asortymentu !== s.id_asortymentu) return x;
+                                          const diff = val - zp.ilosc;
+                                          let newZp = x.zuzyte_partie.map((z: any) => z._uid === zp._uid ? { ...z, ilosc: val } : { ...z });
+                                          if (diff !== 0 && newZp.length > 1) {
+                                            let amountToTransfer = Math.abs(diff);
+                                            for (let i = 0; i < newZp.length; i++) {
+                                               if (newZp[i]._uid !== zp._uid) {
+                                                  if (diff > 0 && newZp[i].ilosc > 0) {
+                                                     const reduceBy = Math.min(newZp[i].ilosc, amountToTransfer);
+                                                     newZp[i].ilosc = Math.round((newZp[i].ilosc - reduceBy) * 1000) / 1000;
+                                                     amountToTransfer = Math.round((amountToTransfer - reduceBy) * 1000) / 1000;
+                                                  } else if (diff < 0) {
+                                                     newZp[i].ilosc = Math.round((newZp[i].ilosc + amountToTransfer) * 1000) / 1000;
+                                                     amountToTransfer = 0;
+                                                  }
+                                                  if (amountToTransfer <= 0) break;
+                                               }
+                                            }
+                                          }
+                                          return { ...x, zuzyte_partie: newZp };
+                                       }));
+                                    }}
+                                    className="rounded px-2 py-1 text-xs w-20 text-right mono outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
+                                  <span className="text-xs opacity-60 w-6">{s.jednostka_glowna}</span>
+                                  {s.zuzyte_partie.length > 1 && (
+                                     <button onClick={() => setter((prev: any[]) => prev.map((x: any) => x.id_asortymentu === s.id_asortymentu ? { ...x, zuzyte_partie: x.zuzyte_partie.filter((z: any) => z._uid !== zp._uid) } : x))}
+                                       className="p-1 rounded text-slate-500 hover:text-red-400 transition-colors ml-1"><X className="w-3.5 h-3.5" /></button>
+                                  )}
+                                </div>
+                              );
+                           })}
+                         </div>
+                      )}
                     </td>
-                    <td className="text-center">
-                      {s.id_partii === "__etap1__" ? (
-                        <Check className="w-3.5 h-3.5 text-indigo-400 inline" />
-                      ) : !ok && dostepne !== null ? (
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 inline" />
-                      ) : ok ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400 inline" />
-                      ) : null}
+                    <td className="text-right align-top pt-3">
+                      {!isAuto && !brak && (
+                         <div className="flex flex-col gap-2 pt-1 pb-1">
+                           {s.zuzyte_partie.map((zp: any) => {
+                              const wybranaPartia = s.partie.find((p: WizPartia) => p.id === zp.id_partii);
+                              const dostepne = wybranaPartia?.stan ?? null;
+                              const ok = dostepne !== null && dostepne >= zp.ilosc - 0.001;
+                              return (
+                                <div key={zp._uid} className="h-6 flex items-center justify-end">
+                                  {dostepne !== null ? (
+                                    <span className={`mono text-sm font-bold ${ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      {fmtL(dostepne, 3)}
+                                    </span>
+                                  ) : <span className="text-slate-600 text-xs">—</span>}
+                                </div>
+                              );
+                           })}
+                         </div>
+                      )}
+                    </td>
+                    <td className="text-center align-top pt-3">
+                       {!isAuto && !brak && (
+                           <button onClick={() => setter((prev: any[]) => prev.map((x: any) => x.id_asortymentu === s.id_asortymentu ? { ...x, zuzyte_partie: [...x.zuzyte_partie, { _uid: Math.random().toString(36), id_partii: "", ilosc: Math.max(0, Math.round((x.ilosc_jm - usedTotal) * 1000) / 1000) }] } : x))}
+                             className="text-white hover:text-emerald-400 p-1 flex mt-0.5 mx-auto" title="Dodaj kolejną partię">
+                             <Plus className="w-4 h-4" />
+                           </button>
+                       )}
                     </td>
                   </tr>
                 );
@@ -1777,12 +1880,6 @@ export default function Produkcja() {
                 </div>
               </div>
 
-              {error && (
-                <div className="mx-5 mt-3 bg-red-500/10 border border-red-500/30 text-red-300 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shrink-0">
-                  <AlertCircle className="w-4 h-4 shrink-0" /> {error}
-                  <button onClick={() => setError("")} className="ml-auto"><X className="w-3.5 h-3.5" /></button>
-                </div>
-              )}
 
               <div className="flex-1 overflow-y-auto">
 
@@ -1825,7 +1922,7 @@ export default function Produkcja() {
                         <div className="px-4 py-2 border-b text-xs font-bold uppercase tracking-widest" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
                           Surowce bazy — pobranie FEFO
                         </div>
-                        <SurowceTable rows={wizBazaSurowce} setter={setWizBazaSurowce} />
+                        {renderSurowceTable(wizBazaSurowce, setWizBazaSurowce)}
                       </div>
                     ) : wizBazaRecId ? (
                       <div className="p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Podaj ilość aby zobaczyć BOM</div>
@@ -1931,10 +2028,10 @@ export default function Produkcja() {
                                           <div className="text-xs font-semibold uppercase tracking-wider mb-1 mt-2" style={{ color: 'var(--text-muted)' }}>
                                             Surowce — {rec?.asortyment_docelowy.nazwa}
                                           </div>
-                                          <SurowceTable
-                                            rows={surowceWyrobu}
-                                            setter={fn => setWizWyrobySurowceMap(prev => ({ ...prev, [w._key]: fn(prev[w._key] || []) }))}
-                                          />
+                                          {renderSurowceTable(
+                                            surowceWyrobu,
+                                            fn => setWizWyrobySurowceMap(prev => ({ ...prev, [w._key]: fn(prev[w._key] || []) }))
+                                          )}
                                         </div>
                                       </td>
                                     </tr>
@@ -1976,19 +2073,18 @@ export default function Produkcja() {
                               <div className="relative">
                                 <input
                                   type="text"
-                                  value={real.rzeczywista_ilosc}
-                                  onChange={e => setReal(prev => ({ ...prev, rzeczywista_ilosc: e.target.value }))}
-                                  placeholder={fmtL(planowana, 3)}
-                                  className="w-full rounded-lg px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-[var(--accent)] pr-12"
-                                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                                  value={fmtL(real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0), 3)}
+                                  readOnly
+                                  className="w-full rounded-lg px-3 py-2 text-sm font-mono outline-none opacity-80 cursor-default pr-12"
+                                  style={{ background: 'rgba(0,0,0,0.2)', border: '1px dashed var(--border)', color: 'var(--text-primary)' }}
                                 />
                                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>
                                   {rec?.asortyment_docelowy.jednostka_miary}
                                 </span>
                               </div>
                               {(() => {
-                                const rv = parseFloat(real.rzeczywista_ilosc.replace(",", "."));
-                                if (!isNaN(rv) && planowana > 0) {
+                                const rv = real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+                                if (!isNaN(rv) && planowana > 0 && rv > 0.001) {
                                   const diff = rv - planowana;
                                   const pct = (diff / planowana * 100).toFixed(1);
                                   return (
@@ -2005,7 +2101,10 @@ export default function Produkcja() {
                               <div className="flex items-center justify-between mb-2">
                                 <label className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Pakowanie</label>
                                 <button
-                                  onClick={() => setReal(prev => ({ ...prev, opakowania: [...prev.opakowania, { id_asortymentu: "", nazwa: "", waga_kg: "" }] }))}
+                                  onClick={() => {
+                                    const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
+                                    setReal(prev => ({ ...prev, opakowania: [...prev.opakowania, pozzetti ? { id_asortymentu: pozzetti.id, nazwa: pozzetti.nazwa, waga_kg: "" } : { id_asortymentu: "", nazwa: "", waga_kg: "" }] }));
+                                  }}
                                   className="flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors"
                                   style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
                                   <Plus className="w-3 h-3" />Dodaj
@@ -2027,7 +2126,6 @@ export default function Produkcja() {
                                         }}
                                         className="flex-1 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--accent)]"
                                         style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-                                        <option value="">— opakowanie —</option>
                                         {dostepneOpakowania.map(o => <option key={o.id} value={o.id}>{o.nazwa}</option>)}
                                       </select>
                                       <div className="relative">
@@ -2043,18 +2141,11 @@ export default function Produkcja() {
                                   ))}
                                   {(() => {
                                     const totalOp = real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
-                                    const rzeczywista = parseFloat(real.rzeczywista_ilosc.replace(",", ".")) || 0;
-                                    const pozostalo = rzeczywista - totalOp;
                                     return (
                                       <div className="text-xs font-mono pt-0.5 space-y-0.5">
                                         <div className="text-right" style={{ color: 'var(--text-muted)' }}>
                                           Razem: <span className="text-white font-bold">{fmtL(totalOp, 3)}</span> kg
                                         </div>
-                                        {rzeczywista > 0 && (
-                                          <div className={`text-right font-bold ${pozostalo > 0.001 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                                            {pozostalo > 0.001 ? `Pozostało: ${fmtL(pozostalo, 3)} kg` : '✓ Zapakowano w całości'}
-                                          </div>
-                                        )}
                                       </div>
                                     );
                                   })()}
@@ -2444,7 +2535,7 @@ export default function Produkcja() {
             )}
             <div className="overflow-y-auto flex-1">
               {previewDocLoading ? (
-                <div className="flex justify-center p-8"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+                <div className="flex justify-center p-8"><Spinner /></div>
               ) : !previewDocData ? (
                 <div className="text-center p-8 text-slate-500">Brak danych o dokumencie</div>
               ) : (

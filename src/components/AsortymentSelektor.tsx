@@ -159,44 +159,47 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-[#0f172a] border border-[#334155] rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
+    <div className="fixed inset-0 z-[1010] flex items-center justify-center p-4" style={{ background: 'rgba(4,8,16,0.75)', backdropFilter: 'blur(3px)' }}>
+      <div className="w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.7)' }}>
 
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-[#334155] bg-[#1e293b] shrink-0">
+        <div className="flex items-center justify-between shrink-0" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-blue-600/20 rounded-xl flex items-center justify-center">
-              <Package className="w-5 h-5 text-blue-400" />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-accent)' }}>
+              <Package className="w-4 h-4" style={{ color: 'var(--accent)' }} />
             </div>
             <div>
-              <h3 className="text-white font-bold text-base">Wybierz towary</h3>
-              <p className="text-slate-500 text-xs">Zaznacz pozycje i wpisz ilości</p>
+              <h3 className="font-bold text-sm" style={{ color: 'var(--text-primary)', margin: 0 }}>Wybierz towary</h3>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', margin: '2px 0 0' }}>Zaznacz pozycje i wpisz ilości</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155] transition-colors">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, borderRadius: 4, display: 'flex' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}>
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Filtry i wyszukiwanie */}
-        <div className="p-4 border-b border-[#334155] bg-[#1e293b]/50 shrink-0 space-y-3">
+        <div className="shrink-0 space-y-3" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
             <input
               ref={searchRef}
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Szukaj po nazwie lub kodzie towaru..."
-              className="w-full bg-[#0f172a] border border-[#334155] text-white rounded-xl pl-11 pr-10 py-3 outline-none focus:border-blue-500 transition-colors"
+              className="mes-input"
+              style={{ paddingLeft: 34 }}
             />
             {search && (
-              <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white p-1">
+              <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}>
                 <X className="w-4 h-4" />
               </button>
             )}
           </div>
-          <div className="flex gap-1 bg-[#0f172a] p-1 rounded-xl overflow-x-auto">
+          <div className="flex gap-1 overflow-x-auto" style={{ background: 'var(--bg-app)', padding: 4, borderRadius: 6 }}>
             {[
               { id: "all", label: "Wszystkie" },
               { id: "Surowiec", label: "Surowce" },
@@ -206,9 +209,19 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
               <button
                 key={f.id}
                 onClick={() => setFilter(f.id)}
-                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${
-                  filter === f.id ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
-                }`}
+                className="whitespace-nowrap"
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: 4,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  transition: 'background 0.15s, color 0.15s',
+                  background: filter === f.id ? 'var(--accent)' : 'transparent',
+                  color: filter === f.id ? '#080c14' : 'var(--text-secondary)',
+                }}
               >
                 {f.label}
               </button>
@@ -219,11 +232,11 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
         {/* Lista */}
         <div className="overflow-y-auto flex-1">
           {loading ? (
-            <div className="p-12 text-center"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
+            <div className="p-12 flex justify-center"><div style={{ width: 20, height: 20, borderWidth: 2, borderStyle: 'solid', borderColor: 'var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /></div>
           ) : filtered.length === 0 ? (
-            <div className="p-12 text-center text-slate-500">
-              <Package className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p>Brak wyników</p>
+            <div className="p-12 text-center" style={{ color: 'var(--text-muted)' }}>
+              <Package className="w-8 h-8 mx-auto mb-3" style={{ opacity: 0.3 }} />
+              <p className="text-sm">Brak wyników</p>
             </div>
           ) : (
             <table className="w-full text-left text-sm">
@@ -293,7 +306,8 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
                               value={sel.ilosc}
                               onChange={e => setIlosc(a.id, e.target.value)}
                               placeholder="0"
-                              className="w-full bg-[#0f172a] border border-blue-500 text-white rounded-lg px-3 py-1.5 text-right font-mono font-bold outline-none focus:ring-2 focus:ring-blue-500/30 text-sm"
+                              className="mes-input"
+                              style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: 13 }}
                             />
                           )}
                         </td>
@@ -307,23 +321,23 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-[#334155] bg-[#1e293b] shrink-0 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl ${selectedCount > 0 ? "bg-blue-600/20 text-blue-300" : "bg-[#0f172a] text-slate-500"}`}>
-              <ShoppingCart className="w-4 h-4" />
-              <span className="font-bold text-sm">{selectedCount} pozycji zaznaczonych</span>
-            </div>
+        <div className="shrink-0 flex items-center justify-between gap-4" style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+          <div className="flex items-center gap-2" style={{
+            padding: '6px 12px',
+            borderRadius: 6,
+            background: selectedCount > 0 ? 'var(--accent-dim)' : 'var(--bg-app)',
+            border: `1px solid ${selectedCount > 0 ? 'var(--border-accent)' : 'var(--border)'}`,
+            color: selectedCount > 0 ? 'var(--accent)' : 'var(--text-muted)',
+            fontSize: 12,
+            fontWeight: 600,
+          }}>
+            <ShoppingCart className="w-3.5 h-3.5" />
+            <span>{selectedCount} pozycji zaznaczonych</span>
           </div>
-          <div className="flex gap-3">
-            <button onClick={onClose} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
-              Anuluj
-            </button>
-            <button
-              onClick={handleConfirm}
-              disabled={selectedCount === 0}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors"
-            >
-              <Check className="w-4 h-4" />
+          <div className="flex gap-2">
+            <button onClick={onClose} className="btn btn-ghost">Anuluj</button>
+            <button onClick={handleConfirm} disabled={selectedCount === 0} className="btn btn-primary">
+              <Check className="w-3.5 h-3.5" />
               Dodaj do dokumentu
             </button>
           </div>

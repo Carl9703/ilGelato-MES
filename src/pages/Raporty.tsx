@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { BarChart2, ChevronDown, ChevronRight, TrendingUp, FileText, Users, Calendar } from "lucide-react";
 import { fmtL } from "../utils/fmt";
+import { Spinner } from "../components/Spinner";
+import { EmptyState } from "../components/EmptyState";
 
 type Pozycja = {
   kod_towaru: string;
@@ -191,7 +193,7 @@ export default function Raporty() {
       {/* Tabela */}
       <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
         {loading ? (
-          <div className="p-8 text-center"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
+          <Spinner.Page />
         ) : visibleKontrahenci.length === 0 ? (
           <div className="p-12 text-center" style={{ color: "var(--text-muted)" }}>
             Brak zatwierdzonych dokumentów WZ w wybranym okresie.

@@ -7,6 +7,9 @@ import {
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
 import { fmtL } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
+import { Spinner } from "../components/Spinner";
+import { EmptyState } from "../components/EmptyState";
+import { useToast } from "../components/Toast";
 
 // ─── Typy ────────────────────────────────────────────────────────────────────
 
@@ -95,8 +98,7 @@ export default function Dokumenty() {
   const [selectedYear, setSelectedYear] = useState<string>(String(new Date().getFullYear()));
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const { showToast } = useToast();
 
   // Etykiety
   const [etykieta, setEtykieta] = useState<Etykieta | null>(null);
@@ -132,6 +134,7 @@ export default function Dokumenty() {
 
   const openDocPreview = async (ref: string) => {
     setPreviewDocRef(ref);
+    setPreviewDocData(null);
     setPreviewDocLoading(true);
     try {
       const res = await fetch(`/api/dokumenty/podglad/${encodeURIComponent(ref)}`);
@@ -142,16 +145,14 @@ export default function Dokumenty() {
   const handleZatwierdz = async (ref: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     setActionLoading(ref);
-    setError("");
     try {
       const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/zatwierdz`, { method: "POST" });
       if (!res.ok) throw new Error((await res.json()).error);
-      setSuccess(`Dokument ${ref} zatwierdzony.`);
-      setTimeout(() => setSuccess(""), 4000);
+      showToast(`Dokument ${ref} zatwierdzony.`, "ok");
       fetchDokumenty();
       if (previewDocRef === ref) openDocPreview(ref);
     } catch (err: any) {
-      setError(err.message);
+      showToast(err.message, "error");
     } finally {
       setActionLoading(null);
     }
@@ -164,16 +165,14 @@ export default function Dokumenty() {
 
   const doAnuluj = async (ref: string) => {
     setActionLoading(ref);
-    setError("");
     try {
       const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/anuluj`, { method: "POST" });
       if (!res.ok) throw new Error((await res.json()).error);
-      setSuccess(`Dokument ${ref} anulowany.`);
-      setTimeout(() => setSuccess(""), 4000);
+      showToast(`Dokument ${ref} anulowany.`, "ok");
       fetchDokumenty();
       if (previewDocRef === ref) openDocPreview(ref);
     } catch (err: any) {
-      setError(err.message);
+      showToast(err.message, "error");
     } finally {
       setActionLoading(null);
     }
@@ -186,16 +185,14 @@ export default function Dokumenty() {
 
   const doUsun = async (ref: string) => {
     setActionLoading(ref);
-    setError("");
     try {
       const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error);
-      setSuccess(`Dokument ${ref} usunięty.`);
-      setTimeout(() => setSuccess(""), 4000);
+      showToast(`Dokument ${ref} usunięty.`, "ok");
       if (previewDocRef === ref) setPreviewDocRef(null);
       fetchDokumenty();
     } catch (err: any) {
-      setError(err.message);
+      showToast(err.message, "error");
     } finally {
       setActionLoading(null);
     }
@@ -208,8 +205,8 @@ export default function Dokumenty() {
       if (e.key !== 'Escape') return;
       if (previewDocRef) { setPreviewDocRef(null); return; }
       if (showSelektor) { setShowSelektor(false); return; }
-      if (showPz) { setShowPz(false); setError(""); return; }
-      if (showWz) { setShowWz(false); setError(""); return; }
+      if (showPz) { setShowPz(false);  return; }
+      if (showWz) { setShowWz(false);  return; }
       if (showEtykiety) { setShowEtykiety(false); return; }
     };
     window.addEventListener('keydown', handler);
@@ -250,7 +247,7 @@ export default function Dokumenty() {
     setPzRows([]);
     setPzReferencja("");
     setNextPzNumber("");
-    setError("");
+    
     setShowPz(true);
     try {
       const res = await fetch("/api/next-doc-number/PZ");
@@ -312,10 +309,10 @@ export default function Dokumenty() {
 
   const handleCreatePz = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    if (pzRows.length === 0) { setError("Dodaj co najmniej jedną pozycję do dokumentu."); return; }
+    
+    if (pzRows.length === 0) { showToast("Dodaj co najmniej jedną pozycję do dokumentu.", "error"); return; }
     const missing = pzRows.find(r => !r.numer_partii.trim() || !r.ilosc);
-    if (missing) { setError(`Pozycja "${missing.nazwa}" wymaga numeru partii i ilości.`); return; }
+    if (missing) { showToast(`Pozycja "${missing.nazwa}" wymaga numeru partii i ilości.`, "error"); return; }
     try {
       const pozycje = pzRows.map(r => ({
         id_asortymentu: r.id_asortymentu,
@@ -332,10 +329,10 @@ export default function Dokumenty() {
       });
       if (!res.ok) throw new Error((await res.json()).error);
       setShowPz(false);
-      setSuccess("Dokument PZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.");
+      showToast("Dokument PZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
-      setTimeout(() => setSuccess(""), 6000);
-    } catch (err: any) { setError(err.message); }
+      
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   // ─── Otwieranie WZ ─────────────────────────────────────────────────────────
@@ -344,7 +341,7 @@ export default function Dokumenty() {
     setWzRows([]);
     setWzReferencja("");
     setWzKontrahentId("");
-    setError("");
+    
     setShowWz(true);
     try {
       const res = await fetch("/api/kontrahenci");
@@ -402,12 +399,16 @@ export default function Dokumenty() {
     setWzRows(prev => prev.map(r => r._key === key ? { ...r, [field]: value } : r));
   };
 
-  const updateWzSztuki = (key: string, idOp: string, szt: number, wagaKg: number, allOp: OpakowaniePozycja[]) => {
+  const updateWzSztuki = (key: string, opKey: string, szt: number, allOp: OpakowaniePozycja[]) => {
     setWzRows(prev => prev.map(r => {
       if (r._key !== key) return r;
-      const newSztuki = { ...r.sztuki, [idOp]: szt };
-      const unikalne = Object.values(allOp.reduce((acc: Record<string, OpakowaniePozycja>, op) => { if (!acc[op.id_asortymentu]) acc[op.id_asortymentu] = op; return acc; }, {}));
-      const totalKg = unikalne.reduce((sum, op) => sum + (newSztuki[op.id_asortymentu] || 0) * op.waga_kg, 0);
+      const newSztuki = { ...r.sztuki, [opKey]: szt };
+      const unikalne = Object.values(allOp.reduce((acc: Record<string, OpakowaniePozycja>, op) => { 
+        const k = `${op.id_asortymentu}_${op.waga_kg}`;
+        if (!acc[k]) acc[k] = op; 
+        return acc; 
+      }, {}));
+      const totalKg = unikalne.reduce((sum, op) => sum + (newSztuki[`${op.id_asortymentu}_${op.waga_kg}`] || 0) * op.waga_kg, 0);
       return { ...r, sztuki: newSztuki, ilosc: Math.round(totalKg * 1000) / 1000 + "" };
     }));
   };
@@ -418,20 +419,23 @@ export default function Dokumenty() {
 
   const handleCreateWz = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    if (wzRows.length === 0) { setError("Dodaj co najmniej jedną pozycję."); return; }
+    
+    if (wzRows.length === 0) { showToast("Dodaj co najmniej jedną pozycję.", "error"); return; }
     const missing = wzRows.find(r => !r.id_partii || !r.ilosc);
-    if (missing) { setError(`Pozycja "${missing.nazwa}" wymaga wybrania partii i podania ilości.`); return; }
-    if (!wzKontrahentId) { setError("Wybierz kontrahenta (odbiorcę)."); return; }
+    if (missing) { showToast(`Pozycja "${missing.nazwa}" wymaga wybrania partii i podania ilości.`, "error"); return; }
+    if (!wzKontrahentId) { showToast("Wybierz kontrahenta (odbiorcę).", "error"); return; }
     try {
       const items = wzRows.map(r => {
         const partia = r.dostepnePartie.find(p => p.id === r.id_partii);
         const typy: OpakowaniePozycja[] = partia?.opakowania
-          ? Object.values(partia.opakowania.reduce((acc: Record<string, OpakowaniePozycja>, op) => { if (!acc[op.id_asortymentu]) acc[op.id_asortymentu] = op; return acc; }, {}))
+          ? Object.values(partia.opakowania.reduce((acc: Record<string, OpakowaniePozycja>, op) => {
+              const k = `${op.id_asortymentu}_${op.waga_kg}`;
+              if (!acc[k]) acc[k] = op; return acc;
+            }, {}))
           : [];
         const sztukiLabels: Record<string, number> = {};
         typy.forEach(op => {
-          const szt = r.sztuki[op.id_asortymentu] || 0;
+          const szt = r.sztuki[`${op.id_asortymentu}_${op.waga_kg}`] || 0;
           if (szt > 0) sztukiLabels[`${op.nazwa} (${op.waga_kg} kg)`] = szt;
         });
         return { id_partii: r.id_partii, ilosc: parseFloat(r.ilosc), sztuki: sztukiLabels };
@@ -443,10 +447,10 @@ export default function Dokumenty() {
       });
       if (!res.ok) throw new Error((await res.json()).error);
       setShowWz(false);
-      setSuccess("Dokument WZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.");
+      showToast("Dokument WZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
-      setTimeout(() => setSuccess(""), 6000);
-    } catch (err: any) { setError(err.message); }
+      
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   // ─── Etykiety ──────────────────────────────────────────────────────────────
@@ -580,11 +584,6 @@ export default function Dokumenty() {
 
   return (
     <div className="h-full flex flex-col gap-3">
-      {success && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 p-3 rounded-xl text-sm font-semibold flex items-center gap-2">
-          <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />{success}
-        </div>
-      )}
 
       {/* Header */}
       <div className="flex items-center justify-between gap-3 shrink-0">
@@ -650,19 +649,13 @@ export default function Dokumenty() {
               <h3 className="text-lg font-bold text-emerald-400 flex items-center gap-2">
                 <PackageOpen className="w-5 h-5" /> Nowy dokument PZ — Przyjęcie zewnętrzne
               </h3>
-              <button onClick={() => { setShowPz(false); setError(""); }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]">
+              <button onClick={() => { setShowPz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleCreatePz} className="flex flex-col flex-1 overflow-hidden">
               <div className="overflow-y-auto flex-1 p-5 space-y-5">
-                {error && (
-                  <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-xl text-sm flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />{error}
-                  </div>
-                )}
-
                 {/* Referencja zewnętrzna */}
                 <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-2">Numer zewnętrzny (f-ra / WZ dostawcy) — opcjonalnie</label>
@@ -819,7 +812,7 @@ export default function Dokumenty() {
                   )}
                 </div>
                 <div className="flex gap-3">
-                  <button type="button" onClick={() => { setShowPz(false); setError(""); }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
+                  <button type="button" onClick={() => { setShowPz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
                     Anuluj
                   </button>
                   <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors min-h-[44px]">
@@ -843,19 +836,13 @@ export default function Dokumenty() {
               <h3 className="text-lg font-bold text-orange-400 flex items-center gap-2">
                 <ArrowRightCircle className="w-5 h-5" /> Nowy dokument WZ — Wydanie zewnętrzne
               </h3>
-              <button onClick={() => { setShowWz(false); setError(""); }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]">
+              <button onClick={() => { setShowWz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleCreateWz} className="flex flex-col flex-1 overflow-hidden">
               <div className="overflow-y-auto flex-1 p-5 space-y-5">
-                {error && (
-                  <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-xl text-sm flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />{error}
-                  </div>
-                )}
-
                 <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-slate-400 text-xs font-bold uppercase mb-2">
@@ -911,9 +898,13 @@ export default function Dokumenty() {
                     <div className="space-y-2">
                       {wzRows.map(row => {
                         const selectedPartia = row.dostepnePartie.find(p => p.id === row.id_partii);
-                        const typy_opakowan: OpakowaniePozycja[] = selectedPartia?.opakowania
-                          ? Object.values(selectedPartia.opakowania.reduce((acc: Record<string, OpakowaniePozycja>, op) => { if (!acc[op.id_asortymentu]) acc[op.id_asortymentu] = op; return acc; }, {}))
-                          : [];
+                        const groupedOpakowania = (selectedPartia?.opakowania || []).reduce((acc: any, op) => {
+                          const k = `${op.id_asortymentu}_${op.waga_kg}`;
+                          if (!acc[k]) acc[k] = { ...op, count: 0 };
+                          acc[k].count++;
+                          return acc;
+                        }, {});
+                        const typy_opakowan: any[] = Object.values(groupedOpakowania).sort((a: any, b: any) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg);
                         return (
                           <div key={row._key} className="bg-[#0f172a] border border-[#334155] rounded-xl p-4">
                             <div className="flex items-start gap-3">
@@ -959,7 +950,8 @@ export default function Dokumenty() {
                                         <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">Opakowania</label>
                                         <div className="space-y-1.5">
                                           {typy_opakowan.map((op, i) => {
-                                            const dostepneSzt = Math.floor(selectedPartia!.stan / op.waga_kg);
+                                            const dostepneSzt = op.count;
+                                            const opKey = `${op.id_asortymentu}_${op.waga_kg}`;
                                             return (
                                               <div key={i} className="flex items-center gap-3 bg-[#1e293b] rounded-lg px-3 py-1.5">
                                                 <div className="flex-1 min-w-0">
@@ -969,10 +961,10 @@ export default function Dokumenty() {
                                                 </div>
                                                 <input
                                                   type="number" min="0" max={dostepneSzt} step="1"
-                                                  value={row.sztuki[op.id_asortymentu] ?? ""}
+                                                  value={row.sztuki[opKey] ?? ""}
                                                   placeholder="0"
                                                   className="w-16 bg-[#0f172a] border border-[#475569] text-white rounded-lg px-2 py-1.5 font-mono font-bold text-sm outline-none focus:border-orange-500 text-right shrink-0"
-                                                  onChange={e => updateWzSztuki(row._key, op.id_asortymentu, parseFloat(e.target.value) || 0, op.waga_kg, selectedPartia!.opakowania!)}
+                                                  onChange={e => updateWzSztuki(row._key, opKey, parseFloat(e.target.value) || 0, selectedPartia!.opakowania!)}
                                                 />
                                                 <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>szt.</span>
                                               </div>
@@ -1007,7 +999,7 @@ export default function Dokumenty() {
               </div>
 
               <div className="flex justify-end gap-3 p-5 border-t border-[#334155] bg-[#0f172a]/50 shrink-0">
-                <button type="button" onClick={() => { setShowWz(false); setError(""); }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
+                <button type="button" onClick={() => { setShowWz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
                   Anuluj
                 </button>
                 <button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px]">
@@ -1109,32 +1101,23 @@ export default function Dokumenty() {
                 )}
               </div>
             )}
-            {/* Error w podglądzie */}
-            {error && previewDocRef && (
-              <div className="px-5 py-2 shrink-0 bg-red-500/10 border-b border-red-500/20 text-red-300 text-xs flex items-start gap-2">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                <span className="whitespace-pre-line">{error}</span>
-                <button onClick={() => setError("")} className="ml-auto"><X className="w-3 h-3" /></button>
-              </div>
-            )}
 
             {/* Treść */}
             <div className="overflow-y-auto flex-1">
               {previewDocLoading ? (
-                <div className="flex justify-center p-12">
-                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                </div>
+                <div className="flex justify-center p-12"><Spinner /></div>
               ) : !previewDocData ? (
                 <div className="text-center p-12 text-sm" style={{ color: 'var(--text-muted)' }}>Brak danych o dokumencie</div>
               ) : (
-                <table className="mes-table">
+                <div className="flex flex-col pb-4">
+                  <table className="mes-table">
                   <thead>
                     <tr>
                       <th className="text-center w-8">Lp.</th>
                       <th>Towar</th>
                       <th>Partia</th>
                       <th className="text-right">Ilość</th>
-                      <th className="text-right">Cena</th>
+                      <th className="text-right">Cena (1 kg)</th>
                       <th className="text-right">Wartość</th>
                     </tr>
                   </thead>
@@ -1170,6 +1153,47 @@ export default function Dokumenty() {
                     </tfoot>
                   )}
                 </table>
+                
+                {/* DODANE: Podsumowanie wagi dla PW i WZ */}
+                {previewDocData && (previewDocData.typ === "PW" || previewDocData.typ === "WZ") && (() => {
+                  const podsumowanie: Record<string, number> = {};
+                  let pokazPodsumowanie = false;
+                  (previewDocData.pozycje || []).forEach((p: any) => {
+                    const nazwa = p.wyrob || p.asortyment;
+                    const isSzt = p.jednostka === 'szt.';
+                    const waga = p.ilosc_kg != null ? parseFloat(p.ilosc_kg) : (isSzt ? 0 : parseFloat(p.ilosc));
+                    if (waga > 0) {
+                      podsumowanie[nazwa] = (podsumowanie[nazwa] || 0) + waga;
+                      pokazPodsumowanie = true;
+                    }
+                  });
+
+                  if (!pokazPodsumowanie) return null;
+                  const entries = Object.entries(podsumowanie).sort((a,b) => b[1] - a[1]);
+                  const sumaCalkowita = entries.reduce((acc, curr) => acc + curr[1], 0);
+
+                  return (
+                    <div className="mt-6 mx-4 mb-2 border rounded shadow-sm overflow-hidden shrink-0" style={{ borderColor: 'var(--border)', background: 'var(--bg-app)' }}>
+                      <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                        Podsumowanie wagi dokumentu
+                      </div>
+                      <div className="p-2 space-y-0.5">
+                        {entries.map(([nazwa, waga]) => (
+                          <div key={nazwa} className="flex justify-between items-center px-3 py-2 hover:bg-[#1e293b] rounded transition-colors">
+                            <span className="text-sm font-medium text-white">{nazwa}</span>
+                            <span className="text-sm font-mono font-bold" style={{ color: '#38bdf8' }}>{fmtL(waga, 3)} kg</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between items-center px-3 py-3 mt-2 border-t" style={{ borderColor: 'var(--border-dim)' }}>
+                          <span className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Masa całkowita dokumentu</span>
+                          <span className="text-base font-mono font-black" style={{ color: '#22c55e' }}>{fmtL(sumaCalkowita, 3)} kg</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                </div>
               )}
             </div>
           </div>
@@ -1222,9 +1246,9 @@ export default function Dokumenty() {
       {/* ═══ TABELA DOKUMENTÓW ══════════════════════════════════════════════════ */}
       <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
         {loading ? (
-          <div className="p-8 text-center"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
+          <Spinner.Page />
         ) : filteredDocs.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Brak dokumentów</div>
+          <EmptyState message="Brak dokumentów." />
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>

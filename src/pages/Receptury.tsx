@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Save, X, BookOpen, AlertCircle, Trash2, Edit2, Calculator, CheckCircle2 } from "lucide-react";
+import { Plus, Save, X, BookOpen, Trash2, Edit2, Calculator } from "lucide-react";
 import { fmtL } from "../utils/fmt";
+import { useToast } from "../components/Toast";
+import { Spinner } from "../components/Spinner";
+import { EmptyState } from "../components/EmptyState";
 
 type Asortyment = {
   id: string; kod_towaru: string; nazwa: string; jednostka_miary: string;
@@ -18,10 +21,9 @@ type Receptura = {
 type KartaMode = "view" | "edit" | "new";
 
 export default function Receptury() {
+  const { showToast } = useToast();
   const [receptury, setReceptury] = useState<Receptura[]>([]);
   const [asortyment, setAsortyment] = useState<Asortyment[]>([]);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   // Karta state
   const [kartaMode, setKartaMode] = useState<KartaMode | null>(null);
@@ -105,7 +107,6 @@ export default function Receptury() {
     setKartaReceptura(r);
     setKartaMode("view");
     setKartaTab("specyfikacja");
-    setError("");
     loadKalkulacja(r.id);
   };
 
@@ -123,7 +124,6 @@ export default function Receptury() {
       ilosc_wymagana: String(Number((s.ilosc_wymagana * wsad).toFixed(3))),
       czy_pomocnicza: s.czy_pomocnicza === true
     })));
-    setError("");
   };
 
   // Otwórz kartę w trybie nowy
@@ -135,13 +135,11 @@ export default function Receptury() {
     setDniTrwalosci("");
     setWielkoscProdukcji("1");
     setSkladniki([]);
-    setError("");
   };
 
   const closeKarta = () => {
     setKartaMode(null);
     setKartaReceptura(null);
-    setError("");
   };
 
   const openNewVersion = (r: Receptura) => {
@@ -161,7 +159,6 @@ export default function Receptury() {
       ilosc_wymagana: String(Number((s.ilosc_wymagana * wsad2).toFixed(3))),
       czy_pomocnicza: s.czy_pomocnicza === true
     })));
-    setError("");
   };
 
   const switchToEdit = () => {
@@ -174,8 +171,8 @@ export default function Receptury() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError("");
-    if (!docelowyId || skladniki.length === 0) { setError("Wybierz produkt i dodaj co najmniej jeden składnik."); return; }
+    e.preventDefault();
+    if (!docelowyId || skladniki.length === 0) { showToast("Wybierz produkt i dodaj co najmniej jeden składnik.", "error"); return; }
     const wsad = parseFloat(wielkoscProdukcji) || 1;
     const body = {
       id_asortymentu_docelowego: docelowyId,
@@ -190,11 +187,10 @@ export default function Receptury() {
       const res = await fetch(url, { method: isEdit ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
       const saved: Receptura = await res.json();
-      setSuccess("Receptura zapisana!");
-      setTimeout(() => setSuccess(""), 2000);
+      showToast("Receptura zapisana!", "ok");
       await fetchAll();
       openView(saved);
-    } catch (err: any) { setError(err.message); }
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   const handleToggleAktywne = async (id: string, current: boolean) => {
@@ -218,8 +214,6 @@ export default function Receptury() {
 
   return (
     <div className="h-full flex flex-col gap-3 animate-view">
-      {success && <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 p-3 rounded-xl text-sm font-semibold flex items-center gap-2 shrink-0"><CheckCircle2 className="w-4 h-4 shrink-0" /> {success}</div>}
-
       <div className="flex items-center justify-between shrink-0">
         <div>
           <h2 className="text-lg font-bold text-white tracking-wide">Receptury</h2>
@@ -340,13 +334,7 @@ export default function Receptury() {
 
             {/* CIAŁO KARTY */}
             <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
-              <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-                {error && (
-                  <div className="mx-4 mt-3 bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-2.5 rounded text-xs font-bold flex items-center gap-2 shrink-0">
-                    <AlertCircle className="w-4 h-4 shrink-0" /> {error}
-                  </div>
-                )}
-
+              <form id="receptura-form" onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
                 {/* SEKCJA: Specyfikacja + BOM */}
                 {(isEditMode || kartaTab === "specyfikacja") && (
                   <div className="flex flex-col flex-1 min-h-0 p-4 gap-3">
@@ -619,7 +607,7 @@ export default function Receptury() {
                         )}
                       </div>
                     )}
-                    {kalcLoading && <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}
+                    {kalcLoading && <Spinner.Page />}
                   </div>
                 )}
               </form>
@@ -632,8 +620,8 @@ export default function Receptury() {
                   Anuluj
                 </button>
                 <button
+                  form="receptura-form"
                   type="submit"
-                  onClick={handleSubmit}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px] transition-colors btn-hover-effect"
                 >
                   <Save className="w-5 h-5" /> Zatwierdź i zapisz
@@ -647,9 +635,7 @@ export default function Receptury() {
       {/* LISTA RECEPTUR */}
       <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
         {receptury.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-            Baza receptur jest pusta. Zacznij od zdefiniowania technologii produkcji.
-          </div>
+          <EmptyState message="Baza receptur jest pusta. Zacznij od zdefiniowania technologii produkcji." />
         ) : (
           <table className="mes-table">
             <thead>

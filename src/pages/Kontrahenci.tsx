@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Users, Plus, Pencil, Trash2, X, Save, AlertCircle, Search } from "lucide-react";
+import { Spinner } from "../components/Spinner";
+import { EmptyState } from "../components/EmptyState";
+import { useToast } from "../components/Toast";
 
 type Kontrahent = {
   id: string;
@@ -16,8 +19,7 @@ export default function Kontrahenci() {
   const [kontrahenci, setKontrahenci] = useState<Kontrahent[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const { showToast } = useToast();
 
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -43,20 +45,17 @@ export default function Kontrahenci() {
   const openAdd = () => {
     setEditId(null);
     setForm(emptyForm());
-    setError("");
     setShowForm(true);
   };
 
   const openEdit = (k: Kontrahent) => {
     setEditId(k.id);
     setForm({ kod: k.kod, nazwa: k.nazwa, adres: k.adres || "" });
-    setError("");
     setShowForm(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
     setSaving(true);
     try {
       const url = editId ? `/api/kontrahenci/${editId}` : "/api/kontrahenci";
@@ -68,11 +67,10 @@ export default function Kontrahenci() {
       });
       if (!res.ok) throw new Error((await res.json()).error);
       setShowForm(false);
-      setSuccess(editId ? "Kontrahent zaktualizowany." : "Kontrahent dodany.");
-      setTimeout(() => setSuccess(""), 3000);
+      showToast(editId ? "Kontrahent zaktualizowany." : "Kontrahent dodany.", "ok");
       fetchKontrahenci();
     } catch (err: any) {
-      setError(err.message);
+      showToast(err.message, "error");
     } finally {
       setSaving(false);
     }
@@ -83,11 +81,10 @@ export default function Kontrahenci() {
     try {
       const res = await fetch(`/api/kontrahenci/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error);
-      setSuccess("Kontrahent usunięty.");
-      setTimeout(() => setSuccess(""), 3000);
+      showToast("Kontrahent usunięty.", "ok");
       fetchKontrahenci();
     } catch (err: any) {
-      setError(err.message);
+      showToast(err.message, "error");
     }
   };
 
@@ -115,19 +112,6 @@ export default function Kontrahenci() {
         </button>
       </div>
 
-      {/* Alerty */}
-      {error && (
-        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm shrink-0" style={{ background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", color: "#f87171" }}>
-          <AlertCircle className="w-4 h-4 shrink-0" />{error}
-          <button onClick={() => setError("")} className="ml-auto"><X className="w-4 h-4" /></button>
-        </div>
-      )}
-      {success && (
-        <div className="px-4 py-2.5 rounded-xl text-sm shrink-0" style={{ background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.3)", color: "#4ade80" }}>
-          {success}
-        </div>
-      )}
-
       {/* Pasek wyszukiwania */}
       <div className="flex items-center gap-2 px-3 py-2 rounded-xl shrink-0" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
         <Search className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
@@ -145,7 +129,7 @@ export default function Kontrahenci() {
       {/* Tabela */}
       <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
         {loading ? (
-          <div className="p-8 text-center"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
+          <Spinner.Page />
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center" style={{ color: "var(--text-muted)" }}>
             {search ? "Brak wyników wyszukiwania" : "Brak kontrahentów. Dodaj pierwszego."}
@@ -204,11 +188,6 @@ export default function Kontrahenci() {
               </button>
             </div>
             <form onSubmit={handleSave} className="p-5 space-y-4">
-              {error && (
-                <div className="flex items-center gap-2 p-3 rounded-xl text-sm" style={{ background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", color: "#f87171" }}>
-                  <AlertCircle className="w-4 h-4 shrink-0" />{error}
-                </div>
-              )}
               <div>
                 <label className="block text-xs font-bold uppercase mb-1.5" style={{ color: "var(--text-muted)" }}>
                   Kod <span className="text-red-400">*</span>

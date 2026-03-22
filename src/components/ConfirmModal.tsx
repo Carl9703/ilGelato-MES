@@ -33,8 +33,8 @@ export default function ConfirmModal({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-md border border-[#334155] overflow-hidden">
-        <div className="flex justify-between items-center p-5 border-b border-[#334155]">
+      <div className="rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+        <div className="flex justify-between items-center p-5" style={{ borderBottom: '1px solid var(--border)' }}>
           <div className="flex items-center gap-3">
             {isDestructive && (
               <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center border border-red-500/20">
@@ -52,21 +52,11 @@ export default function ConfirmModal({
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{message}</p>
         </div>
 
-        <div className="p-4 border-t border-[#334155] bg-[#0f172a]/50 flex justify-end gap-3">
-          <button
-            onClick={onCancel}
-            className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors"
-          >
+        <div className="p-4 flex justify-end gap-3" style={{ borderTop: '1px solid var(--border)', background: 'var(--bg-app)' }}>
+          <button onClick={onCancel} className="btn btn-ghost">
             {cancelText}
           </button>
-          <button
-            onClick={onConfirm}
-            className={`px-5 py-2.5 rounded-xl font-bold text-white transition-colors min-h-[44px] ${
-              isDestructive
-                ? 'bg-red-600 hover:bg-red-700'
-                : 'bg-blue-600 hover:bg-blue-700'
-            }`}
-          >
+          <button onClick={onConfirm} className={isDestructive ? 'btn btn-danger' : 'btn btn-primary'}>
             {confirmText}
           </button>
         </div>

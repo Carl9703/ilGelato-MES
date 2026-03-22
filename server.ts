@@ -160,18 +160,34 @@ async function startServer() {
     if (confirm !== "RESET_CONFIRMED") {
       return res.status(400).json({ error: "Wymagane potwierdzenie: { confirm: 'RESET_CONFIRMED' }" });
     }
+    // Prosta ochrona: wymagany nagłówek z tokenem środowiskowym lub hardcoded dla dev
+    const resetToken = process.env.RESET_SECRET || "dev-only-reset-token";
+    const authHeader = req.headers["x-reset-token"];
+    if (authHeader !== resetToken) {
+      return res.status(403).json({ error: "Brak autoryzacji. Wymagany nagłówek X-Reset-Token." });
+    }
     try {
-      await prisma.$transaction([
-        prisma.rezerwacje_Magazynowe.deleteMany(),
-        prisma.ruchy_Magazynowe.deleteMany(),
-        prisma.skladniki_Receptury.deleteMany(),
-        prisma.zlecenia_Produkcyjne.deleteMany(),
-        prisma.receptury.deleteMany(),
-        prisma.partie_Magazynowe.deleteMany(),
-
-        prisma.asortyment.deleteMany(),
-        prisma.uzytkownicy.deleteMany(),
-      ]);
+      await prisma.$transaction(async (tx) => {
+        // Najpierw tabele zależne (FK), potem bazowe
+        await (tx as any).sesja_Robocza_Log?.deleteMany();
+        await (tx as any).sesja_Robocza?.deleteMany();
+        await (tx as any).pozycje_Sesji_Gelato?.deleteMany();
+        await (tx as any).sesje_Produkcji_Gelato?.deleteMany();
+        await (tx as any).sesje_Produkcji?.deleteMany();
+        await (tx as any).opakowania_Wyrobowe?.deleteMany();
+        await (tx as any).wartosci_Odzywcze?.deleteMany();
+        await (tx as any).alergeny_Asortymentu?.deleteMany();
+        await tx.rezerwacje_Magazynowe.deleteMany();
+        await tx.ruchy_Magazynowe.deleteMany();
+        await tx.skladniki_Receptury.deleteMany();
+        await tx.zlecenia_Produkcyjne.deleteMany();
+        await tx.receptury.deleteMany();
+        await tx.partie_Magazynowe.deleteMany();
+        await (tx as any).dokumenty_Magazynowe?.deleteMany();
+        await (tx as any).kontrahenci?.deleteMany();
+        await tx.asortyment.deleteMany();
+        await tx.uzytkownicy.deleteMany();
+      });
       res.json({ success: true, message: "Baza wyczyszczona. Odśwież stronę." });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -834,6 +850,30 @@ async function startServer() {
         orderBy: [{ id_asortymentu: "asc" }, { data_produkcji: "asc" }],
       });
 
+      // Pobierz wszystkie zatwierdzone WZ z informacją o opakowaniach
+      const docsWZ = await prisma.dokumenty_Magazynowe.findMany({
+        where: { typ: "WZ", status: "Zatwierdzony", pozycje_json: { not: null } }
+      });
+
+      // Mapa batchId -> List of { name, weight, count } issued
+      const issuedByBatch = new Map<string, any[]>();
+      for (const d of docsWZ) {
+        try {
+          const pozycje = JSON.parse(d.pozycje_json!) as any[];
+          for (const poz of pozycje) {
+            if (!issuedByBatch.has(poz.id_partii)) issuedByBatch.set(poz.id_partii, []);
+            if (poz.sztuki) {
+              for (const [label, count] of Object.entries(poz.sztuki) as [string, number][]) {
+                const match = label.match(/^(.*)\s+\((\d+(?:\.\d+)?)\s*kg\)$/);
+                if (match) {
+                  issuedByBatch.get(poz.id_partii)!.push({ nazwa: match[1], waga_kg: parseFloat(match[2]), count });
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+
       // Zbierz wszystkie id_asortymentu z opakowania_json i pobierz nazwy z kartoteki
       const allOpIds = new Set<string>();
       for (const p of partie) {
@@ -870,29 +910,50 @@ async function startServer() {
 
         if (p.opakowania_json) {
           try {
-            const ops = JSON.parse(p.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
-            // Grupuj po id_asortymentu — nazwa zawsze z kartoteki
-            const grupy: Record<string, { nazwa: string; ilosc_szt: number; waga_orig: number }> = {};
-            let waga_orig_total = 0;
-            for (const o of ops) {
-              const nazwaOp = opNazwyMap[o.id_asortymentu] ?? o.id_asortymentu;
-              if (!grupy[o.id_asortymentu]) grupy[o.id_asortymentu] = { nazwa: nazwaOp, ilosc_szt: 0, waga_orig: 0 };
-              grupy[o.id_asortymentu].ilosc_szt++;
-              grupy[o.id_asortymentu].waga_orig += o.waga_kg;
-              waga_orig_total += o.waga_kg;
+            let currentOps = JSON.parse(p.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
+            const issuedList = issuedByBatch.get(p.id) || [];
+            
+            // Odejmujemy wydane opakowania
+            for (const issued of issuedList) {
+              let toRemove = issued.count;
+              for (let i = 0; i < currentOps.length && toRemove > 0; i++) {
+                const op = currentOps[i];
+                const opNazwa = opNazwyMap[op.id_asortymentu] ?? op.id_asortymentu;
+                if (Math.abs(op.waga_kg - issued.waga_kg) < 0.01 && (opNazwa === issued.nazwa || !issued.nazwa)) {
+                  currentOps.splice(i, 1);
+                  i--;
+                  toRemove--;
+                }
+              }
             }
-            // ilosc_kg per typ = proporcja z aktualnego stanu partii (Ruchy_Magazynowe)
-            for (const g of Object.values(grupy)) {
-              const udzial = waga_orig_total > 0 ? g.waga_orig / waga_orig_total : 1 / Object.keys(grupy).length;
-              const ilosc_kg = Math.round(stan * udzial * 1000) / 1000;
-              rows.push({ ...base, opakowanie: g.nazwa, ilosc_szt: g.ilosc_szt, ilosc_kg });
+
+            if (currentOps.length > 0) {
+              // Grupujemy pozostałe
+              const grupy: Record<string, { nazwa: string; ilosc_szt: number; waga_orig: number; waga_jednostkowa: number }> = {};
+              let waga_orig_total = 0;
+              for (const o of currentOps) {
+                const nazwaOp = opNazwyMap[o.id_asortymentu] ?? o.id_asortymentu;
+                const k = `${o.id_asortymentu}_${o.waga_kg}`;
+                if (!grupy[k]) grupy[k] = { nazwa: nazwaOp, ilosc_szt: 0, waga_orig: 0, waga_jednostkowa: o.waga_kg };
+                grupy[k].ilosc_szt++;
+                grupy[k].waga_orig += o.waga_kg;
+                waga_orig_total += o.waga_kg;
+              }
+
+              // ilosc_kg per typ = proporcja z aktualnego stanu partii
+              // Jeśli stan == waga_orig_total (norma), to wagi będą 1:1 nominalne
+              for (const g of Object.values(grupy)) {
+                const udzial = waga_orig_total > 0 ? g.waga_orig / waga_orig_total : 1 / Object.keys(grupy).length;
+                const ilosc_kg = Math.round(stan * udzial * 1000) / 1000;
+                rows.push({ ...base, opakowanie: g.nazwa, waga_jednostkowa: g.waga_jednostkowa, ilosc_szt: g.ilosc_szt, ilosc_kg });
+              }
+              continue;
             }
-            continue;
           } catch {}
         }
 
-        // Brak danych o opakowaniach — jeden wiersz z łącznym kg
-        rows.push({ ...base, opakowanie: null, ilosc_szt: null, ilosc_kg: Math.round(stan * 1000) / 1000 });
+        // Brak danych o opakowaniach lub pusta lista po odjęciu — jeden wiersz z łącznym kg
+        rows.push({ ...base, opakowanie: null, waga_jednostkowa: null, ilosc_szt: null, ilosc_kg: Math.round(stan * 1000) / 1000 });
       }
 
       res.json(rows);
@@ -956,12 +1017,17 @@ async function startServer() {
             }
           }
 
+          const iloscNum = parseFloat(ilosc);
+          if (!isFinite(iloscNum) || iloscNum <= 0) {
+            throw new Error(`Nieprawidłowa ilość dla partii ${numer_partii}: ilość musi być większa od zera`);
+          }
+
           // Ruch nieaktywny — nie wpływa na stan do czasu zatwierdzenia
           const ruch = await tx.ruchy_Magazynowe.create({
             data: {
               id_partii: partia.id,
               typ_ruchu: "PZ",
-              ilosc: parseFloat(ilosc),
+              ilosc: iloscNum,
               cena_jednostkowa: cena_jednostkowa ? parseFloat(cena_jednostkowa) : null,
               referencja_dokumentu: finalReferencja,
               id_uzytkownika: user.id,
@@ -1092,12 +1158,38 @@ async function startServer() {
         } catch {}
       }
 
+      const allOpIds = new Set<string>();
+      for (const r of ruchy) {
+        if (r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.partia.opakowania_json) {
+          try {
+            const ops = JSON.parse(r.partia.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
+            ops.forEach(o => { if (o.id_asortymentu) allOpIds.add(o.id_asortymentu); });
+          } catch {}
+        }
+      }
+      const opNazwy = await prisma.asortyment.findMany({ where: { id: { in: [...allOpIds] } }, select: { id: true, nazwa: true } });
+      const opNazwyMap: Record<string, string> = {};
+      opNazwy.forEach(a => opNazwyMap[a.id] = a.nazwa);
+
       let wartosc_calkowita = 0;
       const pozycje: any[] = [];
       for (const r of ruchy) {
         const ilosc = Math.abs(r.ilosc);
         const cena = r.cena_jednostkowa || 0;
-        const sztuki = sztukiByPartia[r.id_partii] || {};
+        let sztuki = sztukiByPartia[r.id_partii] || {};
+
+        if (r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.partia.opakowania_json) {
+          try {
+            const parsedOp = JSON.parse(r.partia.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
+            sztuki = {};
+            parsedOp.forEach(op => {
+               const nazwa = opNazwyMap[op.id_asortymentu] || "Opakowanie";
+               const k = `${nazwa} (${op.waga_kg} kg)`;
+               sztuki[k] = (sztuki[k] || 0) + 1;
+            });
+          } catch {}
+        }
+
         const hasOp = Object.keys(sztuki).length > 0;
 
         if (hasOp) {
@@ -1119,7 +1211,7 @@ async function startServer() {
               ilosc: szt,
               jednostka: "szt.",
               ilosc_kg: iloscKg,
-              cena_jednostkowa: wagaKg > 0 ? cena * wagaKg : null,
+              cena_jednostkowa: cena > 0 ? cena : null,
               wartosc,
             });
           }
@@ -1494,7 +1586,9 @@ async function startServer() {
           const przelicznik = s.czy_pomocnicza && s.asortyment_skladnika.przelicznik_jednostki
             ? s.asortyment_skladnika.przelicznik_jednostki
             : 1;
-          const ilosc_na_jm = s.ilosc_wymagana * przelicznik; // w JM bazowej
+          const ilosc_na_jm = s.czy_pomocnicza && s.asortyment_skladnika.przelicznik_jednostki
+            ? s.ilosc_wymagana / przelicznik  // JM_pomocnicza → JM bazowa: dzielimy (1 JM = X JM_pomocnicza)
+            : s.ilosc_wymagana; // już w JM bazowej
           const ilosc_na_batch = ilosc_na_jm * receptura.wielkosc_produkcji;
           const wartosc = ilosc_na_batch * cena_srednia;
 
@@ -1823,6 +1917,9 @@ async function startServer() {
         const pwBazyNr = await generateDocNumber(tx, "PW");
         let kosztBazy = 0;
 
+        // Śledź łączne zużycie per partia w tej sesji (ochrona przed overdraftem przy duplikatach)
+        const zuzyteWTransakcji: Record<string, number> = {};
+
         for (const s of surowce_bazy || []) {
           if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
           const ilosc = parseFloat(s.ilosc);
@@ -1832,7 +1929,9 @@ async function startServer() {
           });
           if (!partia) throw new Error(`Partia ${s.id_partii} nie istnieje`);
           const stanPartii = partia.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
-          if (stanPartii < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
+          const juzZuzyte = zuzyteWTransakcji[s.id_partii] || 0;
+          if (stanPartii - juzZuzyte < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
+          zuzyteWTransakcji[s.id_partii] = juzZuzyte + ilosc;
           const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
             where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
             orderBy: { utworzono_dnia: "asc" },
@@ -1982,6 +2081,8 @@ async function startServer() {
         // 1. Zużycie składników
         if (zuzyte_partie && Array.isArray(zuzyte_partie) && zuzyte_partie.length > 0) {
           // OPCJA A: Użycie konkretnych partii wskazanych przez użytkownika (Proaktywne)
+          // Śledź łączne zużycie per partia (ochrona przed overdraftem przy duplikatach)
+          const zuzyteWTransakcji: Record<string, number> = {};
           for (const p of zuzyte_partie) {
             // Walidacja partii: status i dostępny stan
             const partia = await tx.partie_Magazynowe.findUnique({
@@ -1992,7 +2093,9 @@ async function startServer() {
             if (partia.status_partii !== "Dostepna") throw new Error(`Partia ${partia.numer_partii} nie jest dostępna (status: ${partia.status_partii})`);
             const stanPartii = partia.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0);
             const pobieranaIlosc = Math.abs(p.ilosc);
-            if (stanPartii < pobieranaIlosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}: dostępne ${stanPartii.toFixed(3).replace('.', ',')}, żądane ${pobieranaIlosc.toFixed(3).replace('.', ',')}`);
+            const juzZuzyte = zuzyteWTransakcji[p.id_partii] || 0;
+            if (stanPartii - juzZuzyte < pobieranaIlosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}: dostępne ${(stanPartii - juzZuzyte).toFixed(3).replace('.', ',')}, żądane ${pobieranaIlosc.toFixed(3).replace('.', ',')}`)
+            zuzyteWTransakcji[p.id_partii] = juzZuzyte + pobieranaIlosc;
 
             // Pobranie ceny jednostkowej zarejestrowanej partii (z momentu przyjęcia - PZ lub PW)
             const docWejscia = await tx.ruchy_Magazynowe.findFirst({
@@ -2035,7 +2138,7 @@ async function startServer() {
                 status_partii: "Dostepna",
                 czy_aktywne: true,
               },
-              include: { ruchy_magazynowe: true },
+              include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
               orderBy: { termin_waznosci: "asc" },
             });
 
@@ -2963,6 +3066,13 @@ async function startServer() {
             try { surowce = JSON.parse(poz.surowce_json); } catch { /* ignore */ }
             for (const s of surowce) {
               if (!s.id_partii || !(s.ilosc > 0)) continue;
+              const partiaS = await tx.partie_Magazynowe.findUnique({
+                where: { id: s.id_partii },
+                include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
+              });
+              if (!partiaS) throw new Error(`Partia ${s.id_partii} nie istnieje`);
+              const stanS = partiaS.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
+              if (stanS < s.ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partiaS.numer_partii}: dostępne ${stanS.toFixed(3).replace('.', ',')}, żądane ${s.ilosc.toFixed(3).replace('.', ',')}`);
               const docS = await tx.ruchy_Magazynowe.findFirst({
                 where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
                 orderBy: { utworzono_dnia: "asc" },

@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Save, X, AlertCircle, Package, ArrowLeft, History, FileText, Search } from "lucide-react";
+import { Plus, Save, X, Package, ArrowLeft, History, FileText, Search } from "lucide-react";
 import { fmtL } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
+import { useToast } from "../components/Toast";
+import { Spinner } from "../components/Spinner";
+import { EmptyState } from "../components/EmptyState";
 
 
 
@@ -28,8 +31,7 @@ export default function Asortyment() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const { showToast } = useToast();
   
   // Modal state
   const [showModal, setShowModal] = useState(false);
@@ -79,7 +81,7 @@ export default function Asortyment() {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (previewDocRef) { setPreviewDocRef(null); return; }
-      if (showModal) { setShowModal(false); setError(""); return; }
+      if (showModal) { setShowModal(false); return; }
       if (selectedItem) { setSelectedItem(null); return; }
     };
     window.addEventListener('keydown', handler);
@@ -135,19 +137,22 @@ export default function Asortyment() {
     if (!selectedItem) return;
     setOdzywczeSaving(true);
     try {
-      await fetch(`/api/asortyment/${selectedItem.id}/odzywcze`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(odzywczeForm) });
-      setSuccess("Wartości odżywcze zapisane!"); setTimeout(() => setSuccess(""), 2000);
-    } catch { setError("Błąd zapisu"); } finally { setOdzywczeSaving(false); }
+      const r = await fetch(`/api/asortyment/${selectedItem.id}/odzywcze`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(odzywczeForm) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Błąd zapisu wartości odżywczych");
+      showToast("Wartości odżywcze zapisane!", "ok");
+    } catch (e: any) { showToast(e.message || "Błąd zapisu", "error"); } finally { setOdzywczeSaving(false); }
   };
 
   const saveAlergeny = async () => {
     if (!selectedItem) return;
     setAlergenySaving(true);
     try {
-      await fetch(`/api/asortyment/${selectedItem.id}/alergeny`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(alergenyStan) });
-      await fetch(`/api/asortyment/${selectedItem.id}/kartoteka`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(skladnikiOpisForm) });
-      setSuccess("Alergeny zapisane!"); setTimeout(() => setSuccess(""), 2000);
-    } catch { setError("Błąd zapisu"); } finally { setAlergenySaving(false); }
+      const r1 = await fetch(`/api/asortyment/${selectedItem.id}/alergeny`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(alergenyStan) });
+      if (!r1.ok) throw new Error((await r1.json().catch(() => ({}))).error || "Błąd zapisu alergenów");
+      const r2 = await fetch(`/api/asortyment/${selectedItem.id}/kartoteka`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(skladnikiOpisForm) });
+      if (!r2.ok) throw new Error((await r2.json().catch(() => ({}))).error || "Błąd zapisu kartoteki");
+      showToast("Alergeny zapisane!", "ok");
+    } catch (e: any) { showToast(e.message || "Błąd zapisu", "error"); } finally { setAlergenySaving(false); }
   };
 
   useEffect(() => {
@@ -173,10 +178,9 @@ export default function Asortyment() {
       const res = await fetch(`/api/asortyment/${selectedItem.id}/restore`, { method: "PUT" });
       if (!res.ok) throw new Error((await res.json()).error);
       setSelectedItem({ ...selectedItem, czy_aktywne: true });
-      setSuccess("Przywrócono z archiwum");
-      setTimeout(() => setSuccess(""), 2500);
+      showToast("Przywrócono z archiwum", "ok");
       fetchAll();
-    } catch (err: any) { setError(err.message); }
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   const doArchive = async () => {
@@ -186,14 +190,12 @@ export default function Asortyment() {
       const res = await fetch(`/api/asortyment/${selectedItem.id}?archive=true`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error);
       setSelectedItem({ ...selectedItem, czy_aktywne: false });
-      setSuccess("Przeniesiono do archiwum");
-      setTimeout(() => setSuccess(""), 2500);
+      showToast("Przeniesiono do archiwum", "ok");
       fetchAll();
-    } catch (err: any) { setError(err.message); }
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   const handleDetailSubmit = async () => {
-    setError("");
     const pStr = formData.przelicznik_jednostki?.toString().replace(",", ".");
     const pNum = (pStr && pStr !== "") ? parseFloat(pStr) : null;
     
@@ -224,47 +226,44 @@ export default function Asortyment() {
         setDetailData((prev) => prev ? { ...prev, ogolne: updatedItem } : null);
       }
       
-      setSuccess("Zapisano zmiany!");
+      showToast("Zapisano zmiany!", "ok");
       fetchAll();
-      setTimeout(() => setSuccess(""), 2000);
-    } catch (err: any) { setError(err.message); }
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   const loadDetail = async (id: string) => {
     setDetailLoading(true);
-    setError("");
     try {
       const res = await fetch(`/api/asortyment/${id}`);
       const data = await res.json();
       if (res.ok) {
         setDetailData(data);
       } else {
-        setError(data.error || "Błąd pobierania danych");
+        showToast(data.error || "Błąd pobierania danych", "error");
       }
     } catch (err: any) {
-      setError("Błąd połączenia z serwerem");
+      showToast("Błąd połączenia z serwerem", "error");
     } finally {
       setDetailLoading(false);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError("");
+    e.preventDefault();
     const pStr = formData.przelicznik_jednostki?.toString().replace(",", ".");
     const pNum = (pStr && pStr !== "") ? parseFloat(pStr) : null;
-    
-    const body = { 
-      ...formData, 
+
+    const body = {
+      ...formData,
       przelicznik_jednostki: pNum
     };
     try {
       const url = editingItem ? `/api/asortyment/${editingItem.id}` : "/api/asortyment";
       const res = await fetch(url, { method: editingItem ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error((await res.json()).error);
-      setShowModal(false); setSuccess("Zapisano!"); fetchAll(); 
+      setShowModal(false); showToast("Zapisano!", "ok"); fetchAll();
       if (selectedItem && editingItem?.id === selectedItem.id) loadDetail(selectedItem.id);
-      setTimeout(() => setSuccess(""), 2000);
-    } catch (err: any) { setError(err.message); }
+    } catch (err: any) { showToast(err.message, "error"); }
   };
 
   const fillZero = (n: number) => fmtL(n, 2);
@@ -283,7 +282,6 @@ export default function Asortyment() {
   if (selectedItem) {
     return (
       <div className="h-full flex flex-col gap-3 animate-view">
-        {success && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-2xl animate-view">✓ {success}</div>}
         {/* Header */}
         <div className="flex items-center gap-6 shrink-0">
           <button
@@ -315,16 +313,9 @@ export default function Asortyment() {
           </button>
         </div>
 
-        {/* Error Display */}
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-xl text-sm flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />{error}
-          </div>
-        )}
-
         {/* Loading State */}
         {detailLoading && !detailData ? (
-          <div className="p-12 text-center"><div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
+          <Spinner.Page />
         ) : detailData && (
           <>
             {/* Wskaźniki ERP — pasek statusu */}
@@ -375,7 +366,7 @@ export default function Asortyment() {
             {detailTab === "zasoby" && (
               <div className="mes-panel rounded overflow-hidden">
                 {detailData.zasoby.length === 0 ? (
-                  <div className="p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Brak zasobów na stanie. Dodaj PZ w module Dokumenty.</div>
+                  <EmptyState message="Brak zasobów na stanie." hint="Dodaj PZ w module Dokumenty." />
                 ) : (
                   <table className="mes-table">
                     <thead>
@@ -423,7 +414,7 @@ export default function Asortyment() {
             {detailTab === "historia" && (
               <div className="mes-panel rounded overflow-hidden">
                 {detailData.historia.length === 0 ? (
-                  <div className="p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Brak historii operacji.</div>
+                  <EmptyState message="Brak historii operacji." />
                 ) : (
                   <table className="mes-table">
                     <thead>
@@ -708,9 +699,9 @@ export default function Asortyment() {
               )}
               <div className="overflow-y-auto flex-1">
                 {previewDocLoading ? (
-                  <div className="flex justify-center p-12"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+                  <Spinner.Page />
                 ) : !previewDocData ? (
-                  <div className="text-center p-12 text-sm" style={{ color: 'var(--text-muted)' }}>Brak danych o dokumencie</div>
+                  <EmptyState message="Brak danych o dokumencie." />
                 ) : (
                   <table className="mes-table">
                     <thead>
@@ -771,10 +762,9 @@ export default function Asortyment() {
           <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-lg border border-[#334155] overflow-hidden">
             <div className="flex justify-between items-center p-5 border-b border-[#334155]">
               <h3 className="text-lg font-bold text-white">{editingItem ? "Edycja kartoteki" : "Nowy asortyment"}</h3>
-              <button onClick={() => { setShowModal(false); setError(""); }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]"><X className="w-5 h-5" /></button>
+              <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={handleSubmit} className="p-5 space-y-4">
-              {error && <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-xl text-sm flex items-center gap-2"><AlertCircle className="w-4 h-4" />{error}</div>}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Kod towaru <span className="text-red-400">*</span></label>
@@ -813,7 +803,7 @@ export default function Asortyment() {
                 </div>
               )}
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => { setShowModal(false); setError(""); }} className="px-5 py-2.5 text-slate-400 font-semibold hover:bg-[#334155] rounded-xl transition-colors">Anuluj</button>
+                <button type="button" onClick={() => setShowModal(false)} className="px-5 py-2.5 text-slate-400 font-semibold hover:bg-[#334155] rounded-xl transition-colors">Anuluj</button>
                 <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2"><Save className="w-5 h-5" />Zapisz</button>
               </div>
             </form>
@@ -822,8 +812,6 @@ export default function Asortyment() {
       )}
 
       <div className="h-full flex flex-col gap-3 animate-view">
-        {success && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-2xl animate-view">✓ {success}</div>}
-        
         <div className="flex items-center justify-between shrink-0">
           <div>
             <h2 className="text-lg font-bold text-white tracking-wide">Asortyment</h2>
@@ -878,7 +866,7 @@ export default function Asortyment() {
 
         <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
           {filtered.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Brak pozycji spełniających kryteria.</div>
+            <EmptyState message="Brak pozycji spełniających kryteria." hint="Zmień filtr lub wyszukiwane hasło." />
           ) : (
             <table className="mes-table">
               <thead>
