@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router";
-import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package } from "lucide-react";
+import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package, Sun, Moon } from "lucide-react";
 import logoImg from "./assets/logo.png";
 import Dashboard from "./pages/Dashboard";
 import Asortyment from "./pages/Asortyment";
@@ -11,6 +11,19 @@ import Traceability from "./pages/Traceability";
 import Kontrahenci from "./pages/Kontrahenci";
 import Raporty from "./pages/Raporty";
 import WyrobyGotowe from "./pages/WyrobyGotowe";
+
+function useTheme() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('mes-theme') as 'dark' | 'light') || 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('mes-theme', theme);
+  }, [theme]);
+
+  return { theme, toggle: () => setTheme(t => t === 'dark' ? 'light' : 'dark') };
+}
 
 const navItems = [
   { to: "/dashboard",  icon: LayoutDashboard, label: "Pulpit",      testId: "nav-dashboard"  },
@@ -26,13 +39,14 @@ const navItems = [
 
 function MainLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const { theme, toggle } = useTheme();
   return (
     <div className="h-full flex overflow-hidden" style={{ background: 'var(--bg-app)', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", color: 'var(--text-primary)' }}>
       {/* Sidebar */}
       <aside
         className="w-16 lg:w-60 flex flex-col shrink-0 print-hidden"
         style={{
-          background: 'linear-gradient(180deg, #0d1825 0%, #080c14 100%)',
+          background: 'linear-gradient(180deg, var(--sidebar-start) 0%, var(--sidebar-end) 100%)',
           borderRight: '1px solid var(--border)',
           boxShadow: '4px 0 24px rgba(0,0,0,0.4)',
         }}
@@ -75,9 +89,28 @@ function MainLayout({ children }: { children: React.ReactNode }) {
 
         {/* Status systemu */}
         <div className="hidden lg:block px-4 py-3 text-xs" style={{ borderTop: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: 'var(--ok)', boxShadow: '0 0 6px var(--ok)' }} />
-            <span className="font-semibold" style={{ color: 'var(--ok)' }}>Operacyjny</span>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: 'var(--ok)', boxShadow: '0 0 6px var(--ok)' }} />
+              <span className="font-semibold" style={{ color: 'var(--ok)' }}>Operacyjny</span>
+            </div>
+            <button
+              onClick={toggle}
+              title={theme === 'dark' ? 'Tryb jasny' : 'Tryb ciemny'}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '3px 6px',
+                display: 'flex',
+                alignItems: 'center',
+                transition: 'color 0.15s, border-color 0.15s',
+              }}
+            >
+              {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+            </button>
           </div>
           <div style={{ color: 'var(--text-muted)' }}>
             {new Date().toLocaleDateString("pl-PL", { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}

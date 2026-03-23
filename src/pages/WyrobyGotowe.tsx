@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Package, RefreshCw, Search } from "lucide-react";
+import { fmtDate } from "../utils/fmt";
 
 type Row = {
   id_partii: string;
@@ -46,8 +47,6 @@ export default function WyrobyGotowe() {
   const totalKg = Math.round(rows.reduce((s, r) => s + r.ilosc_kg, 0) * 1000) / 1000;
   const totalSzt = rows.reduce((s, r) => s + (r.ilosc_szt ?? 0), 0);
 
-  const fmtDate = (d: string | null) =>
-    d ? new Date(d).toLocaleDateString("pl-PL") : "—";
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -130,8 +129,8 @@ export default function WyrobyGotowe() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(row => (
-                <tr key={row.id_partii} style={{ borderBottom: "1px solid var(--border)" }}>
+              {filtered.map((row, idx) => (
+                <tr key={`${row.id_partii}_${row.opakowanie ?? ''}_${idx}`} style={{ borderBottom: "1px solid var(--border)" }}>
                   <td className="px-4 py-2.5 font-mono text-xs" style={{ color: "var(--accent)" }}>{row.kod_towaru}</td>
                   <td className="px-4 py-2.5 font-medium" style={{ color: "var(--text-primary)" }}>{row.nazwa}</td>
                   <td className="px-4 py-2.5" style={{ color: "var(--text-secondary)" }}>{row.opakowanie ?? "—"}</td>

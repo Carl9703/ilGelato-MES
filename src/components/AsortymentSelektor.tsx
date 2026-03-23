@@ -34,9 +34,9 @@ type Props = {
 };
 
 const typColors: Record<string, string> = {
-  Surowiec: "bg-blue-500/20 text-blue-300",
-  Polprodukt: "bg-amber-500/20 text-amber-300",
-  Wyrob_Gotowy: "bg-emerald-500/20 text-emerald-300",
+  Surowiec: "bg-blue-500/15 text-blue-400",
+  Polprodukt: "bg-amber-500/15 text-amber-500",
+  Wyrob_Gotowy: "bg-emerald-500/15 text-emerald-500",
 };
 const typLabels: Record<string, string> = {
   Surowiec: "Surowiec",
@@ -159,7 +159,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
   };
 
   return (
-    <div className="fixed inset-0 z-[1010] flex items-center justify-center p-4" style={{ background: 'rgba(4,8,16,0.75)', backdropFilter: 'blur(3px)' }}>
+    <div className="fixed inset-0 z-[1010] flex items-center justify-center p-4" style={{ background: 'var(--bg-app)', opacity: 0.95, backdropFilter: 'blur(4px)' }}>
       <div className="w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.7)' }}>
 
         {/* Header */}
@@ -240,7 +240,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
             </div>
           ) : (
             <table className="w-full text-left text-sm">
-              <thead className="bg-[#1e293b]/80 text-slate-400 text-xs uppercase sticky top-0">
+              <thead className="bg-[var(--bg-panel)]/80 text-[var(--text-muted)] text-xs uppercase sticky top-0">
                 <tr>
                   <th className="px-4 py-3 w-10">
                     {!singleSelect && (
@@ -261,7 +261,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
                   {!hideIlosc && <th className="px-4 py-3 font-semibold text-right w-36">Ilość</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1e293b]">
+              <tbody className="divide-y divide-[var(--border)]">
                 {filtered.map(a => {
                   const sel = selected[a.id];
                   const isChecked = !!sel?.checked;
@@ -272,7 +272,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
                       className={`cursor-pointer transition-colors group ${
                         isChecked
                           ? "bg-blue-600/10 hover:bg-blue-600/15"
-                          : "hover:bg-[#1e293b]"
+                          : "hover:bg-[var(--bg-hover)]"
                       }`}
                     >
                       <td className="px-4 py-3">
@@ -335,7 +335,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
             <span>{selectedCount} pozycji zaznaczonych</span>
           </div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="btn btn-ghost">Anuluj</button>
+            <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors">Anuluj</button>
             <button onClick={handleConfirm} disabled={selectedCount === 0} className="btn btn-primary">
               <Check className="w-3.5 h-3.5" />
               Dodaj do dokumentu

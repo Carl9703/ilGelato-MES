@@ -11,6 +11,7 @@
  *   </Modal>
  *
  * Rozmiary: "sm" (480), "md" (640), "lg" (800), "xl" (1024), "full" (95vw)
+ * Specjalny: "panel" — wypełnia obszar od sidebara do prawej krawędzi, 80vh
  *
  * Z-index warstwy (nie zmieniać):
  *   Modal bazowy:    z-index 1000
@@ -21,9 +22,9 @@
 import React, { useEffect } from "react";
 import { X } from "lucide-react";
 
-type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
+type ModalSize = "sm" | "md" | "lg" | "xl" | "full" | "panel";
 
-const SIZE_MAP: Record<ModalSize, string> = {
+const SIZE_MAP: Record<Exclude<ModalSize, "panel">, string> = {
   sm:   "480px",
   md:   "640px",
   lg:   "800px",
@@ -69,16 +70,21 @@ export function Modal({
 
   if (!isOpen) return null;
 
+  const isPanel = size === "panel";
+
   return (
     <div
       style={{
         position: 'fixed',
-        inset: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: isPanel ? 'var(--sidebar-w)' : 0,
         zIndex,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '16px',
+        padding: isPanel ? 0 : '16px',
         background: 'rgba(4,8,16,0.75)',
         backdropFilter: 'blur(3px)',
       }}
@@ -89,11 +95,14 @@ export function Modal({
         style={{
           background: 'var(--bg-panel)',
           border: '1px solid var(--border)',
-          borderRadius: '10px',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.03)',
+          borderRadius: isPanel ? 0 : '10px',
+          boxShadow: isPanel
+            ? '-4px 0 40px rgba(0,0,0,0.6), 0 20px 60px rgba(0,0,0,0.5)'
+            : '0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.03)',
           width: '100%',
-          maxWidth: SIZE_MAP[size],
-          maxHeight: tall ? '90vh' : '85vh',
+          maxWidth: isPanel ? 'none' : SIZE_MAP[size as Exclude<ModalSize, "panel">],
+          height: isPanel ? '80vh' : undefined,
+          maxHeight: isPanel ? 'none' : (tall ? '90vh' : '85vh'),
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

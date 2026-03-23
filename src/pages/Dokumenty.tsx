@@ -641,8 +641,8 @@ export default function Dokumenty() {
 
       {/* ═══ MODAL PZ ══════════════════════════════════════════════════════════ */}
       {showPz && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-4xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '95vh' }}>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
+          <div className="bg-[#1e293b] shadow-2xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
 
             {/* Nagłówek */}
             <div className="flex justify-between items-center p-5 border-b border-[#334155] bg-emerald-900/20 shrink-0">
@@ -699,7 +699,6 @@ export default function Dokumenty() {
                         <div>Towar</div>
                         <div>Nr partii *</div>
                         <div className="text-right">Ilość *</div>
-                        <div className="text-right">Cena netto</div>
                         <div>Termin ważności</div>
                         <div />
                       </div>
@@ -708,7 +707,7 @@ export default function Dokumenty() {
                       {pzRows.map((row, idx) => (
                         <div key={row._key}
                           className="grid items-center border-b border-[#1e293b] last:border-b-0 hover:bg-[#1e293b]/40 transition-colors"
-                          style={{ gridTemplateColumns: '28px 1fr 200px 100px 110px 120px 32px', padding: '4px 8px', gap: 6 }}>
+                          style={{ gridTemplateColumns: '28px 1fr 200px 100px 120px 32px', padding: '4px 8px', gap: 6 }}>
 
                           {/* # */}
                           <div className="text-[11px] font-mono font-bold text-slate-500 text-center">{idx + 1}</div>
@@ -743,16 +742,6 @@ export default function Dokumenty() {
                             style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: '#4ade80' }}
                           />
 
-                          {/* Cena */}
-                          <input
-                            type="number" step="0.01" min="0"
-                            value={row.cena_jednostkowa}
-                            onChange={e => updatePzRow(row._key, "cena_jednostkowa", e.target.value)}
-                            placeholder="—"
-                            className="w-full text-[11px] font-mono text-right outline-none rounded px-2 py-1.5"
-                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: '#fbbf24' }}
-                          />
-
                           {/* Termin ważności */}
                           <input
                             type="date"
@@ -779,13 +768,7 @@ export default function Dokumenty() {
 
               {/* Footer formularza */}
               {(() => {
-                const wartoscTotal = pzRows.reduce((sum, r) => {
-                  const il = parseFloat(r.ilosc) || 0;
-                  const cena = parseFloat(r.cena_jednostkowa) || 0;
-                  return sum + il * cena;
-                }, 0);
                 const iloscTotal = pzRows.reduce((sum, r) => sum + (parseFloat(r.ilosc) || 0), 0);
-                const brakCen = pzRows.some(r => r.ilosc && !r.cena_jednostkowa);
                 return (
               <div className="flex justify-between items-center gap-3 p-4 border-t border-[#334155] bg-[#0f172a]/50 shrink-0">
                 <div className="flex items-center gap-4 text-xs font-mono">
@@ -798,15 +781,6 @@ export default function Dokumenty() {
                         <span style={{ color: 'var(--text-muted)' }}>
                           łącznie <span className="font-bold text-white">{fmtL(iloscTotal, 3)}</span> jedn.
                         </span>
-                      )}
-                      {wartoscTotal > 0 ? (
-                        <span className="flex items-center gap-1">
-                          <span style={{ color: 'var(--text-muted)' }}>wartość</span>
-                          <span className="font-bold text-lg" style={{ color: '#4ade80' }}>{fmtL(wartoscTotal, 2)} PLN</span>
-                          {brakCen && <span style={{ color: 'var(--warn)', fontSize: 10 }}>· brak cen przy niektórych poz.</span>}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>brak cen — wartość nieznana</span>
                       )}
                     </>
                   )}
@@ -829,8 +803,8 @@ export default function Dokumenty() {
 
       {/* ═══ MODAL WZ ══════════════════════════════════════════════════════════ */}
       {showWz && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-6xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '95vh' }}>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
+          <div className="bg-[#1e293b] shadow-2xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
 
             <div className="flex justify-between items-center p-5 border-b border-[#334155] bg-orange-900/20 shrink-0">
               <h3 className="text-lg font-bold text-orange-400 flex items-center gap-2">
@@ -1024,14 +998,14 @@ export default function Dokumenty() {
 
       {/* ═══ PODGLĄD DOKUMENTU ════════════════════════════════════════════════ */}
       {previewDocRef && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6" onClick={() => setPreviewDocRef(null)}>
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4" onClick={() => setPreviewDocRef(null)}>
           <div
-            className="w-full max-w-3xl flex flex-col rounded-lg shadow-2xl border border-[#334155]"
-            style={{ background: '#1e293b', height: '100%' }}
+            className="flex flex-col shadow-2xl border border-[#334155]"
+            style={{ background: 'var(--bg-panel)', height: '80vh', marginTop: '10vh' }}
             onClick={e => e.stopPropagation()}
           >
             {/* Nagłówek */}
-            <div className="flex justify-between items-center px-5 py-3 border-b border-[#334155] shrink-0" style={{ background: '#111827' }}>
+            <div className="flex justify-between items-center px-5 py-3 border-b border-[#334155] shrink-0" style={{ background: 'var(--bg-surface)' }}>
               <div className="flex items-center gap-3">
                 <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                 <span className="font-bold text-white">{previewDocRef}</span>
@@ -1084,7 +1058,7 @@ export default function Dokumenty() {
 
             {/* Meta */}
             {previewDocData && (
-              <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: '#0f172a' }}>
+              <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: 'var(--bg-app)' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Wystawiono: <span className="text-white font-medium">{fmtFull(previewDocData.data)}</span></span>
                 <span style={{ color: 'var(--text-muted)' }}>Operator: <span className="text-white font-medium">{previewDocData.uzytkownik}</span></span>
                 {previewDocData.data_zatwierdzenia && (
@@ -1117,8 +1091,6 @@ export default function Dokumenty() {
                       <th>Towar</th>
                       <th>Partia</th>
                       <th className="text-right">Ilość</th>
-                      <th className="text-right">Cena (1 kg)</th>
-                      <th className="text-right">Wartość</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1135,23 +1107,9 @@ export default function Dokumenty() {
                           <div className="font-mono font-bold text-white">{fmtL(poz.ilosc, poz.jednostka === 'szt.' ? 0 : 3)} <span className="text-xs opacity-50">{poz.jednostka}</span></div>
                           {poz.ilosc_kg != null && <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{fmtL(poz.ilosc_kg, 3)} kg</div>}
                         </td>
-                        <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>
-                          {poz.cena_jednostkowa != null ? `${fmtL(poz.cena_jednostkowa, 2)} PLN` : "—"}
-                        </td>
-                        <td className="text-right mono font-medium text-emerald-400">
-                          {poz.cena_jednostkowa != null ? `${fmtL(poz.wartosc, 2)} PLN` : "—"}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
-                  {previewDocData.wartosc_calkowita > 0 && (
-                    <tfoot>
-                      <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-                        <td colSpan={5} className="px-3 py-2 text-right text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Razem</td>
-                        <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(previewDocData.wartosc_calkowita, 2)} PLN</td>
-                      </tr>
-                    </tfoot>
-                  )}
                 </table>
                 
                 {/* DODANE: Podsumowanie wagi dla PW i WZ */}
@@ -1253,7 +1211,7 @@ export default function Dokumenty() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-                {["Typ","Status","Nr dokumentu","Data · Operator","Kontrahent","Wartość","ZP","Akcje"].map((h, i) => (
+                {["Typ","Status","Nr dokumentu","Data · Operator","Kontrahent","ZP","Akcje"].map((h, i) => (
                   <th key={h} style={{ padding: '6px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -1306,13 +1264,6 @@ export default function Dokumenty() {
                       {doc.kontrahent
                         ? <span style={{ fontSize: 11 }}><span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--accent)', fontWeight: 700 }}>{doc.kontrahent.kod}</span> <span style={{ color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span></span>
                         : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
-                    </td>
-
-                    {/* Wartość */}
-                    <td style={{ padding: '5px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {doc.wartosc_calkowita > 0
-                        ? <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:700, color:'#4ade80' }}>{fmtL(doc.wartosc_calkowita, 2)} <span style={{ fontSize:10, color:'var(--text-muted)', fontWeight:400 }}>PLN</span></span>
-                        : <span style={{ color:'var(--text-muted)', fontSize:11 }}>—</span>}
                     </td>
 
                     {/* ZP */}

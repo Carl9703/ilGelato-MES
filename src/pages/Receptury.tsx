@@ -231,8 +231,8 @@ export default function Receptury() {
 
       {/* ===== KARTA RECEPTURY (jeden modal, dwa tryby) ===== */}
       {kartaMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-4xl border border-[#334155] overflow-hidden flex flex-col" style={{ height: '90vh' }}>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
+          <div className="bg-[#1e293b] shadow-2xl border border-[#334155] overflow-hidden flex flex-col" style={{ height: '80vh', marginTop: '10vh' }}>
 
             {/* NAGŁÓWEK KARTY */}
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
@@ -549,8 +549,6 @@ export default function Receptury() {
                               <th>Składnik</th>
                               <th className="text-right">Ilość / JM</th>
                               <th className="text-right">Ilość (wsad)</th>
-                              <th className="text-right">Cena śr.</th>
-                              <th className="text-right">Wartość</th>
                               <th className="text-right">Udział</th>
                             </tr>
                           </thead>
@@ -563,48 +561,13 @@ export default function Receptury() {
                                 </td>
                                 <td className="text-right mono">{fmtL(w.ilosc_wymagana, 3)} <span className="opacity-50 text-xs">{w.jednostka}</span></td>
                                 <td className="text-right mono font-medium text-white">{fmtL(w.ilosc_na_batch, 3)} <span className="opacity-50 text-xs">{w.jednostka}</span></td>
-                                <td className="text-right mono" style={{ color: w.cena_srednia > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                                  {w.cena_srednia > 0 ? `${fmtL(w.cena_srednia, 2)} PLN` : '—'}
-                                </td>
-                                <td className="text-right mono font-medium" style={{ color: 'var(--ok)' }}>
-                                  {w.wartosc > 0 ? `${fmtL(w.wartosc, 2)} PLN` : '—'}
-                                </td>
                                 <td className="text-right mono text-xs" style={{ color: 'var(--text-muted)' }}>
                                   {w.udzial_procent > 0 ? `${fmtL(w.udzial_procent, 1)}%` : '—'}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
-                          <tfoot>
-                            <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-                              <td colSpan={4} className="px-3 py-2 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Koszt składników (wsad)</td>
-                              <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(kalkulacja.koszt_skladnikow, 2)} PLN</td>
-                              <td />
-                            </tr>
-                            <tr style={{ background: 'var(--bg-surface)' }}>
-                              <td colSpan={4} className="px-3 py-2 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Koszt na 1 {kalkulacja.jednostka_miary}</td>
-                              <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(kalkulacja.koszt_na_jm, 2)} PLN</td>
-                              <td />
-                            </tr>
-                            {kalkulacja.narzut_procent > 0 && (
-                              <tr style={{ background: 'var(--bg-surface)' }}>
-                                <td colSpan={4} className="px-3 py-2 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Narzut {kalkulacja.narzut_procent}%</td>
-                                <td className="px-3 py-2 text-right mono" style={{ color: 'var(--warn)' }}>+{fmtL(kalkulacja.narzut_zl, 2)} PLN</td>
-                                <td />
-                              </tr>
-                            )}
-                            <tr style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
-                              <td colSpan={4} className="px-3 py-2 text-xs font-black uppercase" style={{ color: 'var(--ok)' }}>Koszt z narzutem / 1 {kalkulacja.jednostka_miary}</td>
-                              <td className="px-3 py-2 text-right font-black mono text-lg" style={{ color: 'var(--ok)' }}>{fmtL(kalkulacja.koszt_z_narzotem, 2)} PLN</td>
-                              <td />
-                            </tr>
-                          </tfoot>
                         </table>
-                        {kalkulacja.wiersze.some((w: any) => w.cena_srednia === 0) && (
-                          <div className="px-4 py-2 text-xs" style={{ color: 'var(--warn)', background: 'rgba(234,179,8,0.05)', borderTop: '1px solid var(--border)' }}>
-                            ⚠ Brak cen zakupu dla niektórych składników — dodaj dokumenty PZ w module Dokumenty
-                          </div>
-                        )}
                       </div>
                     )}
                     {kalcLoading && <Spinner.Page />}

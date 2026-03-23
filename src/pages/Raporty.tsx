@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { BarChart2, ChevronDown, ChevronRight, TrendingUp, FileText, Users, Calendar } from "lucide-react";
-import { fmtL } from "../utils/fmt";
+import { fmtL, fmtDate } from "../utils/fmt";
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
 
@@ -39,10 +39,6 @@ function fmt(val: number) {
   return val.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmtDate(d: string | null) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("pl-PL");
-}
 
 export default function Raporty() {
   const today = new Date();

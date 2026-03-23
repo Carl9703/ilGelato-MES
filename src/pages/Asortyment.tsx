@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Save, X, Package, ArrowLeft, History, FileText, Search } from "lucide-react";
-import { fmtL } from "../utils/fmt";
+import { fmtL, fmtDate } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
@@ -267,7 +267,6 @@ export default function Asortyment() {
   };
 
   const fillZero = (n: number) => fmtL(n, 2);
-  const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
   const fmtDateTime = (d: string) => new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
   const filtered = items.filter(a => {
@@ -319,13 +318,11 @@ export default function Asortyment() {
         ) : detailData && (
           <>
             {/* Wskaźniki ERP — pasek statusu */}
-            <div className="mes-panel rounded grid grid-cols-5 shrink-0">
+            <div className="mes-panel rounded grid grid-cols-3 shrink-0">
               {[
                 { label: "Stan całkowity", value: fillZero(detailData.podsumowanie.stan_calkowity), unit: selectedItem.jednostka_miary, color: 'var(--text-primary)' },
                 { label: "Zarezerwowane",  value: fillZero(detailData.podsumowanie.zarezerwowane),  unit: selectedItem.jednostka_miary, color: 'var(--warn)' },
                 { label: "Dostępne",       value: fillZero(detailData.podsumowanie.dostepne),       unit: selectedItem.jednostka_miary, color: 'var(--ok)' },
-                { label: "Śr. cena (WAC)", value: detailData.podsumowanie.cena_srednia_wazona > 0 ? fillZero(detailData.podsumowanie.cena_srednia_wazona) : "—", unit: "PLN", color: 'var(--text-primary)' },
-                { label: "Wartość mag.",   value: fillZero(detailData.podsumowanie.wartosc_magazynowa), unit: "PLN", color: 'var(--accent)' },
               ].map((stat, idx) => (
                 <div key={idx} className="px-5 py-3 flex flex-col gap-1" style={{ borderLeft: idx > 0 ? '1px solid var(--border)' : 'none' }}>
                   <div className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>{stat.label}</div>
@@ -376,8 +373,6 @@ export default function Asortyment() {
                         <th>Status</th>
                         <th>Ważność</th>
                         <th className="text-right">Stan</th>
-                        <th className="text-right">Cena N.</th>
-                        <th className="text-right">Wartość</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -400,8 +395,6 @@ export default function Asortyment() {
                             <span className="text-xs ml-1 opacity-50">{selectedItem.jednostka_miary}</span>
                             {z.zarezerwowane > 0 && <div className="text-[10px]" style={{ color: 'var(--warn)' }}>Rez: {fillZero(z.zarezerwowane)}</div>}
                           </td>
-                          <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>{z.cena_jednostkowa > 0 ? `${fillZero(z.cena_jednostkowa)} PLN` : "—"}</td>
-                          <td className="text-right mono font-bold text-emerald-400">{fillZero(z.wartosc)} PLN</td>
                         </tr>
                       ))}
                     </tbody>
@@ -423,7 +416,6 @@ export default function Asortyment() {
                         <th>Dokument</th>
                         <th>Partia</th>
                         <th className="text-right">Ilość</th>
-                        <th className="text-right">Cena</th>
                         <th className="text-right">Saldo</th>
                       </tr>
                     </thead>
@@ -447,7 +439,6 @@ export default function Asortyment() {
                           </td>
                           <td className="mono" style={{ color: 'var(--text-code)' }}>{h.partia}</td>
                           <td className={`text-right mono font-bold ${h.ilosc > 0 ? "text-emerald-400" : "text-red-400"}`}>{h.ilosc > 0 ? "+" : ""}{fillZero(h.ilosc)}</td>
-                          <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>{h.cena_jednostkowa ? `${fillZero(h.cena_jednostkowa)} PLN` : "—"}</td>
                           <td className="text-right mono font-bold text-white">{fillZero(h.saldo_po_operacji)}</td>
                         </tr>
                       ))}
@@ -668,11 +659,11 @@ export default function Asortyment() {
 
         {/* Document Preview Modal */}
         {previewDocRef && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6" onClick={() => setPreviewDocRef(null)}>
-            <div className="w-full max-w-3xl flex flex-col rounded-lg shadow-2xl border border-[#334155]"
-              style={{ background: '#1e293b', height: '100%' }}
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4" onClick={() => setPreviewDocRef(null)}>
+            <div className="flex flex-col shadow-2xl border border-[#334155]"
+              style={{ background: 'var(--bg-panel)', height: '80vh', marginTop: '10vh' }}
               onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center px-5 py-3 border-b border-[#334155] shrink-0" style={{ background: '#111827' }}>
+              <div className="flex justify-between items-center px-5 py-3 border-b border-[#334155] shrink-0" style={{ background: 'var(--bg-surface)' }}>
                 <div className="flex items-center gap-3">
                   <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                   <span className="font-bold text-white">{previewDocRef}</span>
@@ -689,7 +680,7 @@ export default function Asortyment() {
                 </button>
               </div>
               {previewDocData && (
-                <div className="flex items-center gap-6 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: '#0f172a' }}>
+                <div className="flex items-center gap-6 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: 'var(--bg-app)' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Data: <span className="text-white font-medium">{fmtDateTime(previewDocData.data)}</span></span>
                   <span style={{ color: 'var(--text-muted)' }}>Wystawił: <span className="text-white font-medium">{previewDocData.uzytkownik}</span></span>
                   {previewDocData.numer_zlecenia && (
@@ -709,8 +700,6 @@ export default function Asortyment() {
                         <th>Towar</th>
                         <th>Partia</th>
                         <th className="text-right">Ilość</th>
-                        <th className="text-right">Cena</th>
-                        <th className="text-right">Wartość</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -722,19 +711,9 @@ export default function Asortyment() {
                           </td>
                           <td className="mono" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
                           <td className="text-right mono font-medium text-white">{fmtL(poz.ilosc, 3)} <span className="text-xs opacity-50">{poz.jednostka}</span></td>
-                          <td className="text-right mono" style={{ color: 'var(--text-secondary)' }}>{poz.cena_jednostkowa !== null ? `${fmtL(poz.cena_jednostkowa, 2)} PLN` : "—"}</td>
-                          <td className="text-right mono font-medium text-emerald-400">{poz.cena_jednostkowa !== null ? `${fmtL(poz.wartosc, 2)} PLN` : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
-                    {previewDocData.wartosc_calkowita > 0 && (
-                      <tfoot>
-                        <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-                          <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Razem</td>
-                          <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(previewDocData.wartosc_calkowita, 2)} PLN</td>
-                        </tr>
-                      </tfoot>
-                    )}
                   </table>
                 )}
               </div>
@@ -878,15 +857,13 @@ export default function Asortyment() {
                   <th className="text-right">Ilość</th>
                   <th className="text-right">Zarezerwowane</th>
                   <th className="text-right">Dostępne</th>
-                  <th className="text-right">Cena śr.</th>
-                  <th className="text-right">Wartość mag.</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(a => (
                   <tr key={a.id} onClick={() => openDetail(a)} style={!a.czy_aktywne ? { opacity: 0.5, background: 'repeating-linear-gradient(135deg, transparent, transparent 6px, rgba(0,0,0,0.15) 6px, rgba(0,0,0,0.15) 12px)' } : {}}>
                     <td className="mono" style={{ color: 'var(--text-code)' }}>{a.kod_towaru}</td>
-                    <td className="font-medium" style={{ color: a.czy_aktywne ? 'white' : 'var(--text-muted)' }}>
+                    <td className="font-medium" style={{ color: a.czy_aktywne ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                       {a.nazwa}
                       {!a.czy_aktywne && <span className="ml-2 text-[10px] font-bold uppercase tracking-widest opacity-60">archiwum</span>}
                     </td>
@@ -903,12 +880,6 @@ export default function Asortyment() {
                     </td>
                     <td className={`text-right mono font-medium ${(a.ilosc - a.rezerwacje) > 0 ? 'text-emerald-400' : ''}`} style={(a.ilosc - a.rezerwacje) <= 0 ? { color: 'var(--text-muted)' } : {}}>
                       {fillZero(a.ilosc - a.rezerwacje)}
-                    </td>
-                    <td className="text-right mono" style={{ color: a.cena_srednia > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                      {a.cena_srednia > 0 ? <>{fillZero(a.cena_srednia)} <span className="text-xs opacity-50">PLN</span></> : "—"}
-                    </td>
-                    <td className={`text-right mono font-medium ${a.ilosc > 0 ? 'text-emerald-400' : ''}`} style={a.ilosc <= 0 ? { color: 'var(--text-muted)' } : {}}>
-                      {fillZero(a.ilosc * (a.cena_srednia || 0))} <span className="text-xs opacity-50">PLN</span>
                     </td>
                   </tr>
                 ))}
