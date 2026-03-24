@@ -688,7 +688,7 @@ async function startServer() {
           for (const ruch of ruchy) {
             const stanAktywny = ruch.partia.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
             const wymagana = Math.abs(ruch.ilosc);
-            if (stanAktywny < wymagana) {
+            if (stanAktywny < wymagana - 0.0001) {
               niedobory.push(`${ruch.partia.numer_partii}: dostępne ${stanAktywny.toFixed(3).replace('.', ',')}, wymagane ${wymagana.toFixed(3).replace('.', ',')}`);
             }
           }
