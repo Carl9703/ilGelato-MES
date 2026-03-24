@@ -5,6 +5,9 @@ import {
   CheckCircle, Ban, Clock
 } from "lucide-react";
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
+import DocumentPreviewModal from "../components/DocumentPreviewModal";
+import { SortableTh } from "../components/SortableTh";
+import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 import { fmtL } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
 import { Spinner } from "../components/Spinner";
@@ -123,6 +126,10 @@ export default function Dokumenty() {
   const [wzKontrahentId, setWzKontrahentId] = useState("");
   const [kontrahenci, setKontrahenci] = useState<Kontrahent[]>([]);
 
+  const [sortKey, setSortKey] = useState("data");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
+
   // Podgląd dokumentu
   const [previewDocRef, setPreviewDocRef] = useState<string | null>(null);
   const [previewDocData, setPreviewDocData] = useState<any>(null);
@@ -147,7 +154,7 @@ export default function Dokumenty() {
     setActionLoading(ref);
     try {
       const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/zatwierdz`, { method: "POST" });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       showToast(`Dokument ${ref} zatwierdzony.`, "ok");
       fetchDokumenty();
       if (previewDocRef === ref) openDocPreview(ref);
@@ -167,7 +174,7 @@ export default function Dokumenty() {
     setActionLoading(ref);
     try {
       const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/anuluj`, { method: "POST" });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       showToast(`Dokument ${ref} anulowany.`, "ok");
       fetchDokumenty();
       if (previewDocRef === ref) openDocPreview(ref);
@@ -187,7 +194,7 @@ export default function Dokumenty() {
     setActionLoading(ref);
     try {
       const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}`, { method: "DELETE" });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       showToast(`Dokument ${ref} usunięty.`, "ok");
       if (previewDocRef === ref) setPreviewDocRef(null);
       fetchDokumenty();
@@ -327,7 +334,7 @@ export default function Dokumenty() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pozycje, referencja_zewnetrzna: pzReferencja || undefined }),
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       setShowPz(false);
       showToast("Dokument PZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
@@ -445,7 +452,7 @@ export default function Dokumenty() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items, referencja_zewnetrzna: wzReferencja || undefined, id_kontrahenta: wzKontrahentId }),
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       setShowWz(false);
       showToast("Dokument WZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
@@ -460,7 +467,7 @@ export default function Dokumenty() {
     setEtykietaError("");
     try {
       const res = await fetch(`/api/etykieta/${encodeURIComponent(etykietaInput.trim())}`);
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       setEtykieta(await res.json());
     } catch (err: any) { setEtykietaError(err.message); setEtykieta(null); }
   };
@@ -560,17 +567,27 @@ export default function Dokumenty() {
     </div>`;
   };
 
-  const filteredDocs = dokumenty.filter(d => {
-    const docDate = new Date(d.data);
-    const matchesMonth = !selectedMonth || (docDate.getMonth() + 1).toString() === selectedMonth;
-    const matchesYear = !selectedYear || docDate.getFullYear().toString() === selectedYear;
-    
-    const matchesSearch = !search ||
-      d.referencja.toLowerCase().includes(search.toLowerCase()) ||
-      d.pozycje.some(p => p.asortyment.toLowerCase().includes(search.toLowerCase()) || p.numer_partii.toLowerCase().includes(search.toLowerCase()));
-      
-    return matchesMonth && matchesYear && matchesSearch;
-  });
+  const filteredDocs = sortBy<Dokument>(
+    dokumenty.filter(d => {
+      const docDate = new Date(d.data);
+      const matchesMonth = !selectedMonth || (docDate.getMonth() + 1).toString() === selectedMonth;
+      const matchesYear = !selectedYear || docDate.getFullYear().toString() === selectedYear;
+      const matchesSearch = !search ||
+        d.referencja.toLowerCase().includes(search.toLowerCase()) ||
+        d.pozycje.some(p => p.asortyment.toLowerCase().includes(search.toLowerCase()) || p.numer_partii.toLowerCase().includes(search.toLowerCase()));
+      return matchesMonth && matchesYear && matchesSearch;
+    }),
+    d => {
+      switch (sortKey) {
+        case 'typ':        return d.typ;
+        case 'status':     return d.status;
+        case 'referencja': return d.referencja;
+        case 'kontrahent': return d.kontrahent?.nazwa ?? '';
+        default:           return d.data;
+      }
+    },
+    sortDir
+  );
 
   const months = [
     { v: "1", l: "Styczeń" }, { v: "2", l: "Luty" }, { v: "3", l: "Marzec" },
@@ -998,164 +1015,18 @@ export default function Dokumenty() {
 
       {/* ═══ PODGLĄD DOKUMENTU ════════════════════════════════════════════════ */}
       {previewDocRef && (
-        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4" onClick={() => setPreviewDocRef(null)}>
-          <div
-            className="flex flex-col shadow-2xl border border-[#334155]"
-            style={{ background: 'var(--bg-panel)', height: '80vh', marginTop: '10vh' }}
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Nagłówek */}
-            <div className="flex justify-between items-center px-5 py-3 border-b border-[#334155] shrink-0" style={{ background: 'var(--bg-surface)' }}>
-              <div className="flex items-center gap-3">
-                <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-                <span className="font-bold text-white">{previewDocRef}</span>
-                {previewDocData && (
-                  <span className={`badge ${
-                    previewDocData.typ === 'PZ' ? 'badge-ok' :
-                    previewDocData.typ === 'PW' ? 'badge-info' :
-                    previewDocData.typ === 'RW' ? 'badge-danger' : 'badge-warn'
-                  }`}>{previewDocData.typ}</span>
-                )}
-                {previewDocData?.status && <StatusBadge status={previewDocData.status} />}
-              </div>
-              <div className="flex items-center gap-2">
-                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status === "Bufor" && (
-                  <button onClick={() => handleZatwierdz(previewDocRef!)}
-                    disabled={actionLoading === previewDocRef}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
-                    style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>
-                    <CheckCircle className="w-3.5 h-3.5" /> Zatwierdź
-                  </button>
-                )}
-                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status === "Bufor" && (
-                  <button onClick={() => handleUsun(previewDocRef!)}
-                    disabled={actionLoading === previewDocRef}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
-                    style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
-                    <Trash2 className="w-3.5 h-3.5" /> Usuń
-                  </button>
-                )}
-                {previewDocData && (previewDocData.typ === "PZ" || previewDocData.typ === "WZ") && previewDocData.status === "Zatwierdzony" && (
-                  <button onClick={() => handleAnuluj(previewDocRef!)}
-                    disabled={actionLoading === previewDocRef}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
-                    style={{ background: 'rgba(249,115,22,0.12)', color: '#f97316', border: '1px solid rgba(249,115,22,0.3)' }}>
-                    <Ban className="w-3.5 h-3.5" /> Anuluj
-                  </button>
-                )}
-                {previewDocData && previewDocData.typ !== 'WZ' && previewDocData.typ !== 'RW' && (
-                  <button onClick={() => handlePrintAllLabels(previewDocRef!)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium btn-hover-effect"
-                    style={{ background: 'rgba(245,158,11,0.12)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)' }}>
-                    <Tag className="w-3.5 h-3.5" /> Etykiety
-                  </button>
-                )}
-                <button onClick={() => setPreviewDocRef(null)} className="p-1.5 rounded hover:bg-[#334155]" style={{ color: 'var(--text-muted)' }}>
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Meta */}
-            {previewDocData && (
-              <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: 'var(--bg-app)' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Wystawiono: <span className="text-white font-medium">{fmtFull(previewDocData.data)}</span></span>
-                <span style={{ color: 'var(--text-muted)' }}>Operator: <span className="text-white font-medium">{previewDocData.uzytkownik}</span></span>
-                {previewDocData.data_zatwierdzenia && (
-                  <span style={{ color: 'var(--text-muted)' }}>Zatwierdził: <span className="font-medium" style={{ color: '#22c55e' }}>{previewDocData.uzytkownik_zatwierdzenia}</span> · {fmtFull(previewDocData.data_zatwierdzenia)}</span>
-                )}
-                {previewDocData.data_anulowania && (
-                  <span style={{ color: 'var(--text-muted)' }}>Anulował: <span className="font-medium" style={{ color: '#ef4444' }}>{previewDocData.uzytkownik_anulowania}</span> · {fmtFull(previewDocData.data_anulowania)}</span>
-                )}
-                {previewDocData.numer_zlecenia && (
-                  <span style={{ color: 'var(--text-muted)' }}>ZP: <span className="font-mono font-medium" style={{ color: 'var(--text-code)' }}>{previewDocData.numer_zlecenia}</span></span>
-                )}
-                {previewDocData.kontrahent && (
-                  <span style={{ color: 'var(--text-muted)' }}>Kontrahent: <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{previewDocData.kontrahent.kod} — {previewDocData.kontrahent.nazwa}</span></span>
-                )}
-              </div>
-            )}
-
-            {/* Treść */}
-            <div className="overflow-y-auto flex-1">
-              {previewDocLoading ? (
-                <div className="flex justify-center p-12"><Spinner /></div>
-              ) : !previewDocData ? (
-                <div className="text-center p-12 text-sm" style={{ color: 'var(--text-muted)' }}>Brak danych o dokumencie</div>
-              ) : (
-                <div className="flex flex-col pb-4">
-                  <table className="mes-table">
-                  <thead>
-                    <tr>
-                      <th className="text-center w-8">Lp.</th>
-                      <th>Towar</th>
-                      <th>Partia</th>
-                      <th className="text-right">Ilość</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewDocData.pozycje?.map((poz: any, i: number) => (
-                      <tr key={i}>
-                        <td className="text-center mono text-xs" style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
-                        <td>
-                          <div className="font-medium text-white">{poz.asortyment}</div>
-                          {poz.wyrob && <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{poz.wyrob}</div>}
-                          {!poz.wyrob && <div className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{poz.kod_towaru}</div>}
-                        </td>
-                        <td className="mono" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
-                        <td className="text-right">
-                          <div className="font-mono font-bold text-white">{fmtL(poz.ilosc, poz.jednostka === 'szt.' ? 0 : 3)} <span className="text-xs opacity-50">{poz.jednostka}</span></div>
-                          {poz.ilosc_kg != null && <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{fmtL(poz.ilosc_kg, 3)} kg</div>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                
-                {/* DODANE: Podsumowanie wagi dla PW i WZ */}
-                {previewDocData && (previewDocData.typ === "PW" || previewDocData.typ === "WZ") && (() => {
-                  const podsumowanie: Record<string, number> = {};
-                  let pokazPodsumowanie = false;
-                  (previewDocData.pozycje || []).forEach((p: any) => {
-                    const nazwa = p.wyrob || p.asortyment;
-                    const isSzt = p.jednostka === 'szt.';
-                    const waga = p.ilosc_kg != null ? parseFloat(p.ilosc_kg) : (isSzt ? 0 : parseFloat(p.ilosc));
-                    if (waga > 0) {
-                      podsumowanie[nazwa] = (podsumowanie[nazwa] || 0) + waga;
-                      pokazPodsumowanie = true;
-                    }
-                  });
-
-                  if (!pokazPodsumowanie) return null;
-                  const entries = Object.entries(podsumowanie).sort((a,b) => b[1] - a[1]);
-                  const sumaCalkowita = entries.reduce((acc, curr) => acc + curr[1], 0);
-
-                  return (
-                    <div className="mt-6 mx-4 mb-2 border rounded shadow-sm overflow-hidden shrink-0" style={{ borderColor: 'var(--border)', background: 'var(--bg-app)' }}>
-                      <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
-                        Podsumowanie wagi dokumentu
-                      </div>
-                      <div className="p-2 space-y-0.5">
-                        {entries.map(([nazwa, waga]) => (
-                          <div key={nazwa} className="flex justify-between items-center px-3 py-2 hover:bg-[#1e293b] rounded transition-colors">
-                            <span className="text-sm font-medium text-white">{nazwa}</span>
-                            <span className="text-sm font-mono font-bold" style={{ color: '#38bdf8' }}>{fmtL(waga, 3)} kg</span>
-                          </div>
-                        ))}
-                        <div className="flex justify-between items-center px-3 py-3 mt-2 border-t" style={{ borderColor: 'var(--border-dim)' }}>
-                          <span className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Masa całkowita dokumentu</span>
-                          <span className="text-base font-mono font-black" style={{ color: '#22c55e' }}>{fmtL(sumaCalkowita, 3)} kg</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <DocumentPreviewModal
+          docRef={previewDocRef}
+          docData={previewDocData}
+          loading={previewDocLoading}
+          onClose={() => setPreviewDocRef(null)}
+          zIndex={60}
+          onZatwierdz={handleZatwierdz}
+          onAnuluj={handleAnuluj}
+          onUsun={handleUsun}
+          onPrintLabels={handlePrintAllLabels}
+          actionLoading={actionLoading}
+        />
       )}
 
       {/* ═══ PASEK FILTRÓW (jedna linia) ═══════════════════════════════════════ */}
@@ -1211,9 +1082,23 @@ export default function Dokumenty() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-                {["Typ","Status","Nr dokumentu","Data · Operator","Kontrahent","ZP","Akcje"].map((h, i) => (
-                  <th key={h} style={{ padding: '6px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
-                ))}
+                {([
+                  { label: 'Typ',          field: 'typ'        },
+                  { label: 'Status',       field: 'status'     },
+                  { label: 'Nr dokumentu', field: 'referencja' },
+                  { label: 'Data · Operator', field: 'data'    },
+                  { label: 'Kontrahent',   field: 'kontrahent' },
+                  { label: 'ZP',           field: null         },
+                  { label: 'Akcje',        field: null         },
+                ] as { label: string; field: string | null }[]).map(({ label, field }, i) =>
+                  field ? (
+                    <SortableTh key={label} label={label} field={field}
+                      sortKey={sortKey} sortDir={sortDir} onSort={handleSort}
+                      style={{ padding: '6px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }} />
+                  ) : (
+                    <th key={label} style={{ padding: '6px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{label}</th>
+                  )
+                )}
               </tr>
             </thead>
             <tbody>

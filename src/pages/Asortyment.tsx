@@ -2,6 +2,9 @@ import React, { useState, useEffect } from "react";
 import { Plus, Save, X, Package, ArrowLeft, History, FileText, Search } from "lucide-react";
 import { fmtL, fmtDate } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
+import DocumentPreviewModal from "../components/DocumentPreviewModal";
+import { SortableTh } from "../components/SortableTh";
+import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
@@ -31,6 +34,9 @@ export default function Asortyment() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [sortKey, setSortKey] = useState("nazwa");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
   const { showToast } = useToast();
   
   // Modal state
@@ -269,13 +275,27 @@ export default function Asortyment() {
   const fillZero = (n: number) => fmtL(n, 2);
   const fmtDateTime = (d: string) => new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
-  const filtered = items.filter(a => {
-    const matchesFilter = filter === "all" || a.typ_asortymentu === filter;
-    const matchesSearch = !search || 
-      a.nazwa.toLowerCase().includes(search.toLowerCase()) || 
-      a.kod_towaru.toLowerCase().includes(search.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
+  const filtered = sortBy<AsortymentOgolne>(
+    items.filter(a => {
+      const matchesFilter = filter === "all" || a.typ_asortymentu === filter;
+      const matchesSearch = !search ||
+        a.nazwa.toLowerCase().includes(search.toLowerCase()) ||
+        a.kod_towaru.toLowerCase().includes(search.toLowerCase());
+      return matchesFilter && matchesSearch;
+    }),
+    a => {
+      switch (sortKey) {
+        case 'kod_towaru':     return a.kod_towaru;
+        case 'typ_asortymentu': return a.typ_asortymentu;
+        case 'jednostka_miary': return a.jednostka_miary;
+        case 'ilosc':          return a.ilosc;
+        case 'rezerwacje':     return a.rezerwacje;
+        case 'dostepne':       return a.ilosc - a.rezerwacje;
+        default:               return a.nazwa;
+      }
+    },
+    sortDir
+  );
 
   // --- DETAIL VIEW ---
   if (selectedItem) {
@@ -659,66 +679,13 @@ export default function Asortyment() {
 
         {/* Document Preview Modal */}
         {previewDocRef && (
-          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4" onClick={() => setPreviewDocRef(null)}>
-            <div className="flex flex-col shadow-2xl border border-[#334155]"
-              style={{ background: 'var(--bg-panel)', height: '80vh', marginTop: '10vh' }}
-              onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center px-5 py-3 border-b border-[#334155] shrink-0" style={{ background: 'var(--bg-surface)' }}>
-                <div className="flex items-center gap-3">
-                  <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-                  <span className="font-bold text-white">{previewDocRef}</span>
-                  {previewDocData && (
-                    <span className={`badge ${
-                      previewDocData.typ === 'PZ' ? 'badge-ok' :
-                      previewDocData.typ === 'PW' ? 'badge-info' :
-                      previewDocData.typ === 'RW' ? 'badge-danger' : 'badge-warn'
-                    }`}>{previewDocData.typ}</span>
-                  )}
-                </div>
-                <button onClick={() => setPreviewDocRef(null)} className="p-1.5 rounded hover:bg-[#334155]" style={{ color: 'var(--text-muted)' }}>
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              {previewDocData && (
-                <div className="flex items-center gap-6 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: 'var(--bg-app)' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>Data: <span className="text-white font-medium">{fmtDateTime(previewDocData.data)}</span></span>
-                  <span style={{ color: 'var(--text-muted)' }}>Wystawił: <span className="text-white font-medium">{previewDocData.uzytkownik}</span></span>
-                  {previewDocData.numer_zlecenia && (
-                    <span style={{ color: 'var(--text-muted)' }}>ZP: <span className="font-mono font-medium" style={{ color: 'var(--text-code)' }}>{previewDocData.numer_zlecenia}</span></span>
-                  )}
-                </div>
-              )}
-              <div className="overflow-y-auto flex-1">
-                {previewDocLoading ? (
-                  <Spinner.Page />
-                ) : !previewDocData ? (
-                  <EmptyState message="Brak danych o dokumencie." />
-                ) : (
-                  <table className="mes-table">
-                    <thead>
-                      <tr>
-                        <th>Towar</th>
-                        <th>Partia</th>
-                        <th className="text-right">Ilość</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {previewDocData.pozycje?.map((poz: any, i: number) => (
-                        <tr key={i}>
-                          <td>
-                            <div className="font-medium text-white">{poz.asortyment}</div>
-                            <div className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{poz.kod_towaru}</div>
-                          </td>
-                          <td className="mono" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
-                          <td className="text-right mono font-medium text-white">{fmtL(poz.ilosc, 3)} <span className="text-xs opacity-50">{poz.jednostka}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-          </div>
+          <DocumentPreviewModal
+            docRef={previewDocRef}
+            docData={previewDocData}
+            loading={previewDocLoading}
+            onClose={() => setPreviewDocRef(null)}
+            zIndex={1060}
+          />
         )}
       <ConfirmModal
         isOpen={confirmArchive}
@@ -850,13 +817,13 @@ export default function Asortyment() {
             <table className="mes-table">
               <thead>
                 <tr>
-                  <th>Kod</th>
-                  <th>Nazwa</th>
-                  <th>Typ</th>
-                  <th>J.M.</th>
-                  <th className="text-right">Ilość</th>
-                  <th className="text-right">Zarezerwowane</th>
-                  <th className="text-right">Dostępne</th>
+                  <SortableTh label="Kod"          field="kod_towaru"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Nazwa"         field="nazwa"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Typ"           field="typ_asortymentu" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="J.M."          field="jednostka_miary" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortableTh label="Ilość"         field="ilosc"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+                  <SortableTh label="Zarezerwowane" field="rezerwacje"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+                  <SortableTh label="Dostępne"      field="dostepne"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
                 </tr>
               </thead>
               <tbody>

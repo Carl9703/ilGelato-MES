@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Package, RefreshCw, Search } from "lucide-react";
 import { fmtDate } from "../utils/fmt";
+import { SortableTh } from "../components/SortableTh";
+import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 
 type Row = {
   id_partii: string;
@@ -21,6 +23,9 @@ export default function WyrobyGotowe() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState("nazwa");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
   const [error, setError] = useState("");
 
   const fetchStan = async () => {
@@ -40,8 +45,21 @@ export default function WyrobyGotowe() {
   useEffect(() => { fetchStan(); }, []);
 
   const q = search.toLowerCase();
-  const filtered = rows.filter(r =>
-    !q || r.kod_towaru.toLowerCase().includes(q) || r.nazwa.toLowerCase().includes(q)
+  const filtered = sortBy<Row>(
+    rows.filter(r => !q || r.kod_towaru.toLowerCase().includes(q) || r.nazwa.toLowerCase().includes(q)),
+    r => {
+      switch (sortKey) {
+        case 'kod_towaru':      return r.kod_towaru;
+        case 'opakowanie':      return r.opakowanie ?? '';
+        case 'waga_jednostkowa': return r.waga_jednostkowa ?? -1;
+        case 'ilosc_szt':       return r.ilosc_szt ?? -1;
+        case 'ilosc_kg':        return r.ilosc_kg;
+        case 'numer_partii':    return r.numer_partii;
+        case 'termin_waznosci': return r.termin_waznosci ?? '';
+        default:                return r.nazwa;
+      }
+    },
+    sortDir
   );
 
   const totalKg = Math.round(rows.reduce((s, r) => s + r.ilosc_kg, 0) * 1000) / 1000;
@@ -118,14 +136,14 @@ export default function WyrobyGotowe() {
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border)" }}>
-                <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Kod</th>
-                <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Nazwa</th>
-                <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Opakowanie</th>
-                <th className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Masa/szt.</th>
-                <th className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Ilość szt</th>
-                <th className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Ilość kg</th>
-                <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Partia</th>
-                <th className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }}>Termin</th>
+                <SortableTh label="Kod"       field="kod_towaru"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
+                <SortableTh label="Nazwa"     field="nazwa"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
+                <SortableTh label="Opakowanie" field="opakowanie"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
+                <SortableTh label="Masa/szt." field="waga_jednostkowa" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }} />
+                <SortableTh label="Ilość szt" field="ilosc_szt"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }} />
+                <SortableTh label="Ilość kg"  field="ilosc_kg"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }} />
+                <SortableTh label="Partia"    field="numer_partii"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
+                <SortableTh label="Termin"    field="termin_waznosci"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
               </tr>
             </thead>
             <tbody>

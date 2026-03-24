@@ -4,6 +4,8 @@ import { fmtL } from "../utils/fmt";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
+import { SortableTh } from "../components/SortableTh";
+import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 
 type Asortyment = {
   id: string; kod_towaru: string; nazwa: string; jednostka_miary: string;
@@ -37,6 +39,9 @@ export default function Receptury() {
   const [skladniki, setSkladniki] = useState<{ id_asortymentu_skladnika: string; ilosc_wymagana: string; czy_pomocnicza: boolean }[]>([]);
 
   const [showArchived, setShowArchived] = useState(false);
+  const [sortKey, setSortKey] = useState("produkt");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
 
   // Zakładki karty (tylko w view mode)
   const [kartaTab, setKartaTab] = useState<"specyfikacja" | "kalkulator">("specyfikacja");
@@ -603,25 +608,37 @@ export default function Receptury() {
           <table className="mes-table">
             <thead>
               <tr>
-                <th>Produkt</th>
-                <th>Kod</th>
-                <th>Wersja</th>
-                <th>Składniki</th>
-                <th>Trwałość</th>
-                <th>Status</th>
+                <SortableTh label="Produkt"    field="produkt"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Kod"        field="kod"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Wersja"     field="wersja"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Składniki"  field="skladniki"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Trwałość"   field="trwalosc"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Status"     field="status"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               </tr>
             </thead>
             <tbody>
-              {Object.entries(
-                receptury.reduce((acc: Record<string, Receptura[]>, r) => {
-                  const pid = r.asortyment_docelowy.id;
-                  if (!acc[pid]) acc[pid] = [];
-                  acc[pid].push(r);
-                  return acc;
-                }, {})
-              ).map(([, versions]: [string, Receptura[]]) => {
-                const sorted = versions.sort((a, b) => b.numer_wersji - a.numer_wersji);
-                const v = sorted[0];
+              {sortBy<Receptura>(
+                (Object.values(
+                  receptury.reduce<Record<string, Receptura[]>>((acc, r) => {
+                    const pid = r.asortyment_docelowy.id;
+                    if (!acc[pid]) acc[pid] = [];
+                    acc[pid].push(r);
+                    return acc;
+                  }, {})
+                ) as Receptura[][]).map(versions => [...versions].sort((a, b) => b.numer_wersji - a.numer_wersji)[0]),
+                v => {
+                  switch (sortKey) {
+                    case 'kod':       return v.asortyment_docelowy.kod_towaru;
+                    case 'wersja':    return v.numer_wersji;
+                    case 'skladniki': return v.skladniki.length;
+                    case 'trwalosc':  return v.dni_trwalosci ?? -1;
+                    case 'status':    return v.czy_aktywne ? 0 : 1;
+                    default:          return v.asortyment_docelowy.nazwa;
+                  }
+                },
+                sortDir
+              ).map(v => {
+                const sorted = [...receptury.filter(r => r.asortyment_docelowy.id === v.asortyment_docelowy.id)].sort((a, b) => b.numer_wersji - a.numer_wersji);
                 return (
                   <tr key={v.id} onClick={() => openView(v)} className={`cursor-pointer ${v.czy_aktywne ? '' : 'opacity-40'}`}>
                     <td className="font-medium text-white">{v.asortyment_docelowy.nazwa}</td>

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, MapPin, FileText, ChevronDown, ChevronUp, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard } from "lucide-react";
-import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
-import { fmtL } from "../utils/fmt";
+import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, FileText, ChevronDown, ChevronUp, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard } from "lucide-react";
+import { SortableTh } from "../components/SortableTh";
+import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
+import { fmtL, fmtDate } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
+import DocumentPreviewModal from "../components/DocumentPreviewModal";
 
 type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null };
 type SkladnikReceptury = { 
@@ -46,37 +48,21 @@ export default function Produkcja() {
   const { showToast } = useToast();
   const [zlecenia, setZlecenia] = useState<Zlecenie[]>([]);
   const [receptury, setReceptury] = useState<Receptura[]>([]);
-  const [isAdding, setIsAdding] = useState(false);
   const [itemToRealize, setItemToRealize] = useState<Zlecenie | null>(null);
   const [rzeczywistaIlosc, setRzeczywistaIlosc] = useState<string>("");
   const [zuzytePartie, setZuzytePartie] = useState<{ [ingredId: string]: Array<{ id_partii: string, ilosc: number }> }>({});
   const [activePicker, setActivePicker] = useState<{ ingredId: string, skladnik: SkladnikReceptury } | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
 
-  const [recepturaId, setRecepturaId] = useState("");
-  const [ilosc, setIlosc] = useState(1);
   const [filter, setFilter] = useState<string>("all");
+  const [sortKey, setSortKey] = useState("utworzono_dnia");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
   const [pickListZlecenie, setPickListZlecenie] = useState<Zlecenie | null>(null);
-  const [activeTab, setActiveTab] = useState<"product" | "materials">("product");
   const [viewZlecenie, setViewZlecenie] = useState<Zlecenie | null>(null);
   const [viewSesjaId, setViewSesjaId] = useState<string | null>(null);
-  const [showSelektor, setShowSelektor] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<WybranyTowar | null>(null);
-  const [selectedRecId, setSelectedRecId] = useState("");
-  const [planowanaIlosc, setPlanowanaIlosc] = useState("1");
-  const [stockData, setStockData] = useState<Record<string, number>>({});
+  const [sesjaTab, setSesjaTab] = useState<string>("baza");
 
-  const bomData = React.useMemo(() => {
-    if (!selectedRecId) return null;
-    const skladniki = receptury.find(r => r.id === selectedRecId)?.skladniki ?? [];
-    const qtyNum = parseFloat(planowanaIlosc.replace(",", ".")) || 0;
-    const anyShortage = skladniki.some(s => {
-      const req = qtyNum * s.ilosc_wymagana * (1 + (s.procent_strat || 0) / 100);
-      const available = stockData[s.id_asortymentu_skladnika] ?? 0;
-      return req > 0 && available < req;
-    });
-    return { skladniki, qtyNum, anyShortage };
-  }, [selectedRecId, receptury, planowanaIlosc, stockData]);
 
   const viewSesjaData = React.useMemo(() => {
     if (!viewSesjaId) return null;
@@ -102,7 +88,10 @@ export default function Produkcja() {
   }, [viewSesjaId, zlecenia]);
   
   // Page-level tabs
-  const [pageTab, setPageTab] = useState<"zlecenia" | "sesje" | "rozliczenie" | "koszty">("zlecenia");
+  const [pageTab, setPageTab] = useState<"zlecenia" | "sesje" | "rozliczenie" | "koszty">("sesje");
+  const [seszjeSortKey, setSeszjeSortKey] = useState("data");
+  const [seszjeSortDir, setSeszjeSortDir] = useState<SortDir>("desc");
+  const handleSeszjeSort = makeSortHandler(seszjeSortKey, setSeszjeSortKey, setSeszjeSortDir);
 
   // Rozliczenie produkcji
   type Receptura2 = { id: string; numer_wersji: number; asortyment_docelowy: { nazwa: string; kod_towaru: string; typ_asortymentu: string; jednostka_miary: string }; skladniki: any[] };
@@ -225,35 +214,23 @@ export default function Produkcja() {
   }, []);
 
   useEffect(() => {
-    if (!selectedRecId) { setStockData({}); return; }
-    const rec = receptury.find(r => r.id === selectedRecId);
-    if (!rec || rec.skladniki.length === 0) return;
-    fetch("/api/asortyment")
-      .then(r => r.json())
-      .then((items: any[]) => {
-        const ids = new Set(rec.skladniki.map(s => s.id_asortymentu_skladnika));
-        const map: Record<string, number> = {};
-        items.forEach(item => { if (ids.has(item.id)) map[item.id] = item.ilosc ?? 0; });
-        setStockData(map);
-      })
-      .catch(() => {});
-  }, [selectedRecId, receptury]);
+    if (viewSesjaId) setSesjaTab("baza");
+  }, [viewSesjaId]);
+
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (previewDocRef) { setPreviewDocRef(null); return; }
       if (activePicker) { setActivePicker(null); return; }
-      if (showSelektor) { setShowSelektor(false); return; }
       if (showWizard) { setShowWizard(false); return; }
       if (itemToRealize) { setItemToRealize(null); return; }
       if (pickListZlecenie) { setPickListZlecenie(null); return; }
       if (viewZlecenie) { setViewZlecenie(null); return; }
-      if (isAdding) { setIsAdding(false); return; }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [previewDocRef, activePicker, showSelektor, showWizard, itemToRealize, pickListZlecenie, viewZlecenie, isAdding]);
+  }, [previewDocRef, activePicker, showWizard, itemToRealize, pickListZlecenie, viewZlecenie]);
 
   const fetchData = async () => {
     try {
@@ -272,53 +249,6 @@ export default function Produkcja() {
     } catch {}
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedProduct || !selectedRecId) { showToast("Wybierz produkt i recepturę.", "error"); return; }
-    
-    try {
-      const qtyNum = parseFloat(planowanaIlosc.replace(",", "."));
-      if (isNaN(qtyNum) || qtyNum <= 0) throw new Error("Podaj poprawną ilość.");
-
-      const res = await fetch("/api/produkcja", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ 
-          id_receptury: selectedRecId,
-          planowana_ilosc_wyrobu: qtyNum 
-        }) 
-      });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
-
-      setIsAdding(false);
-      setSelectedProduct(null);
-      setSelectedRecId("");
-      setPlanowanaIlosc("1");
-      showToast("Zlecenie zostało utworzone!", "ok");
-      fetchData();
-    } catch (err: any) {
-      showToast(err.message, "error");
-    }
-  };
-
-  const onSelektorConfirm = (items: WybranyTowar[]) => {
-    if (items.length === 0) return;
-    const product = items[0];
-    const availableRecs = receptury.filter(r => r.asortyment_docelowy.id === product.id_asortymentu);
-    
-    if (availableRecs.length === 0) {
-       showToast(`Produkt ${product.nazwa} nie posiada aktywnej receptury.`, "error");
-       return;
-    }
-
-    setSelectedProduct(product);
-    // Wybierz najnowszą wersję domyślnie
-    const defaultRec = availableRecs[0];
-    setSelectedRecId(defaultRec.id);
-    setPlanowanaIlosc(String(defaultRec.wielkosc_produkcji ?? 1));
-    setShowSelektor(false);
-    setIsAdding(true);
-  };
 
   const handleStartProduction = async (z: Zlecenie) => {
     try {
@@ -349,7 +279,7 @@ export default function Produkcja() {
     fetch("/api/asortyment")
       .then(r => r.json())
       .then((items: any[]) => setDostepneOpakowania(items.filter(a => a.typ_asortymentu === "Opakowanie" && a.czy_aktywne)))
-      .catch(() => {});
+      .catch(() => showToast("Nie udało się załadować listy opakowań", "error"));
     const initialValues: { [ingredId: string]: Array<{ id_partii: string, ilosc: number }> } = {};
     
     z.receptura?.skladniki?.forEach(s => {
@@ -791,7 +721,20 @@ export default function Produkcja() {
     }
   };
 
-  const filtered = zlecenia.filter(z => filter === "all" || z.status === filter);
+  const filtered = sortBy<Zlecenie>(
+    zlecenia.filter(z => filter === "all" || z.status === filter),
+    z => {
+      switch (sortKey) {
+        case 'numer_zlecenia': return z.numer_zlecenia ?? z.id;
+        case 'produkt':        return z.receptura.asortyment_docelowy.nazwa;
+        case 'status':         return z.status;
+        case 'plan':           return z.planowana_ilosc_wyrobu;
+        case 'wykonano':       return z.rzeczywista_ilosc_wyrobu ?? -1;
+        default:               return z.utworzono_dnia;
+      }
+    },
+    sortDir
+  );
 
   const handleRozlicz = async () => {
     const pozycje = (Object.entries(planIlosci) as [string, string][])
@@ -814,16 +757,11 @@ export default function Produkcja() {
           <h2 className="text-lg font-bold text-white tracking-wide">Produkcja</h2>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Zlecenia i realizacja produkcji</p>
         </div>
-        {pageTab === "zlecenia" && !isAdding && (
-          <div className="flex gap-2">
-            <button onClick={openWizardWithDraftCheck} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect" style={{ background: 'var(--accent)' }}>
-              <Zap className="w-4 h-4" /> Nowa sesja
-              {hasDraft && <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" title="Zapisany szkic" />}
-            </button>
-            <button onClick={() => setShowSelektor(true)} data-testid="btn-nowe-zlecenie" className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-              <Plus className="w-4 h-4" /> Nowe ZP
-            </button>
-          </div>
+        {pageTab === "sesje" && (
+          <button onClick={openWizardWithDraftCheck} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect" style={{ background: 'var(--accent)' }}>
+            <Zap className="w-4 h-4" /> Nowa sesja
+            {hasDraft && <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" title="Zapisany szkic" />}
+          </button>
         )}
         {pageTab === "rozliczenie" && (
           <button onClick={handleRozlicz} disabled={rozliczLoading} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect disabled:opacity-50" style={{ background: 'var(--accent)' }}>
@@ -835,8 +773,8 @@ export default function Produkcja() {
       {/* Page Tab Bar */}
       <div className="flex gap-0 rounded overflow-hidden w-fit shrink-0" style={{ border: '1px solid var(--border)' }}>
         {[
-          { id: "zlecenia",     label: "Zlecenia produkcyjne", icon: Factory },
           { id: "sesje",        label: "Sesje produkcyjne", icon: Layers },
+          { id: "zlecenia",     label: "Zlecenia produkcyjne", icon: Factory },
           { id: "rozliczenie",  label: "Rozliczenie produkcji", icon: BarChart2 },
           { id: "koszty",       label: "Koszty produkcji", icon: Calculator },
         ].map((tab, i) => (
@@ -1053,7 +991,20 @@ export default function Produkcja() {
                 if (z.status === "W_toku") sessionsMap[sid].status = "W_toku";
               });
 
-              const sessions = Object.values(sessionsMap).sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+              type SessionRow = { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalMasa: number; status: string };
+              const sessions = sortBy<SessionRow>(
+                Object.values(sessionsMap) as SessionRow[],
+                s => {
+                  switch (seszjeSortKey) {
+                    case 'numer_sesji': return s.numer_sesji;
+                    case 'baza':        return s.baza?.receptura?.asortyment_docelowy?.nazwa ?? '';
+                    case 'totalMasa':   return s.totalMasa;
+                    case 'status':      return s.status;
+                    default:            return s.data;
+                  }
+                },
+                seszjeSortDir
+              );
 
               if (sessions.length === 0) return <div className="p-10 text-center text-[var(--text-muted)] text-sm">Brak zarejestrowanych sesji.</div>;
 
@@ -1061,23 +1012,18 @@ export default function Produkcja() {
                 <table className="mes-table">
                   <thead>
                     <tr>
-                      <th className="w-32">Numer sesji</th>
-                      <th>Baza / Produkt główny</th>
+                      <SortableTh label="Numer sesji"       field="numer_sesji" sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="w-32" />
+                      <SortableTh label="Baza / Produkt główny" field="baza"   sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} />
                       <th>Wyroby gotowe</th>
-                      <th className="text-right">Masa całkowita</th>
-                      <th className="w-32">Status</th>
+                      <SortableTh label="Masa całkowita"    field="totalMasa"   sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="text-right" />
+                      <SortableTh label="Status"            field="status"      sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="w-32" />
+                      <SortableTh label="Data"              field="data"        sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="w-32" />
                       <th className="w-20 text-right">Akcje</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sessions.map(s => (
-                      <tr key={s.id} className="cursor-pointer hover:bg-[var(--bg-panel)]" onClick={() => { 
-                        const ord = s.baza || (s.wyroby && s.wyroby[0]);
-                        if (ord) { 
-                          setViewZlecenie(ord); 
-                          setEditIlosc(ord.planowana_ilosc_wyrobu?.toString() || "1");
-                        }
-                      }}>
+                      <tr key={s.id} className="cursor-pointer hover:bg-[var(--bg-panel)]" onClick={() => setViewSesjaId(s.id)}>
                         <td className="mono font-bold text-white">{s.numer_sesji}</td>
                         <td>
                           {s.baza ? (
@@ -1105,6 +1051,7 @@ export default function Produkcja() {
                         <td>
                           <span className={`badge ${getStatusStyle(s.status)}`}>{s.status.replace("_", " ")}</span>
                         </td>
+                        <td className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{fmtDate(s.data)}</td>
                         <td className="text-right" onClick={e => e.stopPropagation()}>
                           <button
                             onClick={() => setViewSesjaId(s.id)}
@@ -1152,13 +1099,13 @@ export default function Produkcja() {
           <table className="mes-table">
             <thead>
               <tr>
-                <th>Nr zlecenia</th>
+                <SortableTh label="Nr zlecenia" field="numer_zlecenia" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th>Sesja</th>
-                <th>Produkt</th>
-                <th>Status</th>
-                <th className="text-right">Plan</th>
-                <th className="text-right">Wykonano</th>
-                <th>Data</th>
+                <SortableTh label="Produkt"     field="produkt"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Status"      field="status"          sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Plan"        field="plan"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+                <SortableTh label="Wykonano"    field="wykonano"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+                <SortableTh label="Data"        field="utworzono_dnia"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th>Akcje</th>
               </tr>
             </thead>
@@ -2013,7 +1960,7 @@ export default function Produkcja() {
                                   </tr>
                                   {surowceWyrobu.length > 0 && (
                                     <tr>
-                                      <td colSpan={5} style={{ padding: 0, background: 'rgba(15,23,42,0.6)' }}>
+                                      <td colSpan={5} style={{ padding: 0, background: 'var(--bg-panel)' }}>
                                         <div className="px-4 pt-1 pb-3">
                                           <div className="text-xs font-semibold uppercase tracking-wider mb-1 mt-2" style={{ color: 'var(--text-muted)' }}>
                                             Surowce — {rec?.asortyment_docelowy.nazwa}
@@ -2478,428 +2425,395 @@ export default function Produkcja() {
 
       {/* ── MODALE GLOBALNE ──────────────────────────────────────────────────────── */}
 
-      {/* New Order Modal / Karta Planowania */}
-      {isAdding && (
-        <div className="fixed inset-0 z-[1055] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-4xl border border-[var(--border)] overflow-hidden flex flex-col" style={{ height: '90vh' }}>
 
-            <div className="flex items-center justify-between p-5 border-b border-[var(--border)] bg-blue-900/20 shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-600/20 flex items-center justify-center border border-blue-500/30">
-                  <Factory className="w-5 h-5 text-blue-400" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">{selectedProduct?.nazwa || "Nowe zlecenie produkcji"}</h3>
-                  <p className="text-[var(--text-muted)] text-xs">{selectedProduct?.kod_towaru || "Kreator zlecenia ZP"}</p>
-                </div>
-              </div>
-              <button onClick={() => { setIsAdding(false); setSelectedProduct(null); }} className="text-[var(--text-muted)] hover:text-white p-2 rounded-lg hover:bg-[var(--bg-input)] transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* 📊 RAPORT SESJI ══════════════════════════════════════════════════════════ */}
+      {viewSesjaData && (() => {
+        const sesjaAllZp = viewSesjaData.zlecenia.slice().sort((a, b) => (a.etap || 0) - (b.etap || 0));
+        const tabCls = (id: string) => `px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors mr-0.5 whitespace-nowrap ${
+          sesjaTab === id
+            ? "border-[var(--accent)] text-white"
+            : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border)]"
+        }`;
+        return (
+          <div className="fixed inset-0 z-[1060] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6" onClick={() => setViewSesjaId(null)}>
+            <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-5xl border border-[var(--border)] flex flex-col" style={{ height: '93vh' }} onClick={e => e.stopPropagation()}>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="space-y-4">
-                     <h4 className="text-[var(--text-secondary)] text-xs font-bold uppercase tracking-widest">Parametry wyjściowe</h4>
-
-                     <div className="space-y-3">
-                        <div className="space-y-1.5">
-                          <label className="text-[var(--text-secondary)] text-xs font-semibold">Wersja receptury</label>
-                          <select
-                            value={selectedRecId}
-                            onChange={(e) => {
-                              const rec = receptury.find(r => r.id === e.target.value);
-                              setSelectedRecId(e.target.value);
-                              if (rec) setPlanowanaIlosc(String(rec.wielkosc_produkcji ?? 1));
-                            }}
-                            className="w-full bg-[var(--bg-input)] border border-[var(--border-dim)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500 transition-colors font-semibold appearance-none"
-                          >
-                            {receptury
-                              .filter(r => r.asortyment_docelowy.id === selectedProduct?.id_asortymentu)
-                              .map(r => (
-                                <option key={r.id} value={r.id}>Wersja v{r.numer_wersji} ({new Date(r.utworzono_dnia).toLocaleDateString()})</option>
-                              ))
-                            }
-                          </select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-[var(--text-secondary)] text-xs font-semibold">Ilość planowana</label>
-                          <div className="relative">
-                            <input
-                              type="text"
-                              value={planowanaIlosc}
-                              onChange={(e) => setPlanowanaIlosc(e.target.value)}
-                              className="w-full bg-[var(--bg-input)] border border-[var(--border-dim)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500 transition-colors font-mono font-bold text-right pr-16"
-                              placeholder="0.000"
-                            />
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--text-muted)] text-xs pointer-events-none">
-                              {selectedProduct?.jednostka_miary}
-                            </div>
-                          </div>
-                        </div>
-                     </div>
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-blue-600/15 border border-blue-500/30">
+                    <LayoutDashboard className="w-5 h-5 text-blue-400" />
                   </div>
-
-                  <div className="space-y-4">
-                     <h4 className="text-[var(--text-secondary)] text-xs font-bold uppercase tracking-widest">Bilans materiałowy</h4>
-                     {bomData ? (
-                       <>
-                         {bomData.anyShortage && (
-                           <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--warn)' }}>
-                             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                             Niewystarczające stany magazynowe — zlecenie można zaplanować, ale rezerwacja może się nie udać.
-                           </div>
-                         )}
-                         <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)] space-y-2">
-                           <div className="flex justify-between text-xs text-[var(--text-muted)] font-semibold mb-1 px-0.5">
-                             <span>Składnik</span>
-                             <span className="flex gap-6 text-right">
-                               <span className="w-20">Potrzeba</span>
-                               <span className="w-20">Dostępne</span>
-                             </span>
-                           </div>
-                           {bomData.skladniki.map(s => {
-                             const req = bomData.qtyNum * s.ilosc_wymagana * (1 + (s.procent_strat || 0) / 100);
-                             const available = stockData[s.id_asortymentu_skladnika] ?? 0;
-                             const shortage = req > 0 && available < req;
-                             const jm = s.czy_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary;
-                             return (
-                               <div key={s.asortyment_skladnika.id} className="flex justify-between items-center">
-                                 <span className={`text-sm truncate pr-4 ${shortage ? 'text-red-400' : 'text-[var(--text-secondary)]'}`}>{s.asortyment_skladnika.nazwa}</span>
-                                 <span className="flex gap-6 text-right">
-                                   <span className="text-blue-300 font-mono text-sm font-bold whitespace-nowrap w-20">
-                                     {fmtL(req, 3)} <span className="text-[var(--text-muted)] text-xs">{jm}</span>
-                                   </span>
-                                   <span className={`font-mono text-sm font-bold whitespace-nowrap w-20 ${shortage ? 'text-red-400' : 'text-green-400'}`}>
-                                     {fmtL(available, 3)} <span className="text-[var(--text-muted)] text-xs">{jm}</span>
-                                   </span>
-                                 </span>
-                               </div>
-                             );
-                           })}
-                         </div>
-                       </>
-                     ) : (
-                       <div className="h-32 flex items-center justify-center bg-[var(--bg-surface)] rounded-xl border border-dashed border-[var(--border)]">
-                         <p className="text-slate-600 text-xs">Wybierz recepturę by zobaczyć BOM</p>
-                       </div>
-                     )}
-                  </div>
-               </div>
-            </div>
-
-            <div className="p-4 border-t border-[var(--border)] bg-[var(--bg-surface)]/50 flex justify-between items-center shrink-0">
-              <button onClick={() => { setIsAdding(false); setSelectedProduct(null); }} className="px-5 py-2.5 text-[var(--text-secondary)] hover:bg-[var(--bg-input)] rounded-xl font-semibold transition-colors">
-                Anuluj
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={!selectedProduct}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px] transition-colors"
-              >
-                <Save className="w-4 h-4" /> Utwórz zlecenie
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showSelektor && (
-        <AsortymentSelektor 
-          tryb="prod" 
-          typy={["Polprodukt", "Wyrob_Gotowy"]}
-          singleSelect={true}
-          onClose={() => setShowSelektor(false)} 
-          onConfirm={onSelektorConfirm} 
-        />
-      )}
-
-      {/* 📊 RAPORT SESJI (DASHBOARD) ══════════════════════════════════════════════ */}
-      {viewSesjaData && (
-        <div className="fixed inset-0 z-[1060] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6" onClick={() => setViewSesjaId(null)}>
-          <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-5xl border border-[var(--border)] flex flex-col" style={{ height: '93vh' }} onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-5 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-blue-600/15 border border-blue-500/30">
-                  <LayoutDashboard className="w-6 h-6 text-blue-400" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-white flex items-center gap-2">
-                    Raport sesji: <span className="text-blue-400 mono">{viewSesjaData.numer_sesji}</span>
-                  </h3>
-                  <div className="flex items-center gap-3 text-xs text-[var(--text-muted)] font-medium">
-                    <span>Utworzono: {new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</span>
-                    <span>·</span>
-                    <span className={`px-2 py-0.5 rounded-full font-bold ${viewSesjaData.status === "Zrealizowane" ? "bg-emerald-500/10 text-emerald-400" : "bg-blue-500/10 text-blue-400"}`}>
-                      {viewSesjaData.status}
-                    </span>
+                  <div>
+                    <h3 className="text-lg font-black text-white flex items-center gap-2">
+                      Sesja: <span className="text-blue-400 mono">{viewSesjaData.numer_sesji}</span>
+                    </h3>
+                    <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] font-medium">
+                      <span>{new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</span>
+                      <span>·</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${viewSesjaData.status === "Zrealizowane" ? "bg-emerald-500/10 text-emerald-400" : "bg-blue-500/10 text-blue-400"}`}>
+                        {viewSesjaData.status}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    const win = window.open("", "_blank", "width=800,height=600");
-                    if (!win) return;
-                    const items = viewSesjaData.zlecenia;
-                    const wyroby = viewSesjaData.wyroby;
-                    const surowce = Array.from(items.reduce((acc, z) => {
-                       z.ruchy_magazynowe.filter(r => r.typ_ruchu === "Zuzycie").forEach(r => {
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const win = window.open("", "_blank", "width=800,height=600");
+                      if (!win) return;
+                      const items = viewSesjaData.zlecenia;
+                      const wyroby = viewSesjaData.wyroby;
+                      const surowce = Array.from(items.reduce((acc, z) => {
+                        z.ruchy_magazynowe.filter(r => r.typ_ruchu === "Zuzycie").forEach(r => {
                           const k = r.partia.asortyment.nazwa;
                           if (!acc.has(k)) acc.set(k, { nazwa: k, ilosc: 0, jm: r.partia.asortyment.jednostka_miary });
                           acc.get(k).ilosc += Math.abs(r.ilosc);
-                       });
-                       return acc;
-                    }, new Map()).values());
-                    const docs = items.flatMap(z => z.ruchy_magazynowe.map(r => r.referencja_dokumentu).filter(Boolean).map(ref => ({ ref, typ: z.etap === 1 ? "RW" : "PW", asort: z.receptura.asortyment_docelowy.nazwa, ilosc: z.rzeczywista_ilosc_wyrobu || 0 })));
-                    
-                    const wyrobyHTML = wyroby.map(w => `<tr><td>${w.receptura.asortyment_docelowy.nazwa}</td><td>${w.numer_partii_wyrobu || "—"}</td><td style="text-align:right">${fmtL(w.rzeczywista_ilosc_wyrobu || 0, 3)} kg</td></tr>`).join("");
-                    const surowceHTML = surowce.map((s: any) => `<tr><td>${s.nazwa}</td><td style="text-align:right">${fmtL(s.ilosc, 3)} ${s.jm}</td></tr>`).join("");
-                    
-                    win.document.write(`<!DOCTYPE html><html><head><title>Raport Sesji ${viewSesjaData.id}</title><style>body{font-family:sans-serif;padding:40px;color:#334155} h1{margin-bottom:4px} .meta{color:#64748b;font-size:12px;margin-bottom:30px} table{width:100%;border-collapse:collapse;margin-top:10px} th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:11px;text-transform:uppercase} td{padding:8px;border-bottom:1px solid #e2e8f0;font-size:14px} h2{font-size:16px;margin-top:30px;border-bottom:1px solid #cbd5e1;padding-bottom:5px;text-transform:uppercase;letter-spacing:1px}</style></head><body><h1>RAPORT SESJI: ${viewSesjaData.numer_sesji}</h1><div class="meta">Data sesji: ${new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</div><h2>Wyroby gotowe</h2><table><thead><tr><th>Nazwa produktu</th><th>Nr partii</th><th style="text-align:right">Masa (kg)</th></tr></thead><tbody>${wyrobyHTML}</tbody></table><h2>Zużyte surowce</h2><table><thead><tr><th>Surowiec</th><th style="text-align:right">Ilość</th></tr></thead><tbody>${surowceHTML}</tbody></table><div style="margin-top:50px;font-size:11px;color:#94a3b8">Wydrukowano z systemu MES: ${new Date().toLocaleString()}</div></body></html>`);
-                    win.document.close();
-                    win.print();
-                  }}
-                  className="p-2.5 bg-slate-700 text-slate-300 hover:text-white hover:bg-slate-600 rounded-xl transition-all border border-slate-600 flex items-center gap-2 text-sm font-bold"
-                >
-                  <Printer className="w-4 h-4" /> Drukuj raport
-                </button>
-                <button onClick={() => setViewSesjaId(null)} className="text-[var(--text-muted)] hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors">
-                  <X className="w-6 h-6" />
+                        });
+                        return acc;
+                      }, new Map()).values());
+                      const wyrobyHTML = wyroby.map(w => `<tr><td>${w.receptura.asortyment_docelowy.nazwa}</td><td>${w.numer_partii_wyrobu || "—"}</td><td style="text-align:right">${fmtL(w.rzeczywista_ilosc_wyrobu || 0, 3)} kg</td></tr>`).join("");
+                      const surowceHTML = surowce.map((s: any) => `<tr><td>${s.nazwa}</td><td style="text-align:right">${fmtL(s.ilosc, 3)} ${s.jm}</td></tr>`).join("");
+                      win.document.write(`<!DOCTYPE html><html><head><title>Raport Sesji ${viewSesjaData.numer_sesji}</title><style>body{font-family:sans-serif;padding:40px;color:#334155}h1{margin-bottom:4px}.meta{color:#64748b;font-size:12px;margin-bottom:30px}table{width:100%;border-collapse:collapse;margin-top:10px}th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:11px;text-transform:uppercase}td{padding:8px;border-bottom:1px solid #e2e8f0;font-size:14px}h2{font-size:16px;margin-top:30px;border-bottom:1px solid #cbd5e1;padding-bottom:5px;text-transform:uppercase;letter-spacing:1px}</style></head><body><h1>RAPORT SESJI: ${viewSesjaData.numer_sesji}</h1><div class="meta">Data sesji: ${new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</div><h2>Wyroby gotowe</h2><table><thead><tr><th>Nazwa produktu</th><th>Nr partii</th><th style="text-align:right">Masa (kg)</th></tr></thead><tbody>${wyrobyHTML}</tbody></table><h2>Zużyte surowce</h2><table><thead><tr><th>Surowiec</th><th style="text-align:right">Ilość</th></tr></thead><tbody>${surowceHTML}</tbody></table><div style="margin-top:50px;font-size:11px;color:#94a3b8">Wydrukowano z systemu MES: ${new Date().toLocaleString()}</div></body></html>`);
+                      win.document.close();
+                      win.print();
+                    }}
+                    className="p-2.5 bg-slate-700 text-slate-300 hover:text-white hover:bg-slate-600 rounded-xl transition-all border border-slate-600 flex items-center gap-2 text-sm font-bold"
+                  >
+                    <Printer className="w-4 h-4" /> Drukuj
+                  </button>
+                  <button onClick={() => setViewSesjaId(null)} className="text-[var(--text-muted)] hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Tab bar */}
+              <div className="flex items-end px-5 shrink-0 border-b border-[var(--border)]" style={{ background: 'var(--bg-surface)' }}>
+                {viewSesjaData.baza && (
+                  <button onClick={() => setSesjaTab("baza")} className={tabCls("baza")}>
+                    <span className="text-[10px] font-black text-blue-400 mr-1.5">E1</span>Baza
+                  </button>
+                )}
+                {viewSesjaData.wyroby.map(w => (
+                  <button key={w.id} onClick={() => setSesjaTab(w.id)} className={tabCls(w.id)}>
+                    <span className="text-[10px] font-black text-emerald-400 mr-1.5">E2</span>{w.receptura?.asortyment_docelowy?.nazwa}
+                  </button>
+                ))}
+                <div className="flex-1" />
+                <button onClick={() => setSesjaTab("podsumowanie")} className={tabCls("podsumowanie")}>
+                  Podsumowanie
                 </button>
               </div>
-            </div>
 
-            <div className="overflow-y-auto flex-1 p-6 space-y-8">
-               {/* 1. KPIs */}
-               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)] shadow-sm">
-                    <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Wyroby gotowe</div>
-                    <div className="text-2xl font-black text-white">{viewSesjaData.wyroby.length} poz.</div>
-                  </div>
-                  <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)] shadow-sm">
-                    <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Całkowita masa</div>
-                    <div className="text-2xl font-black text-emerald-400">{fmtL(viewSesjaData.wyroby.reduce((s: number, w: any) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0), 2)} <span className="text-xs">kg</span></div>
-                  </div>
-                  <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)] shadow-sm">
-                    <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Liczba opakowań</div>
-                    <div className="text-2xl font-black text-blue-400">{viewSesjaData.wyroby.reduce((s: number, w: any) => s + (w.opakowania?.length || 0), 0)} szt.</div>
-                  </div>
-                  <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)] shadow-sm">
-                    <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Dokumenty</div>
-                    <div className="text-2xl font-black text-amber-500">{viewSesjaData.zlecenia.reduce((acc: number, z: any) => acc + (z.ruchy_magazynowe?.length || 0), 0)}</div>
-                  </div>
-               </div>
+              {/* Tab content */}
+              <div className="overflow-y-auto flex-1 p-6">
 
-               {/* 2. Szczegóły wyrobów */}
-               <div>
-                  <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
-                    <Package className="w-4 h-4 text-emerald-400" /> Produkcja wyrobów gotowych
-                  </h3>
-                  <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-[var(--bg-surface)]">
-                          <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Produkt</th>
-                          <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Nr partii</th>
-                          <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Masa (kg)</th>
-                          <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Opakowania</th>
-                          <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Masa op. (kg)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--border)]/50">
-                        {viewSesjaData.wyroby.map((w: any, i: number) => {
-                          const wagaOp = w.opakowania?.reduce((s: number, o: any) => s + (o.waga_kg || 0), 0) || 0;
-                          return (
-                            <tr key={i} className="hover:bg-[var(--bg-surface)]/40 transition-colors">
-                              <td className="px-4 py-3 text-white font-semibold">{w.receptura?.asortyment_docelowy?.nazwa}</td>
-                              <td className="px-4 py-3 mono font-bold text-blue-400">{w.numer_partii_wyrobu || "—"}</td>
-                              <td className="px-4 py-3 text-right mono font-black text-white text-base">{fmtL(w.rzeczywista_ilosc_wyrobu || 0, 3)}</td>
-                              <td className="px-4 py-3 text-[var(--text-primary)] text-xs">
-                                {w.opakowania && w.opakowania.length > 0
-                                  ? w.opakowania.map((o: any, j: number) => (
-                                      <span key={j} className="inline-block mr-2">{o.nazwa} <span className="text-[var(--text-muted)]">({fmtL(o.waga_kg, 2)} kg)</span></span>
-                                    ))
-                                  : <span className="text-slate-600">—</span>}
-                              </td>
-                              <td className="px-4 py-3 text-right mono font-bold text-purple-400">{wagaOp > 0 ? fmtL(wagaOp, 3) : "—"}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-               </div>
-
-               {/* 3. Surowce i Dokumenty */}
-               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Surowce */}
-                  <div>
-                    <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
-                      <Database className="w-4 h-4 text-blue-400" /> Podsumowanie surowców
-                    </h3>
-                    <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
-                       <table className="w-full text-sm">
-                         <thead>
-                           <tr className="bg-[var(--bg-surface)]">
-                             <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Surowiec</th>
-                             <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Ilość</th>
-                             <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">J.M.</th>
-                           </tr>
-                         </thead>
-                         <tbody className="divide-y divide-[var(--border)]/50">
-                           {Array.from(viewSesjaData.zlecenia.reduce((acc, z) => {
-                             (z.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === "Zuzycie").forEach((r: any) => {
-                               const k = r.partia?.asortyment?.nazwa || "Nieznany";
-                               if (!acc.has(k)) acc.set(k, { nazwa: k, ilosc: 0, jm: r.partia?.asortyment?.jednostka_miary || "kg" });
-                               acc.get(k).ilosc += Math.abs(r.ilosc);
-                             });
-                             return acc;
-                           }, new Map<string, any>()).values()).sort((a,b) => b.ilosc - a.ilosc).map((s: any, i: number) => (
-                             <tr key={i} className="hover:bg-[var(--bg-surface)]/20">
-                               <td className="px-4 py-2.5 text-[var(--text-primary)] font-medium">{s.nazwa}</td>
-                               <td className="px-4 py-2.5 text-right mono font-bold text-white">{fmtL(s.ilosc, 3)}</td>
-                               <td className="px-4 py-2.5 text-[var(--text-muted)] text-xs">{s.jm}</td>
-                             </tr>
-                           ))}
-                         </tbody>
-                       </table>
+                {/* ── BAZA TAB ── */}
+                {sesjaTab === "baza" && viewSesjaData.baza && (() => {
+                  const z = viewSesjaData.baza!;
+                  const surowce = (z.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === "Zuzycie");
+                  const docs = (z.ruchy_magazynowe || []).filter((r: any) => r.referencja_dokumentu).map((r: any) => ({ ref: r.referencja_dokumentu as string, typ: r.typ_ruchu as string })).filter((d, i, arr) => arr.findIndex(x => x.ref === d.ref) === i);
+                  return (
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Nr ZP</div>
+                          <div className="mono font-bold text-white">{z.numer_zlecenia || "—"}</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Receptura bazy</div>
+                          <div className="font-semibold text-white text-sm">{z.receptura?.asortyment_docelowy?.nazwa}</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Plan</div>
+                          <div className="mono font-bold text-white">{fmtL(z.planowana_ilosc_wyrobu, 3)} kg</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Wykonano</div>
+                          <div className="mono font-bold text-emerald-400">{fmtL(z.rzeczywista_ilosc_wyrobu || 0, 3)} kg</div>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                          <Database className="w-4 h-4 text-blue-400" /> Zużyte surowce
+                        </h3>
+                        <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-[var(--bg-surface)]">
+                                <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Surowiec</th>
+                                <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Nr partii</th>
+                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Ilość</th>
+                                <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">J.M.</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--border)]/50">
+                              {surowce.length === 0
+                                ? <tr><td colSpan={4} className="px-4 py-4 text-center text-[var(--text-muted)] text-sm">Brak danych o zużyciu</td></tr>
+                                : surowce.map((r: any, i: number) => (
+                                  <tr key={i} className="hover:bg-[var(--bg-surface)]/40">
+                                    <td className="px-4 py-2.5 font-medium text-[var(--text-primary)]">{r.partia?.asortyment?.nazwa || "—"}</td>
+                                    <td className="px-4 py-2.5 mono text-xs text-blue-400">{r.partia?.numer_partii || "—"}</td>
+                                    <td className="px-4 py-2.5 text-right mono font-bold text-white">{fmtL(Math.abs(r.ilosc), 3)}</td>
+                                    <td className="px-4 py-2.5 text-[var(--text-muted)] text-xs">{r.partia?.asortyment?.jednostka_miary || "kg"}</td>
+                                  </tr>
+                                ))
+                              }
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      {docs.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-amber-500" /> Dokumenty
+                          </h3>
+                          <div className="flex flex-wrap gap-2">
+                            {docs.map((d, i) => (
+                              <button key={i} onClick={() => openDocPreview(d.ref)}
+                                className="px-3 py-1.5 bg-[var(--bg-surface)] border border-[var(--border)] rounded-lg text-sm mono font-bold text-white hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
+                                {d.ref} <span className="text-[10px] font-black text-orange-400">RW</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  );
+                })()}
 
-                  {/* Dokumenty */}
-                  <div>
-                    <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-amber-500" /> Dokumenty sesji
-                    </h3>
-                    <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
-                       <table className="w-full text-sm">
-                         <thead>
-                           <tr className="bg-[var(--bg-surface)]">
-                             <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Nr dok.</th>
-                             <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Typ</th>
-                             <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Ilość</th>
-                           </tr>
-                         </thead>
-                         <tbody className="divide-y divide-[var(--border)]/50">
-                           {viewSesjaData.zlecenia.flatMap(z => (z.ruchy_magazynowe || []).map(r => ({ ref: r.referencja_dokumentu, typ: r.typ_ruchu, ilosc: r.ilosc }))).filter(d => d.ref).map((d: any, i: number) => (
-                             <tr key={i} className="hover:bg-[var(--bg-surface)]/20 cursor-pointer" onClick={() => setPreviewDocRef(d.ref)}>
-                               <td className="px-4 py-2.5 mono font-bold text-white">{d.ref}</td>
-                               <td className="px-4 py-2.5">
-                                 <span className={`text-[10px] font-black px-2 py-0.5 rounded ${d.typ === "Przyjecie" ? "bg-emerald-500/10 text-emerald-400" : "bg-orange-500/10 text-orange-400"}`}>
-                                   {d.typ === "Przyjecie" ? "PW" : "RW"}
-                                 </span>
-                               </td>
-                               <td className="px-4 py-2.5 text-right mono text-[var(--text-muted)]">{fmtL(Math.abs(d.ilosc), 3)}</td>
-                             </tr>
-                           ))}
-                         </tbody>
-                       </table>
+                {/* ── WYRÓB TABS ── */}
+                {viewSesjaData.wyroby.map(w => sesjaTab === w.id && (() => {
+                  const surowce = (w.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === "Zuzycie");
+                  const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
+                  const docs = (w.ruchy_magazynowe || []).filter((r: any) => r.referencja_dokumentu).map((r: any) => ({ ref: r.referencja_dokumentu as string, typ: r.typ_ruchu as string })).filter((d, i, arr) => arr.findIndex(x => x.ref === d.ref) === i);
+                  const wagaWyk = w.rzeczywista_ilosc_wyrobu || 0;
+                  const delta = wagaWyk - w.planowana_ilosc_wyrobu;
+                  const opGrupy: any[] = w.opakowania && w.opakowania.length > 0
+                    ? Object.values(w.opakowania.reduce((acc: any, op) => {
+                        const k = `${op.id_asortymentu}_${op.waga_kg}`;
+                        if (!acc[k]) acc[k] = { ...op, count: 0 };
+                        acc[k].count++;
+                        return acc;
+                      }, {}))
+                    : [];
+                  return (
+                    <div key={w.id} className="space-y-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Nr ZP</div>
+                          <div className="mono font-bold text-white">{w.numer_zlecenia || "—"}</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Nr partii (PW)</div>
+                          <div className="mono font-bold text-blue-400">{(przyjecie as any)?.partia?.numer_partii || w.numer_partii_wyrobu || "—"}</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Plan</div>
+                          <div className="mono font-bold text-white">{fmtL(w.planowana_ilosc_wyrobu, 3)} kg</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
+                          <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Wykonano</div>
+                          <div className="flex items-baseline gap-2">
+                            <span className="mono font-bold text-emerald-400">{fmtL(wagaWyk, 3)} kg</span>
+                            {w.status === "Zrealizowane" && (
+                              <span className={`text-[10px] font-black ${delta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {delta >= 0 ? "+" : ""}{fmtL(delta, 2)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                            <Package className="w-4 h-4 text-purple-400" /> Pakowanie
+                          </h3>
+                          <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                            {opGrupy.length === 0 ? (
+                              <div className="px-4 py-6 text-center text-[var(--text-muted)] text-sm">Brak danych o pakowaniu</div>
+                            ) : (
+                              <div className="divide-y divide-[var(--border)]/50">
+                                {opGrupy.sort((a: any, b: any) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg).map((op: any, i: number) => (
+                                  <div key={i} className="flex justify-between items-center px-4 py-2.5 text-sm hover:bg-[var(--bg-surface)]/40">
+                                    <span className="text-[var(--text-primary)]">
+                                      <span className="font-bold text-[var(--text-muted)]">{op.count} ×</span>{" "}{op.nazwa}
+                                      <span className="text-xs text-[var(--text-muted)] ml-1">({fmtL(op.waga_kg, 3)} kg)</span>
+                                    </span>
+                                    <span className="mono font-bold text-white">{fmtL(op.waga_kg * op.count, 3)} kg</span>
+                                  </div>
+                                ))}
+                                <div className="flex justify-between items-center px-4 py-2.5 text-sm" style={{ background: 'var(--bg-surface)' }}>
+                                  <span className="font-bold text-[var(--text-muted)]">Razem</span>
+                                  <span className="mono font-bold" style={{ color: 'var(--ok)' }}>
+                                    {fmtL((w.opakowania || []).reduce((s, o) => s + o.waga_kg, 0), 3)} kg
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                            <Database className="w-4 h-4 text-blue-400" /> Zużyte surowce
+                          </h3>
+                          <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="bg-[var(--bg-surface)]">
+                                  <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Surowiec / Partia</th>
+                                  <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Ilość</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-[var(--border)]/50">
+                                {surowce.length === 0
+                                  ? <tr><td colSpan={2} className="px-4 py-4 text-center text-[var(--text-muted)] text-sm">Brak danych o zużyciu</td></tr>
+                                  : surowce.map((r: any, i: number) => (
+                                    <tr key={i} className="hover:bg-[var(--bg-surface)]/40">
+                                      <td className="px-4 py-2.5">
+                                        <div className="font-medium text-[var(--text-primary)]">{r.partia?.asortyment?.nazwa || "—"}</div>
+                                        <div className="mono text-xs text-blue-400">{r.partia?.numer_partii || ""}</div>
+                                      </td>
+                                      <td className="px-4 py-2.5 text-right">
+                                        <span className="mono font-bold text-white">{fmtL(Math.abs(r.ilosc), 3)}</span>
+                                        <span className="text-xs text-[var(--text-muted)] ml-1">{r.partia?.asortyment?.jednostka_miary || "kg"}</span>
+                                      </td>
+                                    </tr>
+                                  ))
+                                }
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                      {docs.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-amber-500" /> Dokumenty
+                          </h3>
+                          <div className="flex flex-wrap gap-2">
+                            {docs.map((d, i) => (
+                              <button key={i} onClick={() => openDocPreview(d.ref)}
+                                className="px-3 py-1.5 bg-[var(--bg-surface)] border border-[var(--border)] rounded-lg text-sm mono font-bold text-white hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
+                                {d.ref}
+                                <span className={`text-[10px] font-black ${d.typ === "Przyjecie_Z_Produkcji" ? "text-emerald-400" : "text-orange-400"}`}>
+                                  {d.typ === "Przyjecie_Z_Produkcji" ? "PW" : "RW"}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-               </div>
+                  );
+                })())}
+
+                {/* ── PODSUMOWANIE TAB ── */}
+                {sesjaTab === "podsumowanie" && (() => {
+                  const totalPlan = viewSesjaData.wyroby.reduce((s, w) => s + w.planowana_ilosc_wyrobu, 0);
+                  const totalWyk = viewSesjaData.wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0);
+                  const totalOp = viewSesjaData.wyroby.reduce((s, w) => s + (w.opakowania?.length || 0), 0);
+                  return (
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Wyroby gotowe</div>
+                          <div className="text-2xl font-black text-white">{viewSesjaData.wyroby.length} poz.</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Całkowita masa</div>
+                          <div className="text-2xl font-black text-emerald-400">{fmtL(totalWyk, 2)} <span className="text-xs">kg</span></div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Liczba opakowań</div>
+                          <div className="text-2xl font-black text-blue-400">{totalOp} szt.</div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Dokumenty</div>
+                          <div className="text-2xl font-black text-amber-500">{viewSesjaData.zlecenia.reduce((acc, z) => acc + (z.ruchy_magazynowe?.length || 0), 0)}</div>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-blue-400" /> Zestawienie ZP sesji
+                        </h3>
+                        <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-[var(--bg-surface)]">
+                                <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Nr ZP</th>
+                                <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Etap</th>
+                                <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Smak / Produkt</th>
+                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Plan [kg]</th>
+                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Wykonano [kg]</th>
+                                <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Opakowania</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--border)]/50">
+                              {sesjaAllZp.map((z, i) => {
+                                const opGrupy: any[] = z.opakowania && z.opakowania.length > 0
+                                  ? Object.values(z.opakowania.reduce((acc: any, op) => {
+                                      const k = `${op.id_asortymentu}_${op.waga_kg}`;
+                                      if (!acc[k]) acc[k] = { ...op, count: 0 };
+                                      acc[k].count++;
+                                      return acc;
+                                    }, {}))
+                                  : [];
+                                return (
+                                  <tr key={i} className="hover:bg-[var(--bg-surface)]/40 transition-colors">
+                                    <td className="px-4 py-3 mono font-bold text-white">{z.numer_zlecenia || "—"}</td>
+                                    <td className="px-4 py-3">
+                                      <span className={`badge ${z.etap === 1 ? "badge-info" : "badge-ok"}`}>
+                                        {z.etap === 1 ? "Etap 1 · Baza" : "Etap 2 · Wyrób"}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 font-semibold text-[var(--text-primary)]">{z.receptura?.asortyment_docelowy?.nazwa}</td>
+                                    <td className="px-4 py-3 text-right mono text-[var(--text-muted)]">{fmtL(z.planowana_ilosc_wyrobu, 3)}</td>
+                                    <td className="px-4 py-3 text-right mono font-bold text-white">{fmtL(z.rzeczywista_ilosc_wyrobu || 0, 3)}</td>
+                                    <td className="px-4 py-3 text-xs text-[var(--text-primary)]">
+                                      {opGrupy.length === 0
+                                        ? <span className="text-slate-600">—</span>
+                                        : opGrupy.sort((a: any, b: any) => a.nazwa.localeCompare(b.nazwa)).map((op: any, j: number) => (
+                                          <span key={j} className="inline-block mr-2">
+                                            <span className="font-bold text-[var(--text-muted)]">{op.count}×</span>{" "}{op.nazwa}
+                                          </span>
+                                        ))}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-[var(--border)] bg-[var(--bg-surface)]">
+                                <td colSpan={3} className="px-4 py-3 font-black text-white uppercase text-[11px] tracking-widest">SUMA wyrobów</td>
+                                <td className="px-4 py-3 text-right mono text-[var(--text-muted)]">{fmtL(totalPlan, 3)}</td>
+                                <td className="px-4 py-3 text-right mono font-black text-xl" style={{ color: 'var(--ok)' }}>{fmtL(totalWyk, 2)}</td>
+                                <td className="px-4 py-3 text-sm font-bold text-[var(--text-muted)]">{totalOp > 0 ? `${totalOp} szt.` : "—"}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ═══ PODGLĄD DOKUMENTU ════════════════════════════════════════════════ */}
       {previewDocRef && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6" onClick={() => setPreviewDocRef(null)}>
-          <div className="bg-[var(--bg-panel)] rounded-lg shadow-2xl w-full max-w-3xl border border-[var(--border)] flex flex-col" style={{ height: '100%' }} onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center px-5 py-3 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
-              <div className="flex items-center gap-3">
-                <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-                <h3 className="text-base font-bold text-white">{previewDocRef}</h3>
-                {previewDocData && <span className="badge badge-info">{previewDocData.typ}</span>}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    const win = window.open("", "_blank", "width=800,height=600");
-                    if (!win) return;
-                    const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
-                    const fmtFull = (d: string) => new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-                    const pozycjeHTML = (previewDocData as any).pozycje.map((p: any) =>
-                      `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${p.asortyment}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold">${fmtL(p.ilosc, 3)} ${p.jednostka}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmt(p.termin_waznosci)}</td></tr>`
-                    ).join("");
-                    win.document.write(`<!DOCTYPE html><html><head><title>${previewDocData.referencja}</title><style>body{font-family:Inter,system-ui,sans-serif;padding:40px;color:#1e293b;max-width:800px;margin:0 auto} h1{font-size:24px;margin:0 0 4px} .meta{color:#64748b;font-size:13px;margin-bottom:24px} table{width:100%;border-collapse:collapse;margin-top:16px} th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;color:#64748b} .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;margin-left:8px} @media print{body{padding:20px}}</style></head><body><h1>${previewDocData.referencja} <span class="badge" style="background:#e0e7ff;color:#4338ca">${previewDocData.typ}</span></h1><div class="meta">${fmtFull(previewDocData.data)} · Wystawił: ${previewDocData.uzytkownik}</div><table><thead><tr><th>Asortyment</th><th>Nr Partii</th><th style="text-align:right">Ilość</th><th>Ważność</th></tr></thead><tbody>${pozycjeHTML}</tbody></table></body></html>`);
-                    win.document.close();
-                    win.print();
-                  }}
-                  className="p-2.5 bg-[var(--bg-input)]/50 text-[var(--text-secondary)] hover:text-white hover:bg-[#475569] rounded-xl transition-all min-w-[44px] min-h-[44px] flex items-center justify-center border border-[var(--border-dim)]"
-                  title="Drukuj"
-                >
-                  <Printer className="w-5 h-5" />
-                </button>
-                <button onClick={() => setPreviewDocRef(null)} className="text-[var(--text-muted)] hover:text-white p-2 rounded-lg hover:bg-[var(--bg-input)]">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            {previewDocData && (
-              <div className="flex items-center gap-6 px-5 py-2.5 border-b border-[var(--border)] text-xs shrink-0" style={{ background: 'var(--bg-surface)' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Data: <span className="text-white font-semibold">{new Date(previewDocData.data).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span></span>
-                <span style={{ color: 'var(--text-muted)' }}>Wystawił: <span className="text-white font-semibold">{previewDocData.uzytkownik}</span></span>
-                {previewDocData.numer_zlecenia && <span style={{ color: 'var(--text-muted)' }}>Zlecenie: <span className="mono font-semibold" style={{ color: 'var(--text-code)' }}>{previewDocData.numer_zlecenia}</span></span>}
-              </div>
-            )}
-            <div className="overflow-y-auto flex-1">
-              {previewDocLoading ? (
-                <div className="flex justify-center p-8"><Spinner /></div>
-              ) : !previewDocData ? (
-                <div className="text-center p-8 text-[var(--text-muted)]">Brak danych o dokumencie</div>
-              ) : (
-                <table className="mes-table">
-                  <thead>
-                    <tr>
-                      <th>Towar</th>
-                      <th>Partia</th>
-                      <th className="text-right">Ilość</th>
-                      <th className="text-right">Cena</th>
-                      <th className="text-right">Wartość</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(previewDocData as any).pozycje?.map((poz: any, i: number) => (
-                      <tr key={i}>
-                        <td>
-                          <div className="font-semibold text-white">{poz.asortyment}</div>
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{poz.kod_towaru}</div>
-                        </td>
-                        <td className="mono text-xs font-semibold" style={{ color: 'var(--text-code)' }}>{poz.numer_partii}</td>
-                        <td className="text-right mono font-bold text-white">
-                          {fmtL(poz.ilosc, 3)} <span className="text-[var(--text-muted)] text-xs">{poz.jednostka}</span>
-                        </td>
-                        <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
-                          {poz.cena_jednostkowa != null ? `${fmtL(poz.cena_jednostkowa, 2)} PLN` : "—"}
-                        </td>
-                        <td className="text-right font-bold" style={{ color: 'var(--ok)' }}>
-                          {poz.cena_jednostkowa != null ? `${fmtL(poz.wartosc, 2)} PLN` : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  {previewDocData.wartosc_calkowita > 0 && (
-                    <tfoot>
-                      <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-                        <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Razem</td>
-                        <td className="px-3 py-2 text-right font-bold mono text-white">{fmtL(previewDocData.wartosc_calkowita, 2)} PLN</td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              )}
-            </div>
-            <div className="p-4 border-t border-[var(--border)] bg-[var(--bg-surface)]/50 flex justify-end shrink-0">
-               <button onClick={() => setPreviewDocRef(null)} className="px-5 py-2.5 text-[var(--text-secondary)] hover:bg-[var(--bg-input)] rounded-xl font-semibold transition-colors">
-                Zamknij
-              </button>
-            </div>
-          </div>
-        </div>
+        <DocumentPreviewModal
+          docRef={previewDocRef}
+          docData={previewDocData}
+          loading={previewDocLoading}
+          onClose={() => setPreviewDocRef(null)}
+          zIndex={1070}
+        />
       )}
 
       <ConfirmModal

@@ -3,6 +3,8 @@ import { Users, Plus, Pencil, Trash2, X, Save, AlertCircle, Search } from "lucid
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
 import { useToast } from "../components/Toast";
+import { SortableTh } from "../components/SortableTh";
+import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 
 type Kontrahent = {
   id: string;
@@ -20,6 +22,10 @@ export default function Kontrahenci() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const { showToast } = useToast();
+
+  const [sortKey, setSortKey] = useState("nazwa");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
 
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -88,8 +94,18 @@ export default function Kontrahenci() {
     }
   };
 
-  const filtered = kontrahenci.filter(k =>
-    !search || k.kod.toLowerCase().includes(search.toLowerCase()) || k.nazwa.toLowerCase().includes(search.toLowerCase())
+  const filtered = sortBy<Kontrahent>(
+    kontrahenci.filter(k =>
+      !search || k.kod.toLowerCase().includes(search.toLowerCase()) || k.nazwa.toLowerCase().includes(search.toLowerCase())
+    ),
+    k => {
+      switch (sortKey) {
+        case 'kod':   return k.kod;
+        case 'adres': return k.adres ?? '';
+        default:      return k.nazwa;
+      }
+    },
+    sortDir
   );
 
   return (
@@ -138,9 +154,10 @@ export default function Kontrahenci() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border)" }}>
-                {["Kod", "Nazwa", "Adres", "Akcje"].map((h, i) => (
-                  <th key={h} style={{ padding: "8px 12px", textAlign: i === 3 ? "right" : "left", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>{h}</th>
-                ))}
+                <SortableTh label="Kod"   field="kod"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }} />
+                <SortableTh label="Nazwa" field="nazwa" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }} />
+                <SortableTh label="Adres" field="adres" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }} />
+                <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>Akcje</th>
               </tr>
             </thead>
             <tbody>

@@ -20,7 +20,7 @@ export default defineConfig(({mode}) => {
       // Do not modify — file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: {
-        ignored: ['**/*.txt', '**/*.log', '**/*.json', '**/node_modules/**'],
+        ignored: ['**/*.txt', '**/*.log', '**/*.json', '**/node_modules/**', '**/prisma/*.db', '**/prisma/*.db-shm', '**/prisma/*.db-wal'],
       },
       proxy: {
         '/api': 'http://localhost:3001',

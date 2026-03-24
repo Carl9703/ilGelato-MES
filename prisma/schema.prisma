@@ -148,6 +148,10 @@ model Partie_Magazynowe {
   rezerwacje          Rezerwacje_Magazynowe[]
   pozycje_sesji_baza  Pozycje_Sesji_Gelato[]
   opakowania_baza     Opakowania_Wyrobowe[]
+
+  @@index([id_asortymentu])
+  @@index([status_partii])
+  @@index([termin_waznosci])
 }
 
 model Ruchy_Magazynowe {
@@ -168,6 +172,11 @@ model Ruchy_Magazynowe {
   partia               Partie_Magazynowe    @relation(fields: [id_partii], references: [id])
   zlecenie             Zlecenia_Produkcyjne? @relation(fields: [id_zlecenia], references: [id])
   uzytkownik           Uzytkownicy          @relation(fields: [id_uzytkownika], references: [id])
+
+  @@index([id_partii])
+  @@index([referencja_dokumentu])
+  @@index([id_zlecenia])
+  @@index([czy_aktywne])
 }
 
 model Receptury {
@@ -201,6 +210,8 @@ model Skladniki_Receptury {
 
   receptura                Receptury  @relation(fields: [id_receptury], references: [id])
   asortyment_skladnika     Asortyment @relation("AsortymentSkladnika", fields: [id_asortymentu_skladnika], references: [id])
+
+  @@index([id_receptury])
 }
 
 model Sesja_Robocza {
@@ -269,6 +280,9 @@ model Rezerwacje_Magazynowe {
   partia              Partie_Magazynowe?    @relation(fields: [id_partii], references: [id])
   asortyment          Asortyment?           @relation(fields: [id_asortymentu], references: [id])
   zlecenie            Zlecenia_Produkcyjne @relation(fields: [id_zlecenia], references: [id])
+
+  @@index([id_zlecenia])
+  @@index([status])
 }
 
 // ═══════════════════════════════════════════════════════
