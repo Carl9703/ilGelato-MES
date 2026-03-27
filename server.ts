@@ -324,8 +324,9 @@ async function startServer() {
   app.post("/api/grupy-towarowe", async (req, res) => {
     try {
       const { kod, nazwa, id_grupy_nadrzednej, kolejnosc } = req.body;
+      if (!kod?.trim() || !nazwa?.trim()) return res.status(400).json({ error: "Kod i nazwa są wymagane" });
       const grp = await (prisma as any).grupy_Towarowe.create({
-        data: { kod, nazwa, id_grupy_nadrzednej: id_grupy_nadrzednej || null, kolejnosc: kolejnosc || 0 }
+        data: { kod: kod.trim().toUpperCase(), nazwa: nazwa.trim(), id_grupy_nadrzednej: id_grupy_nadrzednej || null, kolejnosc: kolejnosc || 0 }
       });
       res.json(grp);
     } catch (e: any) {
@@ -336,17 +337,28 @@ async function startServer() {
 
   app.put("/api/grupy-towarowe/:id", async (req, res) => {
     try {
-      const { kod, nazwa, kolejnosc } = req.body;
+      const { kod, nazwa, kolejnosc, id_grupy_nadrzednej } = req.body;
+      if (!kod?.trim() || !nazwa?.trim()) return res.status(400).json({ error: "Kod i nazwa są wymagane" });
       const grp = await (prisma as any).grupy_Towarowe.update({
         where: { id: req.params.id },
-        data: { kod, nazwa, kolejnosc: kolejnosc ?? 0 }
+        data: { kod: kod.trim().toUpperCase(), nazwa: nazwa.trim(), kolejnosc: kolejnosc ?? 0, id_grupy_nadrzednej: id_grupy_nadrzednej || null }
       });
       res.json(grp);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) {
+      if (e.code === "P2002") return res.status(400).json({ error: "Grupa z tym kodem już istnieje" });
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.delete("/api/grupy-towarowe/:id", async (req, res) => {
     try {
+      // Sprawdź czy ma podgrupy lub asortyment
+      const podgrupy = await (prisma as any).grupy_Towarowe.count({
+        where: { id_grupy_nadrzednej: req.params.id, czy_aktywne: true }
+      });
+      if (podgrupy > 0) return res.status(409).json({ error: `Nie można usunąć grupy – ma ${podgrupy} aktywnych podgrup. Usuń je najpierw.` });
+      const asortyment = await prisma.asortyment.count({ where: { id_grupy: req.params.id, czy_aktywne: true } });
+      if (asortyment > 0) return res.status(409).json({ error: `Nie można usunąć grupy – jest przypisana do ${asortyment} pozycji asortymentu.` });
       await (prisma as any).grupy_Towarowe.update({ where: { id: req.params.id }, data: { czy_aktywne: false } });
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2950,7 +2962,7 @@ async function startServer() {
         include: { partia: { include: { asortyment: true } } },
       }) : [];
 
-      // Pobierz nazwy opakowań dla partii z opakowania_json
+      // Zbierz id opakowań dla fallbacku (stare dokumenty bez pozycje_json)
       const allOpIds = new Set<string>();
       for (const r of ruchy) {
         if (r.partia.opakowania_json) {
@@ -2963,6 +2975,20 @@ async function startServer() {
       const opNazwy = allOpIds.size > 0 ? await prisma.asortyment.findMany({ where: { id: { in: [...allOpIds] } }, select: { id: true, nazwa: true } }) : [];
       const opNazwyMap: Record<string, string> = {};
       opNazwy.forEach(a => opNazwyMap[a.id] = a.nazwa);
+
+      // Wyparsuj faktycznie wydane opakowania z pozycje_json nagłówka WZ
+      // Format: [{id_partii, ilosc, sztuki: {"Nazwa (Xkg)": liczba_szt}}]
+      const sztukiPerDoc = new Map<string, Record<string, Record<string, number>>>();
+      for (const h of headers) {
+        const map: Record<string, Record<string, number>> = {};
+        if (h.pozycje_json) {
+          try {
+            const poz = JSON.parse(h.pozycje_json) as { id_partii: string; sztuki?: Record<string, number> }[];
+            for (const p of poz) { map[p.id_partii] = p.sztuki || {}; }
+          } catch {}
+        }
+        sztukiPerDoc.set(h.referencja, map);
+      }
 
       const ruchyByRef = new Map<string, typeof ruchy>();
       ruchy.forEach((r) => {
@@ -2992,13 +3018,39 @@ async function startServer() {
         }
         const entry = kontrahentMap.get(klucz)!;
         const docRuchy = ruchyByRef.get(header.referencja) || [];
+        const sztukiByPartia = sztukiPerDoc.get(header.referencja) || {};
         const pozycje: any[] = [];
         for (const r of docRuchy) {
           const cena = r.cena_jednostkowa ?? 0;
-          if (r.partia.opakowania_json) {
+          // Pobierz faktycznie wydane opakowania z pozycje_json nagłówka WZ
+          const sztuki = sztukiByPartia[r.id_partii] || {};
+          const hasStored = Object.keys(sztuki).length > 0;
+
+          if (hasStored) {
+            // Użyj sztuki z pozycje_json — identyczne z podglądem dokumentu WZ
+            for (const [label, szt] of Object.entries(sztuki) as [string, number][]) {
+              if (szt <= 0) continue;
+              const match = label.match(/^(.*)\s+\((\d+(?:\.\d+)?)\s*kg\)$/);
+              const nazwaOp = match ? match[1] : label;
+              const wagaKg = match ? parseFloat(match[2]) : 0;
+              const iloscKg = Math.round(szt * wagaKg * 1000) / 1000;
+              const wartosc = iloscKg * cena;
+              pozycje.push({
+                asortyment: nazwaOp,
+                wyrob: r.partia.asortyment.nazwa,
+                kod_towaru: r.partia.asortyment.kod_towaru,
+                numer_partii: r.partia.numer_partii,
+                ilosc: szt,
+                jednostka: "szt.",
+                ilosc_kg: iloscKg,
+                cena_jednostkowa: cena > 0 ? cena : null,
+                wartosc,
+              });
+            }
+          } else if (r.partia.opakowania_json) {
+            // Fallback: stare dokumenty bez pozycje_json
             try {
               const parsedOp = JSON.parse(r.partia.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
-              // grupuj po typie opakowania
               const grouped: Record<string, { nazwa: string; waga_kg: number; szt: number }> = {};
               for (const op of parsedOp) {
                 const nazwa = opNazwyMap[op.id_asortymentu] || "Opakowanie";
@@ -3008,45 +3060,29 @@ async function startServer() {
               }
               for (const g of Object.values(grouped)) {
                 const iloscKg = Math.round(g.szt * g.waga_kg * 1000) / 1000;
-                const wartosc = iloscKg * cena;
                 pozycje.push({
-                  asortyment: g.nazwa,
-                  wyrob: r.partia.asortyment.nazwa,
-                  kod_towaru: r.partia.asortyment.kod_towaru,
-                  numer_partii: r.partia.numer_partii,
-                  ilosc: g.szt,
-                  jednostka: "szt.",
-                  ilosc_kg: iloscKg,
-                  cena_jednostkowa: cena > 0 ? cena : null,
-                  wartosc,
+                  asortyment: g.nazwa, wyrob: r.partia.asortyment.nazwa,
+                  kod_towaru: r.partia.asortyment.kod_towaru, numer_partii: r.partia.numer_partii,
+                  ilosc: g.szt, jednostka: "szt.", ilosc_kg: iloscKg,
+                  cena_jednostkowa: cena > 0 ? cena : null, wartosc: iloscKg * cena,
                 });
               }
             } catch {
               const ilosc = Math.abs(r.ilosc);
               pozycje.push({
-                asortyment: r.partia.asortyment.nazwa,
-                wyrob: null,
-                kod_towaru: r.partia.asortyment.kod_towaru,
-                numer_partii: r.partia.numer_partii,
-                ilosc,
-                jednostka: r.partia.asortyment.jednostka_miary,
-                ilosc_kg: null,
-                cena_jednostkowa: cena > 0 ? cena : null,
-                wartosc: ilosc * cena,
+                asortyment: r.partia.asortyment.nazwa, wyrob: null,
+                kod_towaru: r.partia.asortyment.kod_towaru, numer_partii: r.partia.numer_partii,
+                ilosc, jednostka: r.partia.asortyment.jednostka_miary, ilosc_kg: null,
+                cena_jednostkowa: cena > 0 ? cena : null, wartosc: ilosc * cena,
               });
             }
           } else {
             const ilosc = Math.abs(r.ilosc);
             pozycje.push({
-              asortyment: r.partia.asortyment.nazwa,
-              wyrob: null,
-              kod_towaru: r.partia.asortyment.kod_towaru,
-              numer_partii: r.partia.numer_partii,
-              ilosc,
-              jednostka: r.partia.asortyment.jednostka_miary,
-              ilosc_kg: null,
-              cena_jednostkowa: cena > 0 ? cena : null,
-              wartosc: ilosc * cena,
+              asortyment: r.partia.asortyment.nazwa, wyrob: null,
+              kod_towaru: r.partia.asortyment.kod_towaru, numer_partii: r.partia.numer_partii,
+              ilosc, jednostka: r.partia.asortyment.jednostka_miary, ilosc_kg: null,
+              cena_jednostkowa: cena > 0 ? cena : null, wartosc: ilosc * cena,
             });
           }
         }

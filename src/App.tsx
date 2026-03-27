@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router";
-import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package, Sun, Moon } from "lucide-react";
+import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package, Sun, Moon, Settings } from "lucide-react";
 import logoImg from "./assets/logo.png";
 import Dashboard from "./pages/Dashboard";
 import Asortyment from "./pages/Asortyment";
@@ -11,6 +11,7 @@ import Traceability from "./pages/Traceability";
 import Kontrahenci from "./pages/Kontrahenci";
 import Raporty from "./pages/Raporty";
 import WyrobyGotowe from "./pages/WyrobyGotowe";
+import Ustawienia from "./pages/Ustawienia";
 
 function useTheme() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -26,23 +27,26 @@ function useTheme() {
 }
 
 const navItems = [
-  { to: "/dashboard",  icon: LayoutDashboard, label: "Pulpit",      testId: "nav-dashboard"  },
-  { to: "/asortyment", icon: Database,         label: "Asortyment", testId: "nav-asortyment" },
-  { to: "/receptury",  icon: BookOpen,          label: "Receptury",  testId: "nav-receptury"  },
-  { to: "/produkcja",  icon: Factory,           label: "Produkcja",  testId: "nav-produkcja"  },
-  { to: "/dokumenty",  icon: FileText,          label: "Dokumenty",  testId: "nav-dokumenty"  },
-  { to: "/wyroby-gotowe", icon: Package,         label: "Wyroby gotowe", testId: "nav-wyroby-gotowe" },
-  { to: "/kontrahenci",icon: Users,             label: "Kontrahenci",testId: "nav-kontrahenci"},
-  { to: "/traceability",icon: Share2,           label: "Traceability",testId: "nav-traceability"},
-  { to: "/raporty",    icon: BarChart2,         label: "Raporty",    testId: "nav-raporty"    },
+  { to: "/dashboard",     icon: LayoutDashboard, label: "Pulpit",        testId: "nav-dashboard"      },
+  { to: "/asortyment",    icon: Database,         label: "Asortyment",   testId: "nav-asortyment"     },
+  { to: "/receptury",     icon: BookOpen,          label: "Receptury",    testId: "nav-receptury"      },
+  { to: "/produkcja",     icon: Factory,           label: "Produkcja",    testId: "nav-produkcja"      },
+  { to: "/dokumenty",     icon: FileText,          label: "Dokumenty",    testId: "nav-dokumenty"      },
+  { to: "/wyroby-gotowe", icon: Package,           label: "Wyroby gotowe",testId: "nav-wyroby-gotowe"  },
+  { to: "/kontrahenci",   icon: Users,             label: "Kontrahenci",  testId: "nav-kontrahenci"    },
+  { to: "/traceability",  icon: Share2,            label: "Traceability", testId: "nav-traceability"   },
+  { to: "/raporty",       icon: BarChart2,         label: "Raporty",      testId: "nav-raporty"        },
 ];
 
 function MainLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { theme, toggle } = useTheme();
+  const isSettings = location.pathname.startsWith("/ustawienia");
+
   return (
     <div className="h-full flex overflow-hidden" style={{ background: 'var(--bg-app)', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", color: 'var(--text-primary)' }}>
-      {/* Sidebar */}
+
+      {/* ── Sidebar ── */}
       <aside
         className="w-16 lg:w-60 flex flex-col shrink-0 print-hidden"
         style={{
@@ -62,7 +66,7 @@ function MainLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Nav */}
+        {/* Nav główna */}
         <nav className="flex-1 py-3 overflow-y-auto" style={{ gap: '1px', display: 'flex', flexDirection: 'column' }}>
           {navItems.map(({ to, icon: Icon, label, testId }) => (
             <NavLink
@@ -87,38 +91,59 @@ function MainLayout({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
-        {/* Status systemu */}
-        <div className="hidden lg:block px-4 py-3 text-xs" style={{ borderTop: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: 'var(--ok)', boxShadow: '0 0 6px var(--ok)' }} />
-              <span className="font-semibold" style={{ color: 'var(--ok)' }}>Operacyjny</span>
-            </div>
-            <button
-              onClick={toggle}
-              title={theme === 'dark' ? 'Tryb jasny' : 'Tryb ciemny'}
-              style={{
-                background: 'transparent',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-                padding: '3px 6px',
-                display: 'flex',
-                alignItems: 'center',
-                transition: 'color 0.15s, border-color 0.15s',
-              }}
+        {/* ── Separator + Ustawienia + Status ── */}
+        <div style={{ borderTop: '1px solid var(--border)' }}>
+
+          {/* Ustawienia link */}
+          <div className="py-2">
+            <NavLink
+              to="/ustawienia"
+              data-testid="nav-ustawienia"
+              className="flex items-center gap-3 mx-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+              style={({ isActive }) => ({
+                background: isActive ? 'var(--accent-dim)' : 'transparent',
+                color: isActive ? 'var(--accent)' : 'var(--text-muted)',
+                border: isActive ? '1px solid var(--border-accent)' : '1px solid transparent',
+              })}
             >
-              {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-            </button>
+              <Settings className="w-4 h-4 shrink-0" />
+              <span className="hidden lg:block whitespace-nowrap">Ustawienia</span>
+            </NavLink>
           </div>
-          <div style={{ color: 'var(--text-muted)' }}>
-            {new Date().toLocaleDateString("pl-PL", { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
+
+          {/* Status systemu (tylko desktop) */}
+          <div className="hidden lg:block px-4 pb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: 'var(--ok)', boxShadow: '0 0 6px var(--ok)' }} />
+                <span className="font-semibold" style={{ color: 'var(--ok)' }}>Operacyjny</span>
+              </div>
+              <button
+                onClick={toggle}
+                title={theme === 'dark' ? 'Tryb jasny' : 'Tryb ciemny'}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--border)',
+                  borderRadius: '6px',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '3px 6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  transition: 'color 0.15s, border-color 0.15s',
+                }}
+              >
+                {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <div style={{ color: 'var(--text-muted)' }}>
+              {new Date().toLocaleDateString("pl-PL", { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
+            </div>
           </div>
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* ── Main Content ── */}
       <main className="flex-1 overflow-hidden min-w-0 flex flex-col" style={{ background: 'var(--bg-app)' }}>
         <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col">
           {children}
@@ -145,6 +170,7 @@ export default function App() {
               <Route path="/kontrahenci" element={<Kontrahenci />} />
               <Route path="/traceability" element={<Traceability />} />
               <Route path="/raporty" element={<Raporty />} />
+              <Route path="/ustawienia" element={<Ustawienia />} />
             </Routes>
           </MainLayout>
         } />
