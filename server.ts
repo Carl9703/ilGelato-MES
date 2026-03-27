@@ -101,6 +101,29 @@ async function generateSesjaNumber(tx: any) {
   return `SP-${(maxNum + 1).toString().padStart(3, '0')}${suffix}`;
 }
 
+async function seedDefaultGroups() {
+  try {
+    const existing = await (prisma as any).grupy_Towarowe.count();
+    if (existing > 0) return;
+    const gelato = await (prisma as any).grupy_Towarowe.create({
+      data: { kod: "GEL", nazwa: "Gelato", kolejnosc: 1 }
+    });
+    await (prisma as any).grupy_Towarowe.createMany({
+      data: [
+        { kod: "GEL-ML",  nazwa: "Smaki mleczne", id_grupy_nadrzednej: gelato.id, kolejnosc: 1 },
+        { kod: "GEL-SOR", nazwa: "Sorbety",        id_grupy_nadrzednej: gelato.id, kolejnosc: 2 },
+        { kod: "GEL-WEG", nazwa: "Wege",            id_grupy_nadrzednej: gelato.id, kolejnosc: 3 },
+        { kod: "GEL-CRE", nazwa: "Cremino",         id_grupy_nadrzednej: gelato.id, kolejnosc: 4 },
+        { kod: "OPK",     nazwa: "Opakowania",      kolejnosc: 2 },
+        { kod: "SUR",     nazwa: "Surowce",         kolejnosc: 3 },
+      ]
+    });
+    console.log("Grupy towarowe: zainicjalizowane domyślne wartości.");
+  } catch (e) {
+    console.warn("Błąd inicjalizacji grup towarowych:", e);
+  }
+}
+
 async function generateZlecenieNumber(tx: any) {
   const date = new Date();
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -133,6 +156,7 @@ async function generateZlecenieNumber(tx: any) {
 
 async function startServer() {
   await migrateExistingDocuments();
+  await seedDefaultGroups();
 
   const app = express();
   const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -285,6 +309,49 @@ async function startServer() {
     }
   });
 
+  // --- GRUPY TOWAROWE ---
+  app.get("/api/grupy-towarowe", async (req, res) => {
+    try {
+      const grupy = await (prisma as any).grupy_Towarowe.findMany({
+        where: { czy_aktywne: true },
+        include: { podgrupy: { where: { czy_aktywne: true }, orderBy: { kolejnosc: "asc" } } },
+        orderBy: { kolejnosc: "asc" }
+      });
+      res.json(grupy.filter((g: any) => !g.id_grupy_nadrzednej));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/grupy-towarowe", async (req, res) => {
+    try {
+      const { kod, nazwa, id_grupy_nadrzednej, kolejnosc } = req.body;
+      const grp = await (prisma as any).grupy_Towarowe.create({
+        data: { kod, nazwa, id_grupy_nadrzednej: id_grupy_nadrzednej || null, kolejnosc: kolejnosc || 0 }
+      });
+      res.json(grp);
+    } catch (e: any) {
+      if (e.code === "P2002") return res.status(400).json({ error: "Grupa z tym kodem już istnieje" });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/grupy-towarowe/:id", async (req, res) => {
+    try {
+      const { kod, nazwa, kolejnosc } = req.body;
+      const grp = await (prisma as any).grupy_Towarowe.update({
+        where: { id: req.params.id },
+        data: { kod, nazwa, kolejnosc: kolejnosc ?? 0 }
+      });
+      res.json(grp);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/grupy-towarowe/:id", async (req, res) => {
+    try {
+      await (prisma as any).grupy_Towarowe.update({ where: { id: req.params.id }, data: { czy_aktywne: false } });
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // --- KARTOTEKI (Asortyment) ---
   app.get("/api/asortyment", async (req, res) => {
     try {
@@ -345,7 +412,7 @@ async function startServer() {
 
   app.post("/api/asortyment", async (req, res) => {
     try {
-      const { kod_towaru, nazwa, typ_asortymentu, jednostka_miary, jednostka_pomocnicza, przelicznik_jednostki, czy_wymaga_daty_waznosci } = req.body;
+      const { kod_towaru, nazwa, typ_asortymentu, jednostka_miary, jednostka_pomocnicza, przelicznik_jednostki, czy_wymaga_daty_waznosci, czy_zasob_nieograniczony, id_grupy } = req.body;
 
       const parsedPrzelicznik = przelicznik_jednostki !== null && przelicznik_jednostki !== undefined && przelicznik_jednostki !== ""
         ? parseFloat(przelicznik_jednostki.toString().replace(",", "."))
@@ -360,6 +427,8 @@ async function startServer() {
           jednostka_pomocnicza: jednostka_pomocnicza || null,
           przelicznik_jednostki: isNaN(Number(parsedPrzelicznik)) ? null : parsedPrzelicznik,
           czy_wymaga_daty_waznosci: Boolean(czy_wymaga_daty_waznosci),
+          czy_zasob_nieograniczony: Boolean(czy_zasob_nieograniczony),
+          id_grupy: id_grupy || null,
         },
       });
       res.json(newItem);
@@ -371,7 +440,7 @@ async function startServer() {
   app.put("/api/asortyment/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { kod_towaru, nazwa, typ_asortymentu, jednostka_miary, jednostka_pomocnicza, przelicznik_jednostki, czy_wymaga_daty_waznosci } = req.body;
+      const { kod_towaru, nazwa, typ_asortymentu, jednostka_miary, jednostka_pomocnicza, przelicznik_jednostki, czy_wymaga_daty_waznosci, czy_zasob_nieograniczony, id_grupy } = req.body;
 
       const parsedPrzelicznik = przelicznik_jednostki !== null && przelicznik_jednostki !== undefined && przelicznik_jednostki !== ""
         ? parseFloat(przelicznik_jednostki.toString().replace(",", "."))
@@ -387,6 +456,8 @@ async function startServer() {
           jednostka_pomocnicza: jednostka_pomocnicza || null,
           przelicznik_jednostki: isNaN(Number(parsedPrzelicznik)) ? null : parsedPrzelicznik,
           czy_wymaga_daty_waznosci: Boolean(czy_wymaga_daty_waznosci),
+          czy_zasob_nieograniczony: Boolean(czy_zasob_nieograniczony),
+          id_grupy: id_grupy || null,
         },
       });
       res.json(updatedItem);
@@ -1214,6 +1285,8 @@ async function startServer() {
               ilosc: szt,
               jednostka: "szt.",
               ilosc_kg: iloscKg,
+              data_produkcji: r.partia.data_produkcji,
+              termin_waznosci: r.partia.termin_waznosci,
               cena_jednostkowa: cena > 0 ? cena : null,
               wartosc,
             });
@@ -1229,6 +1302,8 @@ async function startServer() {
             ilosc,
             jednostka: r.partia.asortyment.jednostka_miary,
             ilosc_kg: null,
+            data_produkcji: r.partia.data_produkcji,
+            termin_waznosci: r.partia.termin_waznosci,
             cena_jednostkowa: r.cena_jednostkowa,
             wartosc,
           });
@@ -1390,7 +1465,9 @@ async function startServer() {
       const receptury = await prisma.receptury.findMany({
         where: includeArchived ? {} : { czy_aktywne: true },
         include: {
-          asortyment_docelowy: true,
+          asortyment_docelowy: {
+            include: { grupa: { select: { kod: true } } }
+          },
           skladniki: {
             where: { czy_aktywne: true },
             include: {
@@ -1894,7 +1971,8 @@ async function startServer() {
     try {
       const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby } = req.body;
       // wyroby: [{ id_receptury, ilosc, surowce: [{ id_partii, ilosc }] }]
-      if (!id_receptury_bazy || !(parseFloat(ilosc_bazy) > 0)) throw new Error("Podaj recepturę i ilość bazy");
+      const isSorbety = !id_receptury_bazy;
+      if (!isSorbety && !(parseFloat(ilosc_bazy) > 0)) throw new Error("Podaj recepturę i ilość bazy");
       if (!wyroby || wyroby.length === 0) throw new Error("Dodaj co najmniej jeden wyrób gotowy");
 
       const user = await prisma.uzytkownicy.findFirst();
@@ -1904,63 +1982,72 @@ async function startServer() {
         const numer_sesji = await generateSesjaNumber(tx);
         const sesja = await tx.sesje_Produkcji.create({ data: { numer_sesji } });
 
-        // ── Etap 1: Polprodukt (baza) ──────────────────────────────────────
-        const recepturaBazy = await tx.receptury.findUnique({
-          where: { id: id_receptury_bazy },
-          include: { asortyment_docelowy: true },
-        });
-        if (!recepturaBazy) throw new Error("Nie znaleziono receptury bazy");
+        let partiaBazy: any = null;
+        let cenaBazy = 0;
+        let recepturaBazy: any = null;
+        let zlecenieBazy: any = null;
+        let pwBazyNr: string | null = null;
+        let numer_zp_bazy: string | null = null;
+        let iloscBazy = 0;
 
-        const numer_zp_bazy = await generateZlecenieNumber(tx);
-        const zlecenieBazy = await tx.zlecenia_Produkcyjne.create({
-          data: { numer_zlecenia: numer_zp_bazy, id_receptury: id_receptury_bazy, id_sesji: sesja.id, etap: 1, planowana_ilosc_wyrobu: parseFloat(ilosc_bazy), status: "Planowane" },
-        });
-
-        const rwBazyNr = await generateDocNumber(tx, "RW");
-        const pwBazyNr = await generateDocNumber(tx, "PW");
-        let kosztBazy = 0;
-
-        // Śledź łączne zużycie per partia w tej sesji (ochrona przed overdraftem przy duplikatach)
-        const zuzyteWTransakcji: Record<string, number> = {};
-
-        for (const s of surowce_bazy || []) {
-          if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
-          const ilosc = parseFloat(s.ilosc);
-          const partia = await tx.partie_Magazynowe.findUnique({
-            where: { id: s.id_partii },
-            include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
+        if (!isSorbety) {
+          // ── Etap 1: Polprodukt (baza) ────────────────────────────────────
+          recepturaBazy = await tx.receptury.findUnique({
+            where: { id: id_receptury_bazy },
+            include: { asortyment_docelowy: true },
           });
-          if (!partia) throw new Error(`Partia ${s.id_partii} nie istnieje`);
-          const stanPartii = partia.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
-          const juzZuzyte = zuzyteWTransakcji[s.id_partii] || 0;
-          if (stanPartii - juzZuzyte < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
-          zuzyteWTransakcji[s.id_partii] = juzZuzyte + ilosc;
-          const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
-            where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
-            orderBy: { utworzono_dnia: "asc" },
+          if (!recepturaBazy) throw new Error("Nie znaleziono receptury bazy");
+
+          numer_zp_bazy = await generateZlecenieNumber(tx);
+          zlecenieBazy = await tx.zlecenia_Produkcyjne.create({
+            data: { numer_zlecenia: numer_zp_bazy, id_receptury: id_receptury_bazy, id_sesji: sesja.id, etap: 1, planowana_ilosc_wyrobu: parseFloat(ilosc_bazy), status: "Planowane" },
           });
-          kosztBazy += ilosc * (cenaDoc?.cena_jednostkowa ?? 0);
+
+          const rwBazyNr = await generateDocNumber(tx, "RW");
+          pwBazyNr = await generateDocNumber(tx, "PW");
+          let kosztBazy = 0;
+
+          // Śledź łączne zużycie per partia w tej sesji (ochrona przed overdraftem przy duplikatach)
+          const zuzyteWTransakcji: Record<string, number> = {};
+
+          for (const s of surowce_bazy || []) {
+            if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
+            const ilosc = parseFloat(s.ilosc);
+            const partia = await tx.partie_Magazynowe.findUnique({
+              where: { id: s.id_partii },
+              include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
+            });
+            if (!partia) throw new Error(`Partia ${s.id_partii} nie istnieje`);
+            const stanPartii = partia.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
+            const juzZuzyte = zuzyteWTransakcji[s.id_partii] || 0;
+            if (stanPartii - juzZuzyte < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
+            zuzyteWTransakcji[s.id_partii] = juzZuzyte + ilosc;
+            const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
+              where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
+              orderBy: { utworzono_dnia: "asc" },
+            });
+            kosztBazy += ilosc * (cenaDoc?.cena_jednostkowa ?? 0);
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: s.id_partii, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwBazyNr, id_uzytkownika: user.id },
+            });
+          }
+
+          iloscBazy = rzeczywista_ilosc_bazy != null && parseFloat(rzeczywista_ilosc_bazy) > 0
+            ? parseFloat(rzeczywista_ilosc_bazy)
+            : parseFloat(ilosc_bazy);
+          const terminWaznosci_baza = recepturaBazy.dni_trwalosci ? new Date(Date.now() + recepturaBazy.dni_trwalosci * 86400000) : null;
+          partiaBazy = await tx.partie_Magazynowe.create({
+            data: { id_asortymentu: recepturaBazy.id_asortymentu_docelowego, numer_partii: pwBazyNr, data_produkcji: new Date(), termin_waznosci: terminWaznosci_baza, status_partii: "Dostepna" },
+          });
+          cenaBazy = iloscBazy > 0 ? kosztBazy / iloscBazy : 0;
           await tx.ruchy_Magazynowe.create({
-            data: { id_partii: s.id_partii, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwBazyNr, id_uzytkownika: user.id },
+            data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Przyjecie_Z_Produkcji", ilosc: iloscBazy, cena_jednostkowa: cenaBazy, referencja_dokumentu: pwBazyNr, id_uzytkownika: user.id },
           });
+          await tx.zlecenia_Produkcyjne.update({ where: { id: zlecenieBazy.id }, data: { status: "Zrealizowane", rzeczywista_ilosc_wyrobu: iloscBazy } });
         }
-
-        const iloscBazy = rzeczywista_ilosc_bazy != null && parseFloat(rzeczywista_ilosc_bazy) > 0
-          ? parseFloat(rzeczywista_ilosc_bazy)
-          : parseFloat(ilosc_bazy);
-        const terminWaznosci_baza = recepturaBazy.dni_trwalosci ? new Date(Date.now() + recepturaBazy.dni_trwalosci * 86400000) : null;
-        const partiaBazy = await tx.partie_Magazynowe.create({
-          data: { id_asortymentu: recepturaBazy.id_asortymentu_docelowego, numer_partii: pwBazyNr, data_produkcji: new Date(), termin_waznosci: terminWaznosci_baza, status_partii: "Dostepna" },
-        });
-        const cenaBazy = iloscBazy > 0 ? kosztBazy / iloscBazy : 0;
-        await tx.ruchy_Magazynowe.create({
-          data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Przyjecie_Z_Produkcji", ilosc: iloscBazy, cena_jednostkowa: cenaBazy, referencja_dokumentu: pwBazyNr, id_uzytkownika: user.id },
-        });
-        await tx.zlecenia_Produkcyjne.update({ where: { id: zlecenieBazy.id }, data: { status: "Zrealizowane", rzeczywista_ilosc_wyrobu: iloscBazy } });
 
         // ── Etap 2: Wyroby gotowe ───────────────────────────────────────────
         const zleceniaWyrobow = [];
-        let totalBazaConsumedInWyroby = 0;
         for (const wyrob of wyroby) {
           const recepturaWyrobu = await tx.receptury.findUnique({
             where: { id: wyrob.id_receptury },
@@ -1979,17 +2066,18 @@ async function startServer() {
           const pwNr = await generateDocNumber(tx, "PW");
           let kosztWyrobu = 0;
 
-          // Zużycie bazy (Polprodukt) z partii z Etapu 1
-          const skladnikBazy = recepturaWyrobu.skladniki.find(
-            (s: any) => s.asortyment_skladnika.id === recepturaBazy.id_asortymentu_docelowego
-          );
-          if (skladnikBazy) {
-            const iloscBazyDo = skladnikBazy.ilosc_wymagana * iloscWyrobu * (1 + (skladnikBazy.procent_strat || 0) / 100);
-            kosztWyrobu += iloscBazyDo * cenaBazy;
-            totalBazaConsumedInWyroby += iloscBazyDo;
-            await tx.ruchy_Magazynowe.create({
-              data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -iloscBazyDo, cena_jednostkowa: cenaBazy, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
-            });
+          // Zużycie bazy (tylko dla lodów — gdy był etap 1)
+          if (recepturaBazy && partiaBazy) {
+            const skladnikBazy = recepturaWyrobu.skladniki.find(
+              (s: any) => s.asortyment_skladnika.id === recepturaBazy.id_asortymentu_docelowego
+            );
+            if (skladnikBazy) {
+              const iloscBazyDo = skladnikBazy.ilosc_wymagana * iloscWyrobu * (1 + (skladnikBazy.procent_strat || 0) / 100);
+              kosztWyrobu += iloscBazyDo * cenaBazy;
+              await tx.ruchy_Magazynowe.create({
+                data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -iloscBazyDo, cena_jednostkowa: cenaBazy, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
+              });
+            }
           }
 
           // Zużycie pozostałych surowców
@@ -2010,6 +2098,27 @@ async function startServer() {
             kosztWyrobu += ilosc * (cenaDoc?.cena_jednostkowa ?? 0);
             await tx.ruchy_Magazynowe.create({
               data: { id_partii: s.id_partii, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
+            });
+          }
+
+          // OPCJA C: Zasoby nieograniczone (woda, media) — wirtualna partia AUTO-
+          for (const sk of recepturaWyrobu.skladniki) {
+            if (!sk.asortyment_skladnika.czy_zasob_nieograniczony) continue;
+            let iloscSk = sk.ilosc_wymagana * iloscWyrobu * (1 + (sk.procent_strat || 0) / 100);
+            if (sk.czy_pomocnicza && sk.asortyment_skladnika.przelicznik_jednostki) {
+              iloscSk = iloscSk / sk.asortyment_skladnika.przelicznik_jednostki;
+            }
+            const kodTowaru = sk.asortyment_skladnika.kod_towaru;
+            let virtualPartia = await tx.partie_Magazynowe.findFirst({
+              where: { id_asortymentu: sk.id_asortymentu_skladnika, numer_partii: `AUTO-${kodTowaru}` },
+            });
+            if (!virtualPartia) {
+              virtualPartia = await tx.partie_Magazynowe.create({
+                data: { id_asortymentu: sk.id_asortymentu_skladnika, numer_partii: `AUTO-${kodTowaru}`, status_partii: 'Dostepna' },
+              });
+            }
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: virtualPartia.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: 'Zuzycie', ilosc: -iloscSk, cena_jednostkowa: 0, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
             });
           }
 
@@ -2039,24 +2148,27 @@ async function startServer() {
           zleceniaWyrobow.push({ id: zlecenieWyrobu.id, numer: numer_zp, wyrob: recepturaWyrobu.asortyment_docelowy.nazwa, ilosc: rzeczywistaIloscWyrobu, pw: pwNr });
         }
 
-        // ── Strata bazy (faktyczna pozostałość z DB po wszystkich rozchodach) ──
+        // ── Strata bazy (tylko dla lodów) ─────────────────────────────────
         let rwStrata: { numer: string; ilosc: number } | null = null;
-        // Liczymy faktyczny stan partii bazy bezpośrednio z DB (a nie z planowanych norm)
-        const stanBazyAgg = await tx.ruchy_Magazynowe.aggregate({
-          where: { id_partii: partiaBazy.id, czy_aktywne: true },
-          _sum: { ilosc: true },
-        });
-        const faktycznyStanBazy = stanBazyAgg._sum.ilosc ?? 0;
-        const pozostalaBaza = faktycznyStanBazy;
-        if (pozostalaBaza > 0.001) {
-          const rwStrataNr = await generateDocNumber(tx, "RW");
-          await tx.ruchy_Magazynowe.create({
-            data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Strata", ilosc: -pozostalaBaza, cena_jednostkowa: cenaBazy, referencja_dokumentu: rwStrataNr, id_uzytkownika: user.id },
+        if (!isSorbety && partiaBazy) {
+          const stanBazyAgg = await tx.ruchy_Magazynowe.aggregate({
+            where: { id_partii: partiaBazy.id, czy_aktywne: true },
+            _sum: { ilosc: true },
           });
-          rwStrata = { numer: rwStrataNr, ilosc: pozostalaBaza };
+          const pozostalaBaza = stanBazyAgg._sum.ilosc ?? 0;
+          if (pozostalaBaza > 0.001) {
+            const rwStrataNr = await generateDocNumber(tx, "RW");
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Strata", ilosc: -pozostalaBaza, cena_jednostkowa: cenaBazy, referencja_dokumentu: rwStrataNr, id_uzytkownika: user.id },
+            });
+            rwStrata = { numer: rwStrataNr, ilosc: pozostalaBaza };
+          }
         }
 
-        return { sesja: { id: sesja.id, numer_sesji }, baza: { numer_zp: numer_zp_bazy, pw: pwBazyNr, ilosc: iloscBazy }, wyroby: zleceniaWyrobow, rw_strata: rwStrata };
+        const bazaResult = zlecenieBazy
+          ? { numer_zp: numer_zp_bazy, pw: pwBazyNr, ilosc: iloscBazy }
+          : null;
+        return { sesja: { id: sesja.id, numer_sesji }, baza: bazaResult, wyroby: zleceniaWyrobow, rw_strata: rwStrata };
       }, { timeout: 30000 });
 
       res.json(result);
@@ -2082,7 +2194,7 @@ async function startServer() {
         include: {
           receptura: {
             include: {
-              skladniki: true,
+              skladniki: { include: { asortyment_skladnika: true } },
             },
           },
         },
@@ -2147,6 +2259,7 @@ async function startServer() {
           // OPCJA B: Automatyczne FIFO (fallback)
           for (const skladnik of zlecenie.receptura.skladniki) {
             const asort = await tx.asortyment.findUnique({ where: { id: skladnik.id_asortymentu_skladnika } });
+            if (asort?.czy_zasob_nieograniczony) continue; // obsługiwane przez OPCJA C
             let iloscWymagana = skladnik.ilosc_wymagana * rzeczywistaIloscNum * (1 + (skladnik.procent_strat || 0) / 100);
 
             // Konwersja na jednostkę podstawową jeśli podano w pomocniczej
@@ -2202,6 +2315,39 @@ async function startServer() {
               throw new Error(`Brak wystarczającej ilości składnika [${nazwaSkladnika}] w magazynie. Brakuje: ${pozostaloDoPobrania.toFixed(3).replace('.', ',')} ${asort?.jednostka_miary || ""}`);
             }
           }
+        }
+
+        // OPCJA C: Zasoby nieograniczone (woda, media) — wirtualna partia, brak kontroli stanu
+        for (const skladnik of zlecenie.receptura.skladniki) {
+          if (!skladnik.asortyment_skladnika.czy_zasob_nieograniczony) continue;
+          let iloscWymagana = skladnik.ilosc_wymagana * rzeczywistaIloscNum * (1 + (skladnik.procent_strat || 0) / 100);
+          if (skladnik.czy_pomocnicza && skladnik.asortyment_skladnika.przelicznik_jednostki) {
+            iloscWymagana = iloscWymagana / skladnik.asortyment_skladnika.przelicznik_jednostki;
+          }
+          const kodTowaru = skladnik.asortyment_skladnika.kod_towaru;
+          let virtualPartia = await tx.partie_Magazynowe.findFirst({
+            where: { id_asortymentu: skladnik.id_asortymentu_skladnika, numer_partii: `AUTO-${kodTowaru}` }
+          });
+          if (!virtualPartia) {
+            virtualPartia = await tx.partie_Magazynowe.create({
+              data: {
+                id_asortymentu: skladnik.id_asortymentu_skladnika,
+                numer_partii: `AUTO-${kodTowaru}`,
+                status_partii: 'Dostepna',
+              }
+            });
+          }
+          await tx.ruchy_Magazynowe.create({
+            data: {
+              id_partii: virtualPartia.id,
+              id_zlecenia: zlecenie.id,
+              typ_ruchu: 'Zuzycie',
+              ilosc: -iloscWymagana,
+              cena_jednostkowa: 0,
+              referencja_dokumentu: rwNumber,
+              id_uzytkownika: user.id,
+            }
+          });
         }
 
         // 1.5. Zwolnienie rezerwacji
@@ -2279,6 +2425,8 @@ async function startServer() {
         if (zlecenie.status !== "Planowane") throw new Error("Zlecenie nie jest w statusie Planowane");
 
         for (const skladnik of zlecenie.receptura.skladniki) {
+          if (skladnik.asortyment_skladnika.czy_zasob_nieograniczony) continue; // zasób nieograniczony — bez rezerwacji
+
           let wymaganaIlosc = skladnik.ilosc_wymagana * zlecenie.planowana_ilosc_wyrobu * (1 + (skladnik.procent_strat || 0) / 100);
 
           if (skladnik.czy_pomocnicza && skladnik.asortyment_skladnika.przelicznik_jednostki) {
@@ -2802,6 +2950,20 @@ async function startServer() {
         include: { partia: { include: { asortyment: true } } },
       }) : [];
 
+      // Pobierz nazwy opakowań dla partii z opakowania_json
+      const allOpIds = new Set<string>();
+      for (const r of ruchy) {
+        if (r.partia.opakowania_json) {
+          try {
+            const ops = JSON.parse(r.partia.opakowania_json) as { id_asortymentu: string }[];
+            ops.forEach(o => { if (o.id_asortymentu) allOpIds.add(o.id_asortymentu); });
+          } catch {}
+        }
+      }
+      const opNazwy = allOpIds.size > 0 ? await prisma.asortyment.findMany({ where: { id: { in: [...allOpIds] } }, select: { id: true, nazwa: true } }) : [];
+      const opNazwyMap: Record<string, string> = {};
+      opNazwy.forEach(a => opNazwyMap[a.id] = a.nazwa);
+
       const ruchyByRef = new Map<string, typeof ruchy>();
       ruchy.forEach((r) => {
         const ref = r.referencja_dokumentu!;
@@ -2830,14 +2992,64 @@ async function startServer() {
         }
         const entry = kontrahentMap.get(klucz)!;
         const docRuchy = ruchyByRef.get(header.referencja) || [];
-        const pozycje = docRuchy.map((r) => ({
-          kod_towaru: r.partia.asortyment.kod_towaru,
-          nazwa: r.partia.asortyment.nazwa,
-          jednostka: r.partia.asortyment.jednostka_miary,
-          ilosc: Math.abs(r.ilosc),
-          cena_jednostkowa: r.cena_jednostkowa ?? 0,
-          wartosc: (r.cena_jednostkowa ?? 0) * Math.abs(r.ilosc),
-        }));
+        const pozycje: any[] = [];
+        for (const r of docRuchy) {
+          const cena = r.cena_jednostkowa ?? 0;
+          if (r.partia.opakowania_json) {
+            try {
+              const parsedOp = JSON.parse(r.partia.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
+              // grupuj po typie opakowania
+              const grouped: Record<string, { nazwa: string; waga_kg: number; szt: number }> = {};
+              for (const op of parsedOp) {
+                const nazwa = opNazwyMap[op.id_asortymentu] || "Opakowanie";
+                const k = `${nazwa}__${op.waga_kg}`;
+                if (!grouped[k]) grouped[k] = { nazwa, waga_kg: op.waga_kg, szt: 0 };
+                grouped[k].szt++;
+              }
+              for (const g of Object.values(grouped)) {
+                const iloscKg = Math.round(g.szt * g.waga_kg * 1000) / 1000;
+                const wartosc = iloscKg * cena;
+                pozycje.push({
+                  asortyment: g.nazwa,
+                  wyrob: r.partia.asortyment.nazwa,
+                  kod_towaru: r.partia.asortyment.kod_towaru,
+                  numer_partii: r.partia.numer_partii,
+                  ilosc: g.szt,
+                  jednostka: "szt.",
+                  ilosc_kg: iloscKg,
+                  cena_jednostkowa: cena > 0 ? cena : null,
+                  wartosc,
+                });
+              }
+            } catch {
+              const ilosc = Math.abs(r.ilosc);
+              pozycje.push({
+                asortyment: r.partia.asortyment.nazwa,
+                wyrob: null,
+                kod_towaru: r.partia.asortyment.kod_towaru,
+                numer_partii: r.partia.numer_partii,
+                ilosc,
+                jednostka: r.partia.asortyment.jednostka_miary,
+                ilosc_kg: null,
+                cena_jednostkowa: cena > 0 ? cena : null,
+                wartosc: ilosc * cena,
+              });
+            }
+          } else {
+            const ilosc = Math.abs(r.ilosc);
+            pozycje.push({
+              asortyment: r.partia.asortyment.nazwa,
+              wyrob: null,
+              kod_towaru: r.partia.asortyment.kod_towaru,
+              numer_partii: r.partia.numer_partii,
+              ilosc,
+              jednostka: r.partia.asortyment.jednostka_miary,
+              ilosc_kg: null,
+              cena_jednostkowa: cena > 0 ? cena : null,
+              wartosc: ilosc * cena,
+            });
+          }
+        }
         const wartoscDok = pozycje.reduce((s, p) => s + p.wartosc, 0);
         entry.liczba_dokumentow++;
         entry.wartosc_total += wartoscDok;

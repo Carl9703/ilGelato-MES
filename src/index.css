@@ -221,6 +221,9 @@ body {
   background: var(--bg-surface);
 }
 
+.mes-table th.text-right { text-align: right; }
+.mes-table th.text-center { text-align: center; }
+
 .mes-table td {
   padding: 9px 14px;
   border-bottom: 1px solid var(--border-dim);

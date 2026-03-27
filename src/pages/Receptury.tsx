@@ -225,7 +225,7 @@ export default function Receptury() {
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Technologie i specyfikacje BOM</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={toggleArchived} className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold transition-colors ${showArchived ? 'bg-slate-600 text-white' : 'text-slate-400 hover:bg-[#334155]'}`}>
+          <button onClick={toggleArchived} className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold transition-colors ${showArchived ? 'bg-slate-600 text-white' : 'text-slate-400 hover:bg-[var(--bg-hover)]'}`}>
             {showArchived ? 'Ukryj archiwalne' : 'Pokaż archiwalne'}
           </button>
           <button onClick={openNew} data-testid="btn-dodaj-recepture" className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white btn-hover-effect">
@@ -237,7 +237,7 @@ export default function Receptury() {
       {/* ===== KARTA RECEPTURY (jeden modal, dwa tryby) ===== */}
       {kartaMode && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
-          <div className="bg-[#1e293b] shadow-2xl border border-[#334155] overflow-hidden flex flex-col" style={{ height: '80vh', marginTop: '10vh' }}>
+          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] overflow-hidden flex flex-col" style={{ height: '80vh', marginTop: '10vh' }}>
 
             {/* NAGŁÓWEK KARTY */}
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
@@ -292,7 +292,7 @@ export default function Receptury() {
                     <div
                       onClick={() => handleToggleAktywne(kartaReceptura.id, kartaReceptura.czy_aktywne)}
                       title={kartaReceptura.czy_aktywne ? "Dezaktywuj wersję" : "Aktywuj wersję"}
-                      className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors hover:bg-[#334155]"
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors hover:bg-[var(--bg-hover)]"
                     >
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                         {kartaReceptura.czy_aktywne ? "Aktywna" : "Archiwalna"}
@@ -304,7 +304,7 @@ export default function Receptury() {
                   </>
                 )}
                 {isEditMode && (
-                  <button onClick={switchToView} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
+                  <button onClick={switchToView} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
                     {kartaMode === "new" ? "Anuluj" : "Anuluj edycję"}
                   </button>
                 )}
@@ -450,7 +450,7 @@ export default function Receptury() {
                             skladniki.map((s, idx) => {
                               const asort = surowce.find(a => a.id === s.id_asortymentu_skladnika);
                               return (
-                                <div key={idx} className="grid items-center px-2 py-1.5 border-b hover:bg-[#1e293b] transition-colors"
+                                <div key={idx} className="grid items-center px-2 py-1.5 border-b hover:bg-[var(--bg-hover)] transition-colors"
                                   style={{ gridTemplateColumns: '24px 1fr 90px 100px 28px', borderColor: 'var(--border-dim)', gap: 6 }}>
                                   <span className="text-[11px] font-mono font-bold text-center" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>
                                   <select value={s.id_asortymentu_skladnika}
@@ -485,7 +485,7 @@ export default function Receptury() {
                             const typColors: Record<string,string> = { Surowiec:'rgba(59,130,246,.15)', Polprodukt:'rgba(245,158,11,.15)', Wyrob_Gotowy:'rgba(34,197,94,.15)' };
                             const typLabels: Record<string,string> = { Surowiec:'Sur.', Polprodukt:'Pół.', Wyrob_Gotowy:'WG' };
                             return (
-                              <div key={i} className="grid items-center px-2 py-2 border-b hover:bg-[#1e293b] transition-colors"
+                              <div key={i} className="grid items-center px-2 py-2 border-b hover:bg-[var(--bg-hover)] transition-colors"
                                 style={{ gridTemplateColumns: '24px 1fr 100px 90px 80px', borderColor: 'var(--border-dim)', gap: 6 }}>
                                 <span className="text-[11px] font-mono font-bold text-center" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
                                 <div className="min-w-0">
@@ -583,8 +583,8 @@ export default function Receptury() {
 
             {/* STOPKA z przyciskami zapisu */}
             {isEditMode && (
-              <div className="p-4 border-t border-[#334155] bg-[#0f172a]/50 flex justify-between items-center shrink-0">
-                <button type="button" onClick={kartaMode === "new" ? closeKarta : switchToView} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
+              <div className="p-4 border-t border-[var(--border)] bg-[var(--bg-app)]/50 flex justify-between items-center shrink-0">
+                <button type="button" onClick={kartaMode === "new" ? closeKarta : switchToView} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
                   Anuluj
                 </button>
                 <button

@@ -5,11 +5,14 @@ import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
 
 type Pozycja = {
+  asortyment: string;   // nazwa opakowania lub towaru
+  wyrob: string | null; // nazwa wyrobu (jeśli pozycja to opakowanie)
   kod_towaru: string;
-  nazwa: string;
+  numer_partii: string;
   jednostka: string;
   ilosc: number;
-  cena_jednostkowa: number;
+  ilosc_kg: number | null;
+  cena_jednostkowa: number | null;
   wartosc: number;
 };
 
@@ -304,14 +307,29 @@ export default function Raporty() {
                               style={{ background: "rgba(59,130,246,0.02)", borderBottom: "1px solid var(--border-dim)" }}
                             >
                               <td style={{ padding: "5px 12px 5px 52px" }} />
-                              <td style={{ padding: "5px 12px", fontSize: 12 }}>
-                                <span className="font-mono" style={{ color: "var(--text-muted)", marginRight: 6 }}>{poz.kod_towaru}</span>
-                                <span style={{ color: "var(--text-secondary)" }}>{poz.nazwa}</span>
+                              <td style={{ padding: "5px 8px 5px 12px", fontSize: 12 }}>
+                                {poz.wyrob ? (
+                                  <>
+                                    <div style={{ color: "var(--text-muted)", fontSize: 11 }}>{poz.asortyment}</div>
+                                    <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{poz.wyrob}</div>
+                                    <div className="font-mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>{poz.numer_partii}</div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="font-mono" style={{ color: "var(--text-muted)", marginRight: 6 }}>{poz.kod_towaru}</span>
+                                    <span style={{ color: "var(--text-secondary)" }}>{poz.asortyment}</span>
+                                  </>
+                                )}
                               </td>
                               <td style={{ padding: "5px 12px", textAlign: "right", fontSize: 12 }}>
                                 <span className="font-mono" style={{ color: "var(--text-muted)" }}>
                                   {poz.ilosc.toLocaleString("pl-PL", { maximumFractionDigits: 3 })} {poz.jednostka}
                                 </span>
+                                {poz.ilosc_kg != null && (
+                                  <div className="font-mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                                    {fmtL(poz.ilosc_kg, 3)} kg
+                                  </div>
+                                )}
                               </td>
                               <td style={{ padding: "5px 12px", textAlign: "right", fontSize: 12 }}>
                                 <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{fmt(poz.wartosc)}</span>

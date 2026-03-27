@@ -1,4 +1,6 @@
-# ilGelato MES — CLAUDE.md
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 System zarządzania produkcją (MES/ERP) dla rzemieślniczej lodziarni.
 Interfejs i baza danych w języku **polskim**.
@@ -14,9 +16,17 @@ npm run dev
 # Backend (Express, port 3001)
 npx tsx server.ts
 
-# Seed przykładowych danych
+# Seed przykładowych danych (czyści bazę i wgrywa od zera)
 npx tsx prisma/seed.ts
 ```
+
+**Zmiana schematu Prisma (Windows):** `prisma db push` nie może nadpisać DLL jeśli serwer działa. Kolejność:
+```bash
+cmd //c "taskkill /F /IM node.exe"   # zabij wszystkie procesy node
+npx prisma db push                    # synchronizuj schemat + generuj klienta
+npx tsx server.ts                     # uruchom serwer ponownie
+```
+`pkill` nie działa na Windows bash — używaj `cmd //c "taskkill /F /IM node.exe"`.
 
 ---
 
@@ -52,7 +62,7 @@ src/
 prisma/
   schema.prisma         — schemat bazy danych
   seed.ts               — dane przykładowe
-server.ts               — API Express (ok. 2000 linii)
+server.ts               — API Express (~2500 linii)
 docs/                   — dokumentacja domenowa (PL)
 ```
 
@@ -73,6 +83,9 @@ docs/                   — dokumentacja domenowa (PL)
 | `Rezerwacje_Magazynowe`   | Rezerwacje surowców pod zlecenia                      |
 | `Rejestr_Przestojow`      | Log przestojów dla OEE (tabela istnieje, UI brak)     |
 | `Uzytkownicy`             | Użytkownicy systemu (auth uproszczony)                |
+| `Sesje_Produkcji_Gelato`  | Sesje produkcyjne gelato (turnus baza → wyroby)       |
+| `Pozycje_Sesji_Gelato`    | Smaki/receptury w ramach sesji gelato                 |
+| `Opakowania_Wyrobowe`     | Fizyczne opakowania wyrobów gotowych (pozzetti itp.)  |
 
 ---
 
@@ -85,7 +98,7 @@ docs/                   — dokumentacja domenowa (PL)
 | WZ     | Wydanie Zewnętrzne      | -magazyn |
 | RW     | Rozchód Wewnętrzny      | -magazyn (zużycie) |
 
-Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`
+Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`, sesje gelato: `SPG-NNN/MM/RR`
 
 ---
 
@@ -96,6 +109,8 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`
 **Partie magazynowe:** `Dostepna` | `Kwarantanna` | `Zablokowana_Kontrola_Jakosci` | `Zutylizowana`
 
 **Rezerwacje:** `Aktywna` | `Zrealizowana` | `Anulowana`
+
+**Sesje gelato:** `Otwarta` | `Zamknieta`
 
 ---
 
@@ -126,6 +141,30 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`
 - Wymagane punkty blokują realizację zlecenia
 - Auto-walidacja min/max przy zapisie wyniku
 
+**Zasoby nieograniczone (`czy_zasob_nieograniczony`)**
+- Flag na `Asortyment` dla mediów jak woda z kranu — bez kontroli stanu, bez PZ, bez rezerwacji
+- Przy realizacji zlecenia: auto-tworzona wirtualna partia `numer_partii = "AUTO-{kod_towaru}"` i normalny ruch `Zuzycie` na RW (dla traceability)
+- Logika w server.ts: `rozpocznij` pomija walidację i rezerwację; `realizuj` obsługuje w sekcji "OPCJA C" po FIFO
+- Seed: zasoby nieograniczone nie mają wpisów PZ
+
+---
+
+## Dwa przepływy produkcji w Produkcja.tsx
+
+**Standardowy (ZP — Zlecenia Produkcyjne)**
+- Prosty CRUD zleceń ze statusami `Planowane → W_toku → Zrealizowane`
+- `POST /api/produkcja/:id/rozpocznij` — walidacja stanu, tworzenie rezerwacji
+- `POST /api/produkcja/:id/realizuj` — zużycie składników (RW), przyjęcie wyrobu (PW)
+- Realizacja: OPCJA A (ręczne wskazanie partii przez `zuzyte_partie`) lub OPCJA B (auto-FIFO)
+
+**Sesja Gelato (Wizard wielokrokowy)**
+- Turnus produkcyjny: etap 1 (baza mleczna) → etap 2 (wyroby gotowe z bazy)
+- State wizard: `wizBazaSurowce` (surowce bazy), `wizWyrobySurowceMap` (surowce per wyrób), `wizRealizacja`
+- `computeWyrobySurowce()` — przelicza surowce dla wszystkich wyrobów i ładuje partie async
+- Typy: `WizSurowiecBaza`, `WizSurowiecWyrob` — oba mają `czy_zasob_nieograniczony: boolean`
+- `renderSurowceTable()` — wspólny renderer tabeli surowców dla bazy i wyrobów
+- `POST /api/sesja-gelato` — finalizacja całej sesji w jednej transakcji
+
 ---
 
 ## Wzorce kodu
@@ -139,8 +178,13 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`
 - Brak globalnego state managera (tylko `useState`/`useEffect`)
 - Bezpośrednie `fetch()` do API (brak wrappera)
 - Komponenty stron są samowystarczalne (data fetching + UI w jednym pliku)
-- Duże pliki stron (Asortyment, Produkcja > 1000 linii) — normalne dla projektu
+- Duże pliki stron (Asortyment, Produkcja > 1500 linii) — normalne dla projektu
 - Motyw ciemny z CSS variables: `--bg-app`, `--accent`, `--ok`, `--warn`, itp.
+
+**Asortyment.tsx — dwie ścieżki zapisu**
+- `handleSubmit` — modal tworzenia/edycji (wywoływany przez `openNew`/`openEdit`)
+- `handleDetailSubmit` — inline panel szczegółów (wywoływany przez przycisk "Zapisz zmiany")
+- `useEffect` na `detailData` nadpisuje `formData` przy załadowaniu detali — każde nowe pole w `Asortyment` musi być dodane do WSZYSTKICH `setFormData` wywołań (3 miejsca + useEffect)
 
 **Backend (server.ts)**
 - Wszystkie endpointy w jednym pliku

@@ -52,12 +52,12 @@ export default function DocumentPreviewModal({
       onClick={onClose}
     >
       <div
-        className="flex flex-col shadow-2xl border border-[#334155]"
+        className="flex flex-col shadow-2xl border border-[var(--border)]"
         style={{ background: 'var(--bg-panel)', height: '80vh', marginTop: '10vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Nagłówek */}
-        <div className="flex justify-between items-center px-5 py-3 border-b border-[#334155] shrink-0" style={{ background: 'var(--bg-surface)' }}>
+        <div className="flex justify-between items-center px-5 py-3 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
           <div className="flex items-center gap-3">
             <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
             <span className="font-bold text-white">{docRef}</span>
@@ -95,7 +95,7 @@ export default function DocumentPreviewModal({
                 <Tag className="w-3.5 h-3.5" /> Etykiety
               </button>
             )}
-            <button onClick={onClose} className="p-1.5 rounded hover:bg-[#334155]" style={{ color: 'var(--text-muted)' }}>
+            <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--bg-hover)]" style={{ color: 'var(--text-muted)' }}>
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -103,7 +103,7 @@ export default function DocumentPreviewModal({
 
         {/* Meta */}
         {docData && (
-          <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-[#334155] text-xs shrink-0" style={{ background: 'var(--bg-app)' }}>
+          <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-[var(--border)] text-xs shrink-0" style={{ background: 'var(--bg-app)' }}>
             <span style={{ color: 'var(--text-muted)' }}>Wystawiono: <span className="text-white font-medium">{fmtFull(docData.data)}</span></span>
             <span style={{ color: 'var(--text-muted)' }}>Operator: <span className="text-white font-medium">{docData.uzytkownik}</span></span>
             {docData.data_zatwierdzenia && (
@@ -177,7 +177,7 @@ export default function DocumentPreviewModal({
                     </div>
                     <div className="p-2 space-y-0.5">
                       {entries.map(([nazwa, waga]) => (
-                        <div key={nazwa} className="flex justify-between items-center px-3 py-2 hover:bg-[#1e293b] rounded transition-colors">
+                        <div key={nazwa} className="flex justify-between items-center px-3 py-2 hover:bg-[var(--bg-hover)] rounded transition-colors">
                           <span className="text-sm font-medium text-white">{nazwa}</span>
                           <span className="text-sm font-mono font-bold" style={{ color: '#38bdf8' }}>{fmtL(waga, 3)} kg</span>
                         </div>

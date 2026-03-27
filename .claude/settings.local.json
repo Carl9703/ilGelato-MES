@@ -114,7 +114,20 @@
       "Read(//c/Users/arrow/.claude/**)",
       "Bash(claude plugins:*)",
       "Bash(grep -n \"success &&\\\\|error &&\" /d/mes/src/pages/*.tsx)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(sed 's/^[[:space:]]*//')",
+      "Bash(grep -r \"//.*\\\\\\(const\\\\|let\\\\|var\\\\|function\\\\|import\\\\|fetch\\\\\\)\" D:/mes/src --include=\"*.tsx\" --include=\"*.ts\")",
+      "Edit",
+      "Write",
+      "Bash(cmd.exe /c \"taskkill /PID 16068 /F\")",
+      "Bash(cmd.exe /c \"taskkill /PID 16068 /F && echo OK\")",
+      "Bash(start cmd:*)",
+      "Read(//tmp/**)",
+      "Bash(grep -rn 'fixed inset-0' D:/mes/src/pages/*.tsx D:/mes/src/components/*.tsx)",
+      "Bash(cat D:/mes/prisma/migrations/*/migration.sql)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python -c \"import json,sys; items=json.load\\(sys.stdin\\); w=[i for i in items if i.get\\(''''kod_towaru''''\\)==''''WOD001'''']; print\\(json.dumps\\(w, indent=2\\)\\)\")",
+      "Bash(cmd //c \"taskkill /F /IM node.exe\")"
     ]
   },
   "hooks": {

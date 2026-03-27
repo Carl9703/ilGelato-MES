@@ -62,8 +62,8 @@ export default function WyrobyGotowe() {
     sortDir
   );
 
-  const totalKg = Math.round(rows.reduce((s, r) => s + r.ilosc_kg, 0) * 1000) / 1000;
-  const totalSzt = rows.reduce((s, r) => s + (r.ilosc_szt ?? 0), 0);
+  const totalKg = Math.round(filtered.reduce((s, r) => s + r.ilosc_kg, 0) * 1000) / 1000;
+  const totalSzt = filtered.reduce((s, r) => s + (r.ilosc_szt ?? 0), 0);
 
 
   return (

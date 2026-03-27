@@ -507,13 +507,204 @@ export default function Dokumenty() {
     setShowPz(true);
   };
 
-  const handlePrintDoc = (doc: Dokument) => {
-    const win = window.open("", "_blank", "width=800,height=600");
+  const handlePrintDoc = async (doc: Dokument) => {
+    const win = window.open("", "_blank", "width=860,height=700");
     if (!win) return;
-    const pozycjeHTML = doc.pozycje.map(p =>
-      `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${p.asortyment}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold">${fmtL(p.ilosc, 3)} ${p.jednostka}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmt(p.termin_waznosci)}</td></tr>`
-    ).join("");
-    win.document.write(`<!DOCTYPE html><html><head><title>${doc.referencja}</title><style>body{font-family:Inter,system-ui,sans-serif;padding:40px;color:#1e293b;max-width:800px;margin:0 auto} h1{font-size:24px;margin:0 0 4px} .meta{color:#64748b;font-size:13px;margin-bottom:24px} table{width:100%;border-collapse:collapse;margin-top:16px} th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;color:#64748b} .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;margin-left:8px} @media print{body{padding:20px}}</style></head><body><h1>${doc.referencja} <span class="badge" style="background:#e0e7ff;color:#4338ca">${doc.typ}</span></h1><div class="meta">${fmtFull(doc.data)} · Wystawił: ${doc.uzytkownik}</div><table><thead><tr><th>Asortyment</th><th>Nr Partii</th><th style="text-align:right">Ilość</th><th>Ważność</th></tr></thead><tbody>${pozycjeHTML}</tbody></table></body></html>`);
+
+    // Dla WZ i PW pobieramy pełne dane z podglądu (opakowania, wyrob, ilosc_kg)
+    let pozycje: any[] = doc.pozycje;
+    if (doc.typ === "WZ" || doc.typ === "PW") {
+      try {
+        const res = await fetch(`/api/dokumenty/podglad/${encodeURIComponent(doc.referencja)}`);
+        if (res.ok) {
+          const full = await res.json();
+          pozycje = full.pozycje || doc.pozycje;
+        }
+      } catch { /* fallback do lokalnych danych */ }
+    }
+
+    const isWZ = doc.typ === "WZ";
+    const isPW = doc.typ === "PW";
+    const hasOpakowania = (isWZ || isPW) && pozycje.some((p: any) => p.wyrob);
+
+    // ── Pozycje ──
+    const pozycjeHTML = pozycje.map((p: any, i: number) => {
+      if (hasOpakowania) {
+        const iloscKg = p.ilosc_kg != null ? `<span style="display:block;font-size:10px;color:#64748b;font-family:monospace">${fmtL(p.ilosc_kg, 3)} kg</span>` : "";
+        return `<tr>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${i + 1}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb">
+            <div style="font-weight:700">${p.wyrob || p.asortyment}</div>
+            ${p.wyrob ? `<div style="font-size:11px;color:#64748b;margin-top:1px">${p.asortyment}</div>` : ""}
+          </td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px">${p.numer_partii}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${fmt(p.data_produkcji)}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${fmt(p.termin_waznosci)}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">
+            ${fmtL(p.ilosc, p.jednostka === "szt." ? 0 : 3)}&nbsp;${p.jednostka}
+            ${iloscKg}
+          </td>
+        </tr>`;
+      }
+      return `<tr>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${i + 1}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px">${p.kod_towaru}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${p.asortyment}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${fmt(p.data_produkcji)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${fmt(p.termin_waznosci)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${fmtL(p.ilosc, 3)}&nbsp;${p.jednostka}</td>
+      </tr>`;
+    }).join("");
+
+    // ── Nagłówek tabeli pozycji ──
+    const theadHTML = hasOpakowania
+      ? `<thead><tr>
+          <th style="width:32px;text-align:center">Lp.</th>
+          <th>Wyrób / Opakowanie</th>
+          <th>Nr partii / LOT</th>
+          <th style="text-align:center">Data prod.</th>
+          <th style="text-align:center">Ważność</th>
+          <th class="r">Ilość</th>
+        </tr></thead>`
+      : `<thead><tr>
+          <th style="width:32px;text-align:center">Lp.</th>
+          <th>Kod towaru</th>
+          <th>Towar</th>
+          <th>Nr partii / LOT</th>
+          <th style="text-align:center">Data prod.</th>
+          <th style="text-align:center">Ważność</th>
+          <th class="r">Ilość</th>
+        </tr></thead>`;
+
+    // ── Podsumowanie ──
+    let podsumowanieHTML = "";
+    let lacWagaRow = "";
+    if (hasOpakowania) {
+      // grupuj po wyrobie (produkcie), sumuj kg
+      const sumaWyrob = new Map<string, { szt: number; kg: number }>();
+      for (const p of pozycje as any[]) {
+        const key = p.wyrob || p.asortyment;
+        if (!sumaWyrob.has(key)) sumaWyrob.set(key, { szt: 0, kg: 0 });
+        const e = sumaWyrob.get(key)!;
+        if (p.jednostka === "szt.") e.szt += p.ilosc;
+        e.kg += p.ilosc_kg != null ? parseFloat(p.ilosc_kg) : (p.jednostka === "kg" ? p.ilosc : 0);
+      }
+      const totalKg = [...sumaWyrob.values()].reduce((s, e) => s + e.kg, 0);
+      const totalSzt = [...sumaWyrob.values()].reduce((s, e) => s + e.szt, 0);
+      podsumowanieHTML = [...sumaWyrob.entries()].map(([nazwa, e]) =>
+        `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${nazwa}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${e.szt > 0 ? `${e.szt} szt.` : "—"}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(e.kg, 3)} kg</td>
+        </tr>`
+      ).join("");
+      lacWagaRow = `<tr style="background:#f8fafc;border-top:2px solid #1e293b">
+        <td style="padding:8px;font-weight:900">ŁĄCZNIE</td>
+        <td style="padding:8px;text-align:right;font-family:monospace;font-weight:700">${totalSzt > 0 ? `${totalSzt} szt.` : "—"}</td>
+        <td style="padding:8px;text-align:right;font-weight:900;font-size:15px;font-family:monospace">${fmtL(totalKg, 3)}&nbsp;kg</td>
+      </tr>`;
+    } else {
+      const sumaMap = new Map<string, { nazwa: string; partie: number; iloscPerJm: Map<string, number> }>();
+      for (const p of pozycje as any[]) {
+        const key = p.kod_towaru;
+        if (!sumaMap.has(key)) sumaMap.set(key, { nazwa: p.asortyment, partie: 0, iloscPerJm: new Map() });
+        const e = sumaMap.get(key)!;
+        e.partie++;
+        e.iloscPerJm.set(p.jednostka, (e.iloscPerJm.get(p.jednostka) ?? 0) + p.ilosc);
+      }
+      podsumowanieHTML = [...sumaMap.values()].map(e =>
+        [...e.iloscPerJm.entries()].map(([jm, il]) =>
+          `<tr>
+            <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${e.nazwa}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${e.partie}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${fmtL(il, 3)}&nbsp;${jm}</td>
+          </tr>`
+        ).join("")
+      ).join("");
+      const lacWagaKg = (pozycje as any[]).filter(p => p.jednostka === "kg").reduce((s, p) => s + p.ilosc, 0);
+      lacWagaRow = lacWagaKg > 0
+        ? `<tr style="background:#f8fafc"><td colspan="2" style="padding:8px;font-weight:700;text-align:right">Łączna waga:</td><td style="padding:8px;text-align:right;font-weight:900;font-size:15px">${fmtL(lacWagaKg, 3)}&nbsp;kg</td></tr>`
+        : "";
+    }
+
+    const podsumowanieThead = hasOpakowania
+      ? `<thead><tr><th>Towar</th><th class="r">Ilość (szt.)</th><th class="r">Masa (kg)</th></tr></thead>`
+      : `<thead><tr><th>Towar</th><th style="text-align:center">Liczba partii</th><th class="r">Łączna ilość</th></tr></thead>`;
+
+    // ── Reszta metadanych ──
+    const kontrahentHTML = doc.typ === "WZ" ? (doc.kontrahent
+      ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Odbiorca</span><div style="font-size:15px;font-weight:700;margin-top:2px">${doc.kontrahent.nazwa}</div><div style="font-family:monospace;font-size:12px;color:#64748b">${doc.kontrahent.kod}</div></div>`
+      : `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Odbiorca</span><div style="color:#94a3b8;font-style:italic;margin-top:2px">—</div></div>`) : "";
+
+    const zlecHTML = doc.numer_zlecenia
+      ? `<div style="margin-top:10px;font-size:12px;color:#64748b">Powiązane zlecenie: <strong style="font-family:monospace;color:#1e293b">${doc.numer_zlecenia}</strong></div>`
+      : "";
+
+    const statusColor = doc.status === "Zatwierdzony" ? "#15803d" : doc.status === "Anulowany" ? "#dc2626" : "#d97706";
+    const statusBg   = doc.status === "Zatwierdzony" ? "#dcfce7"  : doc.status === "Anulowany" ? "#fee2e2"  : "#fef9c3";
+
+    const docTypeLabel: Record<string, string> = { PZ: "PRZYJĘCIE ZEWNĘTRZNE", PW: "PRZYJĘCIE WEWNĘTRZNE", WZ: "WYDANIE ZEWNĘTRZNE", RW: "ROZCHÓD WEWNĘTRZNY" };
+
+    win.document.write(`<!DOCTYPE html><html><head><title>${doc.referencja}</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{font-family:Inter,system-ui,sans-serif;padding:36px 44px;color:#1e293b;max-width:860px;margin:0 auto;font-size:13px;display:flex;flex-direction:column;min-height:100vh}
+  h1{font-size:22px;font-weight:800;margin:0 0 2px;letter-spacing:-.3px}
+  .sub{font-size:12px;color:#64748b;margin-bottom:20px}
+  .header-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:16px 0;border-top:2px solid #0f172a;border-bottom:1px solid #e2e8f0;margin-bottom:20px}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;padding:8px;border-bottom:2px solid #1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;white-space:nowrap}
+  th.r{text-align:right} td.r{text-align:right}
+  .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:24px 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+  .signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;padding-top:20px;border-top:1px solid #e2e8f0}
+  .sig-box{font-size:12px;color:#64748b}
+  .sig-line{border-bottom:1px solid #94a3b8;height:32px;margin-top:8px}
+  .badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700}
+  .bottom{margin-top:auto;padding-top:32px}
+  .footer{margin-top:16px;padding-top:8px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;text-align:right}
+  @media print{html,body{height:auto}body{padding:16px 20px;min-height:unset}.bottom{position:fixed;bottom:12mm;left:12mm;right:12mm}@page{size:A4;margin:12mm}}
+</style>
+</head><body>
+<h1>${docTypeLabel[doc.typ] ?? doc.typ} &nbsp;<span class="badge" style="background:${statusBg};color:${statusColor}">${doc.status.toUpperCase()}</span></h1>
+<div class="sub">ilGelato MES · Magazyn główny</div>
+
+<div class="header-grid">
+  <div>
+    <div style="margin-bottom:10px">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Numer dokumentu</span>
+      <div style="font-size:18px;font-weight:900;font-family:monospace;margin-top:2px">${doc.referencja}</div>
+    </div>
+    <div style="font-size:12px;color:#475569"><strong>Data wystawienia:</strong> ${fmtFull(doc.data)}</div>
+    <div style="font-size:12px;color:#475569"><strong>Wystawił:</strong> ${doc.uzytkownik}</div>
+    ${zlecHTML}
+  </div>
+  ${kontrahentHTML}
+</div>
+
+<div class="section-title">Pozycje dokumentu</div>
+<table>${theadHTML}<tbody>${pozycjeHTML}</tbody></table>
+
+${(isWZ || isPW) ? `<div class="section-title">Podsumowanie wg towaru</div>
+<table>${podsumowanieThead}<tbody>${podsumowanieHTML}${lacWagaRow}</tbody></table>` : ""}
+
+<div class="bottom">
+  <div class="signatures">
+    <div class="sig-box">
+      <div>Wystawił: <strong>${doc.uzytkownik}</strong></div>
+      <div class="sig-line"></div>
+      <div style="margin-top:4px">Data: ${new Date(doc.data).toLocaleDateString("pl-PL")} &nbsp;&nbsp; Podpis i pieczątka</div>
+    </div>
+    <div class="sig-box">
+      <div>Odebrał: ${doc.kontrahent ? `<strong>${doc.kontrahent.nazwa}</strong>` : "............................................"}</div>
+      <div class="sig-line"></div>
+      <div style="margin-top:4px">Data: ................ &nbsp;&nbsp; Podpis i pieczątka</div>
+    </div>
+  </div>
+  <div class="footer">Wygenerowano przez ilGelato MES · ${new Date().toLocaleString("pl-PL")}</div>
+</div>
+</body></html>`);
     win.document.close();
     win.print();
   };
@@ -633,7 +824,7 @@ export default function Dokumenty() {
               type="text" value={etykietaInput} onChange={e => setEtykietaInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleFetchEtykieta()}
               placeholder="Skanuj lub wpisz numer partii..." autoFocus
-              className="flex-1 bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-amber-500 font-mono"
+              className="flex-1 bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-amber-500 font-mono"
             />
             <button onClick={handleFetchEtykieta} className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold min-h-[48px]">Generuj</button>
           </div>
@@ -659,14 +850,14 @@ export default function Dokumenty() {
       {/* ═══ MODAL PZ ══════════════════════════════════════════════════════════ */}
       {showPz && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
-          <div className="bg-[#1e293b] shadow-2xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
+          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
 
             {/* Nagłówek */}
-            <div className="flex justify-between items-center p-5 border-b border-[#334155] bg-emerald-900/20 shrink-0">
+            <div className="flex justify-between items-center p-5 border-b border-[var(--border)] bg-emerald-900/20 shrink-0">
               <h3 className="text-lg font-bold text-emerald-400 flex items-center gap-2">
                 <PackageOpen className="w-5 h-5" /> Nowy dokument PZ — Przyjęcie zewnętrzne
               </h3>
-              <button onClick={() => { setShowPz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]">
+              <button onClick={() => { setShowPz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)]">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -674,12 +865,12 @@ export default function Dokumenty() {
             <form onSubmit={handleCreatePz} className="flex flex-col flex-1 overflow-hidden">
               <div className="overflow-y-auto flex-1 p-5 space-y-5">
                 {/* Referencja zewnętrzna */}
-                <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155]">
+                <div className="bg-[var(--bg-app)] p-4 rounded-xl border border-[var(--border)]">
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-2">Numer zewnętrzny (f-ra / WZ dostawcy) — opcjonalnie</label>
                   <input
                     type="text" value={pzReferencja} onChange={e => setPzReferencja(e.target.value)}
                     placeholder="np. FV/2026/03/001 lub WZ-DOST-123"
-                    className="w-full md:w-1/2 bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-emerald-500 font-mono"
+                    className="w-full md:w-1/2 bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-emerald-500 font-mono"
                   />
                 </div>
 
@@ -702,15 +893,15 @@ export default function Dokumenty() {
                   {pzRows.length === 0 ? (
                     <div
                       onClick={openPzSelektor}
-                      className="border-2 border-dashed border-[#334155] hover:border-emerald-500/50 rounded-xl p-8 text-center cursor-pointer transition-colors group"
+                      className="border-2 border-dashed border-[var(--border)] hover:border-emerald-500/50 rounded-xl p-8 text-center cursor-pointer transition-colors group"
                     >
                       <PackageOpen className="w-8 h-8 text-slate-600 group-hover:text-emerald-500/50 mx-auto mb-2 transition-colors" />
                       <p className="text-slate-500 group-hover:text-slate-400 font-semibold text-sm">Kliknij aby wybrać towary z asortymentu</p>
                     </div>
                   ) : (
-                    <div className="rounded-xl overflow-hidden border border-[#334155]">
+                    <div className="rounded-xl overflow-hidden border border-[var(--border)]">
                       {/* Nagłówek tabeli */}
-                      <div className="grid bg-[#0f172a] border-b border-[#334155] text-[10px] font-bold uppercase tracking-widest text-slate-500"
+                      <div className="grid bg-[var(--bg-app)] border-b border-[var(--border)] text-[10px] font-bold uppercase tracking-widest text-slate-500"
                         style={{ gridTemplateColumns: '28px 1fr 200px 100px 110px 120px 32px', padding: '6px 8px', gap: 6 }}>
                         <div>#</div>
                         <div>Towar</div>
@@ -723,7 +914,7 @@ export default function Dokumenty() {
                       {/* Wiersze */}
                       {pzRows.map((row, idx) => (
                         <div key={row._key}
-                          className="grid items-center border-b border-[#1e293b] last:border-b-0 hover:bg-[#1e293b]/40 transition-colors"
+                          className="grid items-center border-b border-[var(--border-dim)] last:border-b-0 hover:bg-[var(--bg-hover)]/40 transition-colors"
                           style={{ gridTemplateColumns: '28px 1fr 200px 100px 120px 32px', padding: '4px 8px', gap: 6 }}>
 
                           {/* # */}
@@ -787,7 +978,7 @@ export default function Dokumenty() {
               {(() => {
                 const iloscTotal = pzRows.reduce((sum, r) => sum + (parseFloat(r.ilosc) || 0), 0);
                 return (
-              <div className="flex justify-between items-center gap-3 p-4 border-t border-[#334155] bg-[#0f172a]/50 shrink-0">
+              <div className="flex justify-between items-center gap-3 p-4 border-t border-[var(--border)] bg-[var(--bg-app)]/50 shrink-0">
                 <div className="flex items-center gap-4 text-xs font-mono">
                   {pzRows.length > 0 && (
                     <>
@@ -803,7 +994,7 @@ export default function Dokumenty() {
                   )}
                 </div>
                 <div className="flex gap-3">
-                  <button type="button" onClick={() => { setShowPz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
+                  <button type="button" onClick={() => { setShowPz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
                     Anuluj
                   </button>
                   <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors min-h-[44px]">
@@ -821,20 +1012,20 @@ export default function Dokumenty() {
       {/* ═══ MODAL WZ ══════════════════════════════════════════════════════════ */}
       {showWz && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
-          <div className="bg-[#1e293b] shadow-2xl border border-[#334155] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
+          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
 
-            <div className="flex justify-between items-center p-5 border-b border-[#334155] bg-orange-900/20 shrink-0">
+            <div className="flex justify-between items-center p-5 border-b border-[var(--border)] bg-orange-900/20 shrink-0">
               <h3 className="text-lg font-bold text-orange-400 flex items-center gap-2">
                 <ArrowRightCircle className="w-5 h-5" /> Nowy dokument WZ — Wydanie zewnętrzne
               </h3>
-              <button onClick={() => { setShowWz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]">
+              <button onClick={() => { setShowWz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)]">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleCreateWz} className="flex flex-col flex-1 overflow-hidden">
               <div className="overflow-y-auto flex-1 p-5 space-y-5">
-                <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-[var(--bg-app)] p-4 rounded-xl border border-[var(--border)] grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-slate-400 text-xs font-bold uppercase mb-2">
                       Kontrahent (odbiorca) <span className="text-red-400">*</span>
@@ -843,7 +1034,7 @@ export default function Dokumenty() {
                       required
                       value={wzKontrahentId}
                       onChange={e => setWzKontrahentId(e.target.value)}
-                      className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 text-sm"
+                      className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 text-sm"
                     >
                       <option value="">-- wybierz kontrahenta --</option>
                       {kontrahenci.map(k => (
@@ -856,7 +1047,7 @@ export default function Dokumenty() {
                     <input
                       type="text" value={wzReferencja} onChange={e => setWzReferencja(e.target.value)}
                       placeholder="np. ZAM-2026/03/001"
-                      className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 font-mono"
+                      className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 font-mono"
                     />
                   </div>
                 </div>
@@ -879,7 +1070,7 @@ export default function Dokumenty() {
                   {wzRows.length === 0 ? (
                     <div
                       onClick={openWzSelektor}
-                      className="border-2 border-dashed border-[#334155] hover:border-orange-500/50 rounded-2xl p-10 text-center cursor-pointer transition-colors group"
+                      className="border-2 border-dashed border-[var(--border)] hover:border-orange-500/50 rounded-2xl p-10 text-center cursor-pointer transition-colors group"
                     >
                       <ArrowRightCircle className="w-10 h-10 text-slate-600 group-hover:text-orange-500/50 mx-auto mb-3 transition-colors" />
                       <p className="text-slate-500 group-hover:text-slate-400 font-semibold">Kliknij aby wybrać towary do wydania</p>
@@ -897,7 +1088,7 @@ export default function Dokumenty() {
                         }, {});
                         const typy_opakowan: any[] = Object.values(groupedOpakowania).sort((a: any, b: any) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg);
                         return (
-                          <div key={row._key} className="bg-[#0f172a] border border-[#334155] rounded-xl p-4">
+                          <div key={row._key} className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl p-4">
                             <div className="flex items-start gap-3">
                               <div className="w-7 h-7 bg-orange-600/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
                                 <ArrowRightCircle className="w-4 h-4 text-orange-400" />
@@ -922,7 +1113,7 @@ export default function Dokumenty() {
                                         required
                                         value={row.id_partii}
                                         onChange={e => updateWzRow(row._key, "id_partii", e.target.value)}
-                                        className="w-full bg-[#1e293b] border border-[#475569] text-white rounded-xl px-4 py-2.5 outline-none focus:border-orange-500 text-sm font-mono"
+                                        className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-orange-500 text-sm font-mono"
                                       >
                                         <option value="">-- wybierz partię --</option>
                                         {row.dostepnePartie.map(p => (
@@ -944,7 +1135,7 @@ export default function Dokumenty() {
                                             const dostepneSzt = op.count;
                                             const opKey = `${op.id_asortymentu}_${op.waga_kg}`;
                                             return (
-                                              <div key={i} className="flex items-center gap-3 bg-[#1e293b] rounded-lg px-3 py-1.5">
+                                              <div key={i} className="flex items-center gap-3 bg-[var(--bg-surface)] rounded-lg px-3 py-1.5">
                                                 <div className="flex-1 min-w-0">
                                                   <span className="text-sm text-white font-medium">{op.nazwa}</span>
                                                   <span className="font-mono text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{op.waga_kg} kg/szt.</span>
@@ -954,7 +1145,7 @@ export default function Dokumenty() {
                                                   type="number" min="0" max={dostepneSzt} step="1"
                                                   value={row.sztuki[opKey] ?? ""}
                                                   placeholder="0"
-                                                  className="w-16 bg-[#0f172a] border border-[#475569] text-white rounded-lg px-2 py-1.5 font-mono font-bold text-sm outline-none focus:border-orange-500 text-right shrink-0"
+                                                  className="w-16 bg-[var(--bg-app)] border border-[#475569] text-white rounded-lg px-2 py-1.5 font-mono font-bold text-sm outline-none focus:border-orange-500 text-right shrink-0"
                                                   onChange={e => updateWzSztuki(row._key, opKey, parseFloat(e.target.value) || 0, selectedPartia!.opakowania!)}
                                                 />
                                                 <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>szt.</span>
@@ -989,8 +1180,8 @@ export default function Dokumenty() {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 p-5 border-t border-[#334155] bg-[#0f172a]/50 shrink-0">
-                <button type="button" onClick={() => { setShowWz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[#334155] rounded-xl font-semibold transition-colors">
+              <div className="flex justify-end gap-3 p-5 border-t border-[var(--border)] bg-[var(--bg-app)]/50 shrink-0">
+                <button type="button" onClick={() => { setShowWz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
                   Anuluj
                 </button>
                 <button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px]">

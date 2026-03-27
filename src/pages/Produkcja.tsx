@@ -9,7 +9,7 @@ import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
 
-type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null };
+type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null; typ_asortymentu?: string; id_grupy?: string | null; grupa?: { kod: string } | null };
 type SkladnikReceptury = { 
   id_asortymentu_skladnika: string; 
   ilosc_wymagana: number; 
@@ -40,9 +40,9 @@ type Zlecenie = {
 };
 
 type WizPartia = { id: string; numer_partii: string; termin_waznosci: string | null; stan: number };
-type WizSurowiecBaza = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
+type WizSurowiecBaza = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; czy_zasob_nieograniczony: boolean; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
 type WizWyrob = { _key: string; id_receptury: string; liczba_porcji: string };
-type WizSurowiecWyrob = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
+type WizSurowiecWyrob = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; czy_zasob_nieograniczony: boolean; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
 
 export default function Produkcja() {
   const { showToast } = useToast();
@@ -105,6 +105,7 @@ export default function Produkcja() {
 
   // ── Wizard sesji produkcyjnej ────────────────────────────────────────────────
   const [showWizard, setShowWizard] = useState(false);
+  const [wizTyp, setWizTyp] = useState<"" | "lody" | "sorbety">("");
   const [wizStep, setWizStep] = useState<1|2|3>(1);
   const [wizLoading, setWizLoading] = useState(false);
   const [wizBazaRecId, setWizBazaRecId] = useState("");
@@ -136,7 +137,7 @@ export default function Produkcja() {
 
   const saveDraft = () => {
     const draft = {
-      wizStep, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc,
+      wizTyp, wizStep, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc,
       wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja,
       savedAt: new Date().toISOString(),
     };
@@ -166,6 +167,7 @@ export default function Produkcja() {
       const row = await res.json();
       if (!row?.dane_json) return;
       const draft = JSON.parse(row.dane_json);
+      setWizTyp(draft.wizTyp ?? "lody");
       setWizStep(draft.wizStep);
       setWizBazaRecId(draft.wizBazaRecId);
       setWizBazaIlosc(draft.wizBazaIlosc);
@@ -214,7 +216,12 @@ export default function Produkcja() {
   }, []);
 
   useEffect(() => {
-    if (viewSesjaId) setSesjaTab("baza");
+    if (viewSesjaId) {
+      const data = viewSesjaData;
+      if (data?.baza) setSesjaTab("baza");
+      else if (data?.wyroby[0]) setSesjaTab(data.wyroby[0].id);
+      else setSesjaTab("podsumowanie");
+    }
   }, [viewSesjaId]);
 
 
@@ -346,64 +353,135 @@ export default function Produkcja() {
     if (!win) return;
     const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
     const statusLabel: Record<string, string> = { Planowane: "Planowane", W_toku: "W toku", Zrealizowane: "Zrealizowane", Anulowane: "Anulowane" };
+    const nazwaWyrobu = z.receptura?.asortyment_docelowy?.nazwa || "—";
+    const nrPartii = z.numer_partii_wyrobu || "—";
 
+    // ── Pozycje per opakowanie ──
+    const opakowania = z.opakowania || [];
+    const dataProd = fmt(z.utworzono_dnia);
+    const dniTrwalosci = (z.receptura as any)?.dni_trwalosci;
+    const terminWaznosci = dniTrwalosci
+      ? fmt(new Date(new Date(z.utworzono_dnia).getTime() + dniTrwalosci * 86400000).toISOString())
+      : "—";
+
+    const pozycjeHTML = opakowania.length > 0
+      ? opakowania.map((op, i) => `<tr>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${i + 1}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb">
+            <div style="font-weight:700">${nazwaWyrobu}</div>
+            <div style="font-size:11px;color:#64748b;margin-top:1px">${op.nazwa}</div>
+          </td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px">${nrPartii}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${dataProd}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${terminWaznosci}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">
+            1&nbsp;szt.
+            <span style="display:block;font-size:10px;color:#64748b;font-family:monospace">${fmtL(op.waga_kg, 3)}&nbsp;kg</span>
+          </td>
+        </tr>`).join("")
+      : `<tr><td colspan="6" style="padding:12px 8px;color:#94a3b8;text-align:center;font-style:italic">Brak danych o opakowaniach</td></tr>`;
+
+    // ── Podsumowanie wg towaru ──
+    const totalKg = opakowania.reduce((s, o) => s + o.waga_kg, 0);
+    const podsumowanieHTML = opakowania.length > 0
+      ? `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${nazwaWyrobu}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${opakowania.length}&nbsp;szt.</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(totalKg, 3)}&nbsp;kg</td>
+        </tr>
+        <tr style="background:#f8fafc;border-top:2px solid #1e293b">
+          <td style="padding:8px;font-weight:900">ŁĄCZNIE</td>
+          <td style="padding:8px;text-align:right;font-family:monospace;font-weight:700">${opakowania.length}&nbsp;szt.</td>
+          <td style="padding:8px;text-align:right;font-weight:900;font-size:15px;font-family:monospace">${fmtL(totalKg, 3)}&nbsp;kg</td>
+        </tr>`
+      : "";
+
+    // ── Surowce ──
     let skladnikiHTML = "";
     if (z.status === "Planowane") {
       skladnikiHTML = (z.receptura?.skladniki || []).map(s => {
         const qty = fmtL(s.ilosc_wymagana * z.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100), 3);
         const partia = s.sugerowane_partie?.[0]?.numer_partii || "—";
-        return `<tr><td>${s.asortyment_skladnika?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${partia}</td><td style="text-align:right;font-weight:700">${qty} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
+        return `<tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${s.asortyment_skladnika?.nazwa}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px;color:#3b82f6">${partia}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${qty} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
       }).join("");
     } else if (z.status === "W_toku") {
-      const skladniki = z.receptura?.skladniki || [];
-      skladnikiHTML = skladniki.map(s => {
+      skladnikiHTML = (z.receptura?.skladniki || []).map(s => {
         const rezerwacje = (z.rezerwacje || []).filter((r: any) =>
           (r.id_partii && r.partia?.id_asortymentu === s.asortyment_skladnika?.id) || (r.id_asortymentu === s.asortyment_skladnika?.id)
         );
         const suma = rezerwacje.reduce((acc: number, r: any) => acc + (r.ilosc_zarezerwowana || 0), 0);
         const partia = rezerwacje[0]?.partia?.numer_partii || "Rez. ilościowa";
-        return `<tr><td>${s.asortyment_skladnika?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${partia}</td><td style="text-align:right;font-weight:700">${fmtL(suma, 3)} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
+        return `<tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${s.asortyment_skladnika?.nazwa}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px;color:#3b82f6">${partia}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${fmtL(suma, 3)} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
       }).join("");
     } else {
       skladnikiHTML = (z.ruchy_magazynowe || []).filter(r => r.typ_ruchu === "Zuzycie").map(r =>
-        `<tr><td>${r.partia?.asortyment?.nazwa}</td><td style="font-family:monospace;color:#3b82f6">${r.partia?.numer_partii}</td><td style="text-align:right;font-weight:700;color:#16a34a">${fmtL(Math.abs(r.ilosc), 3)} ${r.partia?.asortyment?.jednostka_miary}</td></tr>`
+        `<tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${r.partia?.asortyment?.nazwa}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px;color:#3b82f6">${r.partia?.numer_partii}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;color:#16a34a">${fmtL(Math.abs(r.ilosc), 3)} ${r.partia?.asortyment?.jednostka_miary}</td></tr>`
       ).join("");
     }
 
-    const wyrobHTML = z.numer_partii_wyrobu
-      ? `<tr><td>Nr partii wyrobu</td><td style="font-family:monospace;color:#3b82f6">${z.numer_partii_wyrobu}</td></tr>` : "";
-
     win.document.write(`<!DOCTYPE html><html><head><title>${z.numer_zlecenia || "ZP"}</title><style>
-      body{font-family:Inter,system-ui,sans-serif;padding:40px;color:#1e293b;max-width:800px;margin:0 auto}
-      h1{font-size:24px;margin:0 0 4px}
-      .meta{color:#64748b;font-size:13px;margin-bottom:24px}
-      .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;margin-left:8px;background:#e0e7ff;color:#4338ca}
-      table{width:100%;border-collapse:collapse;margin-top:16px}
-      th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;color:#64748b}
-      td{padding:8px;border-bottom:1px solid #e5e7eb}
-      .section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:24px 0 4px}
-      .info-table td{border:none;padding:4px 8px}
-      .info-table td:first-child{color:#64748b;width:160px}
-      .info-table td:last-child{font-weight:700}
-      @media print{body{padding:20px}@page{size:A4;margin:15mm}}
+      *{box-sizing:border-box}
+      body{font-family:Inter,system-ui,sans-serif;padding:36px 44px;color:#1e293b;max-width:860px;margin:0 auto;font-size:13px}
+      h1{font-size:20px;font-weight:900;margin:0 0 2px;letter-spacing:-.3px}
+      .sub{font-size:11px;color:#64748b;margin-bottom:16px}
+      .header-bar{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 0;border-top:2px solid #0f172a;border-bottom:1px solid #e2e8f0;margin-bottom:16px}
+      .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;background:#e0e7ff;color:#4338ca;margin-left:6px}
+      .meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 20px;padding:12px 16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0}
+      .metric .label{font-size:10px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em}
+      .metric .val{font-size:16px;font-weight:900;margin-top:2px;font-family:monospace}
+      .section{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:20px 0 6px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+      table{width:100%;border-collapse:collapse}
+      th{text-align:left;padding:7px 8px;border-bottom:2px solid #1e293b;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;white-space:nowrap}
+      th.r{text-align:right} td.r{text-align:right}
+      .sigs{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px;padding-top:16px;border-top:1px solid #e2e8f0}
+      .sig-line{border-bottom:1px solid #94a3b8;height:30px;margin-top:6px}
+      .sig-label{font-size:11px;color:#64748b}
+      .footer{margin-top:20px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px;text-align:right}
+      @media print{body{padding:16px 20px}@page{size:A4;margin:12mm}}
     </style></head><body>
-    <h1>${z.numer_zlecenia || "ZP-TEMP"} <span class="badge">${statusLabel[z.status] || z.status}</span></h1>
-    <div class="meta">${z.receptura?.asortyment_docelowy?.nazwa} · ${z.receptura?.asortyment_docelowy?.kod_towaru} · Wystawiono: ${fmt(z.utworzono_dnia)}</div>
-    <div class="section-title">Parametry zlecenia</div>
-    <table class="info-table"><tbody>
-      <tr><td>Plan</td><td>${z.planowana_ilosc_wyrobu} ${z.receptura?.asortyment_docelowy?.jednostka_miary}</td></tr>
-      ${z.rzeczywista_ilosc_wyrobu != null ? `<tr><td>Wykonano</td><td style="color:#16a34a">${z.rzeczywista_ilosc_wyrobu} ${z.receptura?.asortyment_docelowy?.jednostka_miary}</td></tr>` : ""}
-      ${wyrobHTML}
-      <tr><td>Status</td><td>${statusLabel[z.status] || z.status}</td></tr>
-    </tbody></table>
-    ${z.opakowania && z.opakowania.length > 0 ? `
-    <div class="section-title">Pakowanie</div>
-    <table><thead><tr><th>Opakowanie</th><th style="text-align:right">Waga</th></tr></thead><tbody>
-    ${z.opakowania.map(op => `<tr><td>${op.nazwa}</td><td style="text-align:right;font-weight:700">${op.waga_kg.toFixed(3).replace('.', ',')} kg</td></tr>`).join("")}
-    <tr style="border-top:2px solid #334155"><td style="font-weight:700">Razem</td><td style="text-align:right;font-weight:900">${z.opakowania.reduce((s, o) => s + o.waga_kg, 0).toFixed(3).replace('.', ',')} kg</td></tr>
-    </tbody></table>` : ""}
-    <div class="section-title">Zapotrzebowanie i zużycie surowców</div>
-    <table><thead><tr><th>Surowiec</th><th>Nr Partii</th><th style="text-align:right">Ilość</th></tr></thead><tbody>${skladnikiHTML}</tbody></table>
+    <h1>KARTA PRODUKCYJNA <span class="badge">${statusLabel[z.status] || z.status}</span></h1>
+    <div class="sub">ilGelato MES &middot; ${z.receptura?.asortyment_docelowy?.kod_towaru || ""}</div>
+    <div class="header-bar">
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Numer zlecenia</div>
+        <div style="font-size:22px;font-weight:900;font-family:monospace;margin-top:2px">${z.numer_zlecenia || "ZP-TEMP"}</div>
+        <div style="font-size:12px;color:#475569;margin-top:4px">Wyrób: <strong>${nazwaWyrobu}</strong></div>
+        <div style="font-size:12px;color:#475569">Wystawiono: <strong>${fmt(z.utworzono_dnia)}</strong></div>
+      </div>
+    </div>
+    <div class="meta-grid">
+      <div class="metric"><div class="label">Plan</div><div class="val">${fmtL(z.planowana_ilosc_wyrobu, 3)} ${z.receptura?.asortyment_docelowy?.jednostka_miary || "kg"}</div></div>
+      ${z.rzeczywista_ilosc_wyrobu != null ? `<div class="metric"><div class="label">Wykonano</div><div class="val" style="color:#15803d">${fmtL(z.rzeczywista_ilosc_wyrobu, 3)} ${z.receptura?.asortyment_docelowy?.jednostka_miary || "kg"}</div></div>` : ""}
+      ${nrPartii !== "—" ? `<div class="metric"><div class="label">Nr partii (PW)</div><div class="val" style="color:#1d4ed8;font-size:13px">${nrPartii}</div></div>` : ""}
+    </div>
+    ${opakowania.length > 0 ? `
+    <div class="section">Pozycje — opakowania</div>
+    <table>
+      <thead><tr>
+        <th style="width:36px;text-align:center">Lp.</th>
+        <th>Wyrób / Opakowanie</th>
+        <th>Nr partii / LOT</th>
+        <th style="text-align:center">Data prod.</th>
+        <th style="text-align:center">Ważność</th>
+        <th class="r">Ilość</th>
+      </tr></thead>
+      <tbody>${pozycjeHTML}</tbody>
+    </table>
+    <div class="section">Podsumowanie wg towaru</div>
+    <table>
+      <thead><tr><th>Towar</th><th class="r">Ilość (szt.)</th><th class="r">Masa (kg)</th></tr></thead>
+      <tbody>${podsumowanieHTML}</tbody>
+    </table>` : ""}
+    <div class="section">Zużycie surowców</div>
+    <table>
+      <thead><tr><th>Surowiec</th><th>Nr Partii</th><th class="r">Ilość</th></tr></thead>
+      <tbody>${skladnikiHTML}</tbody>
+    </table>
+    <div class="sigs">
+      <div><div class="sig-label">Sporządził</div><div class="sig-line"></div></div>
+      <div><div class="sig-label">Zatwierdził</div><div class="sig-line"></div></div>
+    </div>
+    <div class="footer">Wydrukowano z systemu ilGelato MES &middot; ${new Date().toLocaleString("pl-PL")}</div>
     </body></html>`);
     win.document.close();
     win.print();
@@ -438,6 +516,7 @@ export default function Produkcja() {
         przelicznik,
         ilosc_wymagana,
         ilosc_jm,
+        czy_zasob_nieograniczony: s.asortyment_skladnika.czy_zasob_nieograniczony ?? false,
         zuzyte_partie: [{ _uid: Math.random().toString(36), id_partii: "", ilosc: ilosc_jm }],
         partie: [],
       };
@@ -474,11 +553,12 @@ export default function Produkcja() {
   // Auto-zapis kroku 3 po każdej zmianie wizRealizacja
   React.useEffect(() => {
     if (wizStep !== 3 || Object.keys(wizRealizacja).length === 0) return;
-    const state = { wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
+    const state = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
     dbSaveDraft(3, state, "zmiana_realizacji");
   }, [wizRealizacja]);
 
   const wizReset = () => {
+    setWizTyp("");
     setWizStep(1);
     setWizBazaRecId(""); setWizBazaIlosc(""); setWizBazaRzeczywistaIlosc("");
     setWizBazaSurowce([]);
@@ -535,6 +615,7 @@ export default function Produkcja() {
           przelicznik,
           ilosc_wymagana,
           ilosc_jm,
+          czy_zasob_nieograniczony: s.asortyment_skladnika.czy_zasob_nieograniczony ?? false,
           id_partii: "",
           zuzyte_partie: [{ _uid: Math.random().toString(36), id_partii: s.id_asortymentu_skladnika === wizPolproduktAsortId ? "__etap1__" : "", ilosc: ilosc_jm }],
           partie: s.id_asortymentu_skladnika === wizPolproduktAsortId
@@ -590,6 +671,7 @@ export default function Produkcja() {
 
   const handleWizNext = () => {
     if (wizStep === 1) {
+      // Krok 1 tylko dla lodów
       if (!wizBazaRecId) { showToast("Wybierz recepturę półproduktu (bazy)", "error"); return; }
       const iloscNum = parseFloat(wizBazaIlosc.replace(",", "."));
       if (isNaN(iloscNum) || iloscNum <= 0) { showToast("Podaj ilość bazy > 0", "error"); return; }
@@ -614,7 +696,7 @@ export default function Produkcja() {
            }
         }
       }
-      const stateStep2 = { wizStep: 2, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
+      const stateStep2 = { wizTyp, wizStep: 2, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
       dbSaveDraft(2, stateStep2, "przejscie_kroku");
       setHasDraft(true);
       setWizStep(2);
@@ -624,7 +706,7 @@ export default function Produkcja() {
         const porcje = parseFloat(w.liczba_porcji.replace(",", "."));
         if (isNaN(porcje) || porcje <= 0) { showToast("Wszystkie wyroby muszą mieć liczbę porcji > 0", "error"); return; }
       }
-      if (!wizBazaOk) { showToast(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`, "error"); return; }
+      if (wizTyp === "lody" && !wizBazaOk) { showToast(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`, "error"); return; }
       // Inicjalizuj krok 3
       const init: Record<string, WizRealizacjaItem> = {};
       const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
@@ -635,7 +717,7 @@ export default function Produkcja() {
         };
       }
       setWizRealizacja(init);
-      const stateStep3 = { wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja: init, savedAt: new Date().toISOString() };
+      const stateStep3 = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja: init, savedAt: new Date().toISOString() };
       dbSaveDraft(3, stateStep3, "przejscie_kroku");
       setHasDraft(true);
       setWizStep(3);
@@ -674,13 +756,7 @@ export default function Produkcja() {
     }
     setWizLoading(true);
     try {
-      const payload = {
-        id_receptury_bazy: wizBazaRecId,
-        ilosc_bazy: parseFloat(wizBazaIlosc.replace(",", ".")),
-        rzeczywista_ilosc_bazy: parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", ".")),
-        surowce_bazy: wizBazaSurowce
-          .flatMap(s => s.zuzyte_partie.map(zp => ({ id_partii: zp.id_partii, ilosc: zp.ilosc })))
-          .filter(x => x.id_partii && x.id_partii !== "__etap1__" && x.ilosc > 0),
+      const payload: Record<string, any> = {
         wyroby: wizWyroby
           .filter(w => getIloscWyrobu(w) > 0)
           .map(w => {
@@ -698,6 +774,15 @@ export default function Produkcja() {
             return { id_receptury: w.id_receptury, ilosc, rzeczywista_ilosc, surowce, opakowania };
           }),
       };
+      // Dla lodów dodaj dane bazy; dla sorbetów pomijamy etap 1
+      if (wizTyp === "lody") {
+        payload.id_receptury_bazy = wizBazaRecId;
+        payload.ilosc_bazy = parseFloat(wizBazaIlosc.replace(",", "."));
+        payload.rzeczywista_ilosc_bazy = parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", "."));
+        payload.surowce_bazy = wizBazaSurowce
+          .flatMap(s => s.zuzyte_partie.map(zp => ({ id_partii: zp.id_partii, ilosc: zp.ilosc })))
+          .filter(x => x.id_partii && x.id_partii !== "__etap1__" && x.ilosc > 0);
+      }
       const res = await fetch("/api/produkcja/sesja", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
@@ -706,7 +791,8 @@ export default function Produkcja() {
       clearDraft();
       setShowWizard(false); wizReset();
       fetchData();
-      showToast(`Sesja ${data.sesja.numer_sesji} zarejestrowana — ${data.wyroby.length + 1} ZP zrealizowane.`, "ok");
+      const zpCount = data.wyroby.length + (data.baza ? 1 : 0);
+      showToast(`Sesja ${data.sesja.numer_sesji} zarejestrowana — ${zpCount} ZP zrealizowane.`, "ok");
     } catch (e: any) { showToast(e.message, "error"); }
     finally { setWizLoading(false); }
   };
@@ -1168,8 +1254,8 @@ export default function Produkcja() {
       
       {/* View Zlecenie Detail Modal / Karta ERP */}
       {viewZlecenie && (
-        <div className="fixed inset-0 z-[1050] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-view">
-          <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-6xl border border-[var(--border)] overflow-hidden flex flex-col" style={{ height: '95vh' }}>
+        <div className="fixed inset-0 z-[1050] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4 animate-view">
+          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] overflow-hidden flex flex-col" style={{ height: '80vh', marginTop: '10vh' }}>
 
             <div className="flex items-center justify-between p-5 border-b border-[var(--border)] shrink-0" style={{ background: viewZlecenie.status === "W_toku" ? 'rgba(217,119,6,0.15)' : viewZlecenie.status === "Zrealizowane" ? 'rgba(16,185,129,0.1)' : 'rgba(37,99,235,0.1)' }}>
               <div className="flex items-center gap-3">
@@ -1681,7 +1767,7 @@ export default function Produkcja() {
             </thead>
             <tbody>
               {rows.map((s: any) => {
-                const brak = s.partie.length === 0;
+                const brak = s.partie.length === 0 && !s.czy_zasob_nieograniczony;
                 let usedTotal = 0; s.zuzyte_partie.forEach((zp: any) => usedTotal += zp.ilosc);
                 const isAuto = s.zuzyte_partie[0]?.id_partii === "__etap1__";
 
@@ -1699,6 +1785,8 @@ export default function Produkcja() {
                     <td className="align-top">
                       {isAuto ? (
                          <span className="text-xs text-indigo-400 flex items-center gap-1 mt-3"><Check className="w-3 h-3" />Etap 1 — automatycznie z bazy</span>
+                      ) : s.czy_zasob_nieograniczony ? (
+                         <span className="text-xs text-sky-400 flex items-center gap-1 mt-3"><Check className="w-3 h-3" />Zasób nieograniczony</span>
                       ) : brak ? (
                          <span className="text-xs text-red-400 flex items-center gap-1 mt-3"><AlertCircle className="w-3 h-3" />Brak partii w magazynie</span>
                       ) : (
@@ -1800,19 +1888,32 @@ export default function Produkcja() {
                 <div className="flex items-center gap-3">
                   <Zap className="w-5 h-5 text-indigo-400" />
                   <div>
-                    <h3 className="text-base font-bold text-white">Sesja produkcyjna</h3>
-                    <p className="text-[var(--text-muted)] text-xs">{wizStep === 1 ? "Krok 1/3 — Półprodukt (Baza)" : wizStep === 2 ? "Krok 2/3 — Wyroby gotowe i surowce" : "Krok 3/3 — Ilości rzeczywiste i pakowanie"}</p>
+                    <h3 className="text-base font-bold text-white">
+                      {wizTyp === "" ? "Nowa sesja produkcyjna" : wizTyp === "lody" ? "Sesja — Lody" : "Sesja — Sorbety"}
+                    </h3>
+                    <p className="text-[var(--text-muted)] text-xs">
+                      {wizTyp === "" ? "Wybierz typ produkcji" :
+                       wizTyp === "lody" ? (wizStep === 1 ? "Krok 1/3 — Półprodukt (Baza)" : wizStep === 2 ? "Krok 2/3 — Wyroby gotowe i surowce" : "Krok 3/3 — Ilości rzeczywiste i pakowanie") :
+                       wizStep === 2 ? "Krok 1/2 — Wyroby gotowe i surowce" : "Krok 2/2 — Ilości rzeczywiste i pakowanie"}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="flex gap-1.5">
-                    {[1,2,3].map(n => (
-                      <div key={n} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
-                        style={{ background: n <= wizStep ? 'var(--accent)' : 'var(--bg-surface)', color: n <= wizStep ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                        {n < wizStep ? <Check className="w-3 h-3" /> : n}
-                      </div>
-                    ))}
-                  </div>
+                  {wizTyp !== "" && (
+                    <div className="flex gap-1.5">
+                      {wizTyp === "lody" ? [1,2,3].map(n => (
+                        <div key={n} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+                          style={{ background: n <= wizStep ? 'var(--accent)' : 'var(--bg-surface)', color: n <= wizStep ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                          {n < wizStep ? <Check className="w-3 h-3" /> : n}
+                        </div>
+                      )) : [2,3].map((s, i) => (
+                        <div key={s} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+                          style={{ background: s <= wizStep ? 'var(--accent)' : 'var(--bg-surface)', color: s <= wizStep ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                          {s < wizStep ? <Check className="w-3 h-3" /> : i + 1}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <button onClick={() => setShowWizard(false)} className="text-[var(--text-muted)] hover:text-white p-1.5 rounded-lg hover:bg-[var(--bg-input)]"><X className="w-5 h-5" /></button>
                 </div>
               </div>
@@ -1820,8 +1921,33 @@ export default function Produkcja() {
 
               <div className="flex-1 overflow-y-auto">
 
-                {/* ─── KROK 1: Baza ─────────────────────────────────────────────── */}
-                {wizStep === 1 && (
+                {/* ─── WYBÓR TYPU PRODUKCJI ──────────────────────────────────────── */}
+                {wizTyp === "" && (
+                  <div className="flex flex-col items-center justify-center gap-6 p-12">
+                    <p className="text-[var(--text-muted)] text-sm">Co dziś produkujesz?</p>
+                    <div className="flex gap-6">
+                      <button
+                        onClick={() => { setWizTyp("lody"); setWizStep(1); fetchData(); }}
+                        className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 transition-all hover:scale-105"
+                        style={{ background: 'var(--bg-surface)', borderColor: 'var(--accent)', color: 'white' }}>
+                        <span className="text-4xl">🍦</span>
+                        <span className="text-lg font-bold">Lody</span>
+                        <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Etap 1: baza (półprodukt)<br/>Etap 2: wyroby gotowe<br/>Etap 3: pakowanie</span>
+                      </button>
+                      <button
+                        onClick={() => { setWizTyp("sorbety"); setWizStep(2); fetchData(); }}
+                        className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 transition-all hover:scale-105"
+                        style={{ background: 'var(--bg-surface)', borderColor: 'var(--ok)', color: 'white' }}>
+                        <span className="text-4xl">🍋</span>
+                        <span className="text-lg font-bold">Sorbety</span>
+                        <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Etap 1: wyroby gotowe<br/>Etap 2: pakowanie<br/>(bez półproduktu)</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── KROK 1: Baza (tylko lody) ────────────────────────────────── */}
+                {wizTyp === "lody" && wizStep === 1 && (
                   <div>
                     {/* Selektor receptury + ilość */}
                     <div className="px-5 py-4 border-b border-[var(--border)] flex items-end gap-4" style={{ background: 'var(--bg-surface)' }}>
@@ -1872,21 +1998,30 @@ export default function Produkcja() {
                 {/* ─── KROK 2: Wyroby + Surowce wyrobów ────────────────────────── */}
                 {wizStep === 2 && (
                   <div>
-                    {/* Bilans bazy */}
-                    <div className="px-5 py-3 border-b border-[var(--border)] flex items-center gap-6" style={{ background: wizBazaOk ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.07)' }}>
-                      <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Bilans bazy</span>
-                      <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Dostępne </span><strong className="text-white font-mono">{fmtL(wizBazaAvail, 3)} {bazaRec?.asortyment_docelowy.jednostka_miary}</strong></span>
-                      <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Użyte </span><strong className="font-mono" style={{ color: wizBazaOk ? 'var(--ok)' : 'var(--danger)' }}>{fmtL(wizTotalBazaUsed, 3)}</strong></span>
-                      <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Pozostaje </span><strong className="font-mono text-white">{fmtL(Math.max(0, wizBazaAvail - wizTotalBazaUsed), 3)}</strong></span>
-                      {!wizBazaOk && <AlertTriangle className="w-4 h-4 text-red-400 ml-auto" />}
-                    </div>
+                    {/* Bilans bazy — tylko dla lodów */}
+                    {wizTyp === "lody" && (
+                      <div className="px-5 py-3 border-b border-[var(--border)] flex items-center gap-6" style={{ background: wizBazaOk ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.07)' }}>
+                        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Bilans bazy</span>
+                        <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Dostępne </span><strong className="text-white font-mono">{fmtL(wizBazaAvail, 3)} {bazaRec?.asortyment_docelowy.jednostka_miary}</strong></span>
+                        <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Użyte </span><strong className="font-mono" style={{ color: wizBazaOk ? 'var(--ok)' : 'var(--danger)' }}>{fmtL(wizTotalBazaUsed, 3)}</strong></span>
+                        <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Pozostaje </span><strong className="font-mono text-white">{fmtL(Math.max(0, wizBazaAvail - wizTotalBazaUsed), 3)}</strong></span>
+                        {!wizBazaOk && <AlertTriangle className="w-4 h-4 text-red-400 ml-auto" />}
+                      </div>
+                    )}
 
                     {/* Dodaj wyrób */}
                     <div className="px-5 py-3 border-b border-[var(--border)] flex gap-2" style={{ background: 'var(--bg-surface)' }}>
                       <select value={wizAddRecId} onChange={e => setWizAddRecId(e.target.value)}
                         className="flex-1 rounded px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2}>
                         <option value="">— wybierz recepturę wyrobu gotowego —</option>
-                        {receptury.filter(r => r.asortyment_docelowy.typ_asortymentu === "Wyrob_Gotowy" && !wizWyroby.find(w => w.id_receptury === r.id)).map(r => (
+                        {receptury.filter(r => {
+                          if (r.asortyment_docelowy.typ_asortymentu !== "Wyrob_Gotowy") return false;
+                          if (wizWyroby.find(w => w.id_receptury === r.id)) return false;
+                          const kodGrupy = r.asortyment_docelowy.grupa?.kod ?? null;
+                          if (wizTyp === "sorbety") return kodGrupy === "GEL-SOR";
+                          if (wizTyp === "lody") return kodGrupy !== "GEL-SOR";
+                          return true;
+                        }).map(r => (
                           <option key={r.id} value={r.id}>{r.asortyment_docelowy.nazwa} v{r.numer_wersji}</option>
                         ))}
                       </select>
@@ -1897,9 +2032,11 @@ export default function Produkcja() {
                       </button>
                     </div>
 
-                    {/* Lista wyrobów z ilościami i bilansem bazy */}
+                    {/* Lista wyrobów */}
                     {wizWyroby.length === 0 ? (
-                      <div className="p-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Dodaj wyroby gotowe, które powstaną z bazy</div>
+                      <div className="p-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                        {wizTyp === "sorbety" ? "Dodaj sorbety do wyprodukowania" : "Dodaj wyroby gotowe, które powstaną z bazy"}
+                      </div>
                     ) : (
                       <>
                         <table className="mes-table">
@@ -1908,7 +2045,7 @@ export default function Produkcja() {
                               <th>Wyrób gotowy</th>
                               <th className="text-right">Porcje</th>
                               <th className="text-right">Łączna ilość</th>
-                              <th className="text-right">Zużycie bazy</th>
+                              {wizTyp === "lody" && <th className="text-right">Zużycie bazy</th>}
                               <th className="w-8"></th>
                             </tr>
                           </thead>
@@ -1916,10 +2053,11 @@ export default function Produkcja() {
                             {wizWyroby.map(w => {
                               const rec = receptury.find(r => r.id === w.id_receptury);
                               const ilosc = getIloscWyrobu(w);
-                              const bazaUse = getBazaUsageForWyrob(w.id_receptury, ilosc);
-                              const bazaPerPorcja = getBazaUsageForWyrob(w.id_receptury, rec?.wielkosc_produkcji ?? 1);
+                              const bazaUse = wizTyp === "lody" ? getBazaUsageForWyrob(w.id_receptury, ilosc) : 0;
+                              const bazaPerPorcja = wizTyp === "lody" ? getBazaUsageForWyrob(w.id_receptury, rec?.wielkosc_produkcji ?? 1) : 0;
                               const maxPorcje = bazaPerPorcja > 0 ? Math.max(0, Math.floor((wizBazaAvail - wizTotalBazaUsed + bazaUse) / bazaPerPorcja)) : 0;
                               const surowceWyrobu = wizWyrobySurowceMap[w._key] || [];
+                              const colSpan = wizTyp === "lody" ? 5 : 4;
                               return (
                                 <React.Fragment key={w._key}>
                                   <tr>
@@ -1931,7 +2069,7 @@ export default function Produkcja() {
                                     </td>
                                     <td className="text-right">
                                       <div className="flex items-center justify-end gap-1.5">
-                                        {maxPorcje > 0 && (
+                                        {wizTyp === "lody" && maxPorcje > 0 && (
                                           <button onClick={() => setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: String(maxPorcje) } : x))}
                                             className="px-1.5 py-0.5 rounded text-xs font-mono font-bold transition-colors"
                                             style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}
@@ -1948,9 +2086,11 @@ export default function Produkcja() {
                                     <td className="text-right mono font-bold text-white">
                                       {fmtL(ilosc, 3)} <span className="text-xs opacity-50">{rec?.asortyment_docelowy.jednostka_miary}</span>
                                     </td>
-                                    <td className="text-right mono text-sm" style={{ color: bazaUse > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
-                                      {bazaUse > 0 ? `${fmtL(bazaUse, 3)} ${bazaRec?.asortyment_docelowy.jednostka_miary}` : '—'}
-                                    </td>
+                                    {wizTyp === "lody" && (
+                                      <td className="text-right mono text-sm" style={{ color: bazaUse > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
+                                        {bazaUse > 0 ? `${fmtL(bazaUse, 3)} ${bazaRec?.asortyment_docelowy.jednostka_miary}` : '—'}
+                                      </td>
+                                    )}
                                     <td>
                                       <button onClick={() => setWizWyroby(prev => prev.filter(x => x._key !== w._key))}
                                         className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors">
@@ -1960,7 +2100,7 @@ export default function Produkcja() {
                                   </tr>
                                   {surowceWyrobu.length > 0 && (
                                     <tr>
-                                      <td colSpan={5} style={{ padding: 0, background: 'var(--bg-panel)' }}>
+                                      <td colSpan={colSpan} style={{ padding: 0, background: 'var(--bg-panel)' }}>
                                         <div className="px-4 pt-1 pb-3">
                                           <div className="text-xs font-semibold uppercase tracking-wider mb-1 mt-2" style={{ color: 'var(--text-muted)' }}>
                                             Surowce — {rec?.asortyment_docelowy.nazwa}
@@ -2100,31 +2240,39 @@ export default function Produkcja() {
               {/* Footer */}
               <div className="px-5 py-3 border-t border-[var(--border)] bg-[var(--bg-surface)]/50 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
-                  <button onClick={() => wizStep === 1 ? setShowWizard(false) : setWizStep(prev => (prev - 1) as 1|2|3)}
+                  <button
+                    onClick={() => {
+                      if (wizTyp === "") { setShowWizard(false); return; }
+                      if (wizTyp === "lody" && wizStep === 1) { setShowWizard(false); return; }
+                      if (wizTyp === "sorbety" && wizStep === 2) { setWizTyp(""); return; }
+                      setWizStep(prev => (prev - 1) as 1|2|3);
+                    }}
                     className="px-4 py-2 text-[var(--text-secondary)] hover:bg-[var(--bg-input)] rounded-lg font-semibold transition-colors text-sm">
-                    {wizStep === 1 ? "Anuluj" : "← Wstecz"}
+                    {(wizTyp === "" || (wizTyp === "lody" && wizStep === 1)) ? "Anuluj" : "← Wstecz"}
                   </button>
-                  <button onClick={saveDraft}
-                    className="px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5"
-                    style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}
-                    title="Zapisz postęp i wyjdź — możesz wrócić później">
-                    <Save className="w-3.5 h-3.5" /> Zapisz i wyjdź
-                  </button>
+                  {wizTyp !== "" && (
+                    <button onClick={saveDraft}
+                      className="px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5"
+                      style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}
+                      title="Zapisz postęp i wyjdź — możesz wrócić później">
+                      <Save className="w-3.5 h-3.5" /> Zapisz i wyjdź
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
-                  {wizStep < 3 ? (
+                  {wizTyp !== "" && wizStep < 3 ? (
                     <button onClick={handleWizNext}
                       className="px-5 py-2 rounded-lg font-bold text-white text-sm flex items-center gap-2 transition-colors"
                       style={{ background: 'var(--accent)' }}>
                       {wizStep === 1 ? "Dalej — Wyroby →" : "Dalej — Realizacja →"}
                     </button>
-                  ) : (
+                  ) : wizTyp !== "" ? (
                     <button onClick={handleSubmitWizard} disabled={wizLoading}
                       className="px-5 py-2 rounded-lg font-bold text-white text-sm flex items-center gap-2 transition-colors disabled:opacity-50"
                       style={{ background: '#16a34a' }}>
                       {wizLoading ? <><RotateCcw className="w-4 h-4 animate-spin" />Tworzę…</> : <><CheckCircle2 className="w-4 h-4" />Utwórz sesję</>}
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -2134,8 +2282,8 @@ export default function Produkcja() {
 
       {/* ═══ REALIZACJA ZLECENIA (KARTA REALIZACJI) ══════════════════════════ */}
       {itemToRealize && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-5xl border border-[var(--border)] overflow-hidden flex flex-col relative" style={{ height: '95vh' }}>
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
+          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] overflow-hidden flex flex-col relative" style={{ height: '80vh', marginTop: '10vh' }}>
 
             <div className="flex items-center justify-between p-5 border-b border-[var(--border)] bg-emerald-900/20 shrink-0">
               <div className="flex items-center gap-3">
@@ -2435,8 +2583,8 @@ export default function Produkcja() {
             : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border)]"
         }`;
         return (
-          <div className="fixed inset-0 z-[1060] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6" onClick={() => setViewSesjaId(null)}>
-            <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-5xl border border-[var(--border)] flex flex-col" style={{ height: '93vh' }} onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-[1060] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4" onClick={() => setViewSesjaId(null)}>
+            <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col" style={{ height: '80vh', marginTop: '10vh' }} onClick={e => e.stopPropagation()}>
 
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
@@ -2460,21 +2608,135 @@ export default function Produkcja() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
-                      const win = window.open("", "_blank", "width=800,height=600");
+                      const win = window.open("", "_blank", "width=860,height=700");
                       if (!win) return;
-                      const items = viewSesjaData.zlecenia;
+                      const allZp = viewSesjaData.zlecenia;
                       const wyroby = viewSesjaData.wyroby;
-                      const surowce = Array.from(items.reduce((acc, z) => {
+                      const totalWykPrint = wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0);
+
+                      // Aggregate surowce
+                      const surowceMapPrint = new Map<string, { nazwa: string; ilosc: number; jm: string }>();
+                      allZp.forEach(z => {
                         z.ruchy_magazynowe.filter(r => r.typ_ruchu === "Zuzycie").forEach(r => {
-                          const k = r.partia.asortyment.nazwa;
-                          if (!acc.has(k)) acc.set(k, { nazwa: k, ilosc: 0, jm: r.partia.asortyment.jednostka_miary });
-                          acc.get(k).ilosc += Math.abs(r.ilosc);
+                          const k = r.partia?.asortyment?.nazwa || "?";
+                          const jm = r.partia?.asortyment?.jednostka_miary || "kg";
+                          if (!surowceMapPrint.has(k)) surowceMapPrint.set(k, { nazwa: k, ilosc: 0, jm });
+                          surowceMapPrint.get(k)!.ilosc += Math.abs(r.ilosc);
                         });
-                        return acc;
-                      }, new Map()).values());
-                      const wyrobyHTML = wyroby.map(w => `<tr><td>${w.receptura.asortyment_docelowy.nazwa}</td><td>${w.numer_partii_wyrobu || "—"}</td><td style="text-align:right">${fmtL(w.rzeczywista_ilosc_wyrobu || 0, 3)} kg</td></tr>`).join("");
-                      const surowceHTML = surowce.map((s: any) => `<tr><td>${s.nazwa}</td><td style="text-align:right">${fmtL(s.ilosc, 3)} ${s.jm}</td></tr>`).join("");
-                      win.document.write(`<!DOCTYPE html><html><head><title>Raport Sesji ${viewSesjaData.numer_sesji}</title><style>body{font-family:sans-serif;padding:40px;color:#334155}h1{margin-bottom:4px}.meta{color:#64748b;font-size:12px;margin-bottom:30px}table{width:100%;border-collapse:collapse;margin-top:10px}th{text-align:left;padding:8px;border-bottom:2px solid #334155;font-size:11px;text-transform:uppercase}td{padding:8px;border-bottom:1px solid #e2e8f0;font-size:14px}h2{font-size:16px;margin-top:30px;border-bottom:1px solid #cbd5e1;padding-bottom:5px;text-transform:uppercase;letter-spacing:1px}</style></head><body><h1>RAPORT SESJI: ${viewSesjaData.numer_sesji}</h1><div class="meta">Data sesji: ${new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</div><h2>Wyroby gotowe</h2><table><thead><tr><th>Nazwa produktu</th><th>Nr partii</th><th style="text-align:right">Masa (kg)</th></tr></thead><tbody>${wyrobyHTML}</tbody></table><h2>Zużyte surowce</h2><table><thead><tr><th>Surowiec</th><th style="text-align:right">Ilość</th></tr></thead><tbody>${surowceHTML}</tbody></table><div style="margin-top:50px;font-size:11px;color:#94a3b8">Wydrukowano z systemu MES: ${new Date().toLocaleString()}</div></body></html>`);
+                      });
+                      const surowcePrint = [...surowceMapPrint.values()].sort((a, b) => b.ilosc - a.ilosc);
+
+                      // Pozycje — jak WZ: każde opakowanie jako wiersz
+                      let lpPrint = 0;
+                      const pozycjeRowsHTML = wyroby.map(w => {
+                        const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
+                        const nrP = (przyjecie as any)?.partia?.numer_partii || w.numer_partii_wyrobu || "—";
+                        const nazwaWyrobu = w.receptura.asortyment_docelowy.nazwa;
+                        const ops = w.opakowania || [];
+                        if (ops.length === 0) {
+                          lpPrint++;
+                          return `<tr>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${lpPrint}</td>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb"><div style="font-weight:700">${nazwaWyrobu}</div></td>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px">${nrP}</td>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;color:#94a3b8" colspan="2">—</td>
+                          </tr>`;
+                        }
+                        return ops.map(op => {
+                          lpPrint++;
+                          return `<tr>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${lpPrint}</td>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb">
+                              <div style="font-weight:700">${nazwaWyrobu}</div>
+                              <div style="font-size:11px;color:#64748b;margin-top:1px">${op.nazwa}</div>
+                            </td>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px">${nrP}</td>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">1&nbsp;szt.</td>
+                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(op.waga_kg, 3)}&nbsp;kg</td>
+                          </tr>`;
+                        }).join("");
+                      }).join("");
+
+                      // Podsumowanie per towar — jak WZ
+                      const sumaWyrob = new Map<string, { szt: number; kg: number }>();
+                      wyroby.forEach(w => {
+                        const key = w.receptura.asortyment_docelowy.nazwa;
+                        if (!sumaWyrob.has(key)) sumaWyrob.set(key, { szt: 0, kg: 0 });
+                        const e = sumaWyrob.get(key)!;
+                        const ops = w.opakowania || [];
+                        e.szt += ops.length;
+                        e.kg += ops.reduce((s, o) => s + o.waga_kg, 0);
+                      });
+                      const totalSztPrint = [...sumaWyrob.values()].reduce((s, e) => s + e.szt, 0);
+                      const totalKgPrint = [...sumaWyrob.values()].reduce((s, e) => s + e.kg, 0);
+                      const podsumowanieRowsHTML = [...sumaWyrob.entries()].map(([nazwa, e]) =>
+                        `<tr>
+                          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${nazwa}</td>
+                          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${e.szt > 0 ? `${e.szt} szt.` : "—"}</td>
+                          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(e.kg, 3)} kg</td>
+                        </tr>`
+                      ).join("") + `<tr style="background:#f8fafc;border-top:2px solid #1e293b">
+                        <td style="padding:8px;font-weight:900">ŁĄCZNIE</td>
+                        <td style="padding:8px;text-align:right;font-family:monospace;font-weight:700">${totalSztPrint > 0 ? `${totalSztPrint} szt.` : "—"}</td>
+                        <td style="padding:8px;text-align:right;font-weight:900;font-size:15px;font-family:monospace">${fmtL(totalKgPrint > 0 ? totalKgPrint : totalWykPrint, 3)}&nbsp;kg</td>
+                      </tr>`;
+
+                      const surowceRowsHTML = surowcePrint.map(s =>
+                        `<tr><td>${s.nazwa}</td><td style="text-align:right;font-family:monospace">${fmtL(s.ilosc, 3)}</td><td>${s.jm}</td></tr>`
+                      ).join("");
+
+                      win.document.write(`<!DOCTYPE html><html><head><title>Raport Sesji ${viewSesjaData.numer_sesji}</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{font-family:Inter,system-ui,sans-serif;padding:36px 44px;color:#1e293b;max-width:860px;margin:0 auto;font-size:13px;display:flex;flex-direction:column;min-height:100vh}
+  h1{font-size:22px;font-weight:800;margin:0 0 2px;letter-spacing:-.3px}
+  .sub{font-size:12px;color:#64748b;margin-bottom:20px}
+  .header-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:16px 0;border-top:2px solid #0f172a;border-bottom:1px solid #e2e8f0;margin-bottom:20px}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;padding:8px;border-bottom:2px solid #1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;white-space:nowrap}
+  th.r{text-align:right}
+  .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:24px 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+  .signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;padding-top:20px;border-top:1px solid #e2e8f0}
+  .sig-box{font-size:12px;color:#64748b}
+  .sig-line{border-bottom:1px solid #94a3b8;height:32px;margin-top:8px}
+  .bottom{margin-top:auto;padding-top:32px}
+  .footer{margin-top:16px;padding-top:8px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;text-align:right}
+  @media print{html,body{height:auto}body{padding:16px 20px;min-height:unset}.bottom{position:fixed;bottom:12mm;left:12mm;right:12mm}@page{size:A4;margin:12mm}}
+</style>
+</head><body>
+<h1>RAPORT SESJI PRODUKCYJNEJ</h1>
+<div class="sub">ilGelato MES &middot; Magazyn główny</div>
+<div class="header-grid">
+  <div>
+    <div style="margin-bottom:10px">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Numer sesji</span>
+      <div style="font-size:18px;font-weight:900;font-family:monospace;margin-top:2px">${viewSesjaData.numer_sesji}</div>
+    </div>
+    <div style="font-size:12px;color:#475569"><strong>Data:</strong> ${new Date(viewSesjaData.utworzono_dnia).toLocaleString("pl-PL")}</div>
+    <div style="font-size:12px;color:#475569"><strong>Status:</strong> ${viewSesjaData.status}</div>
+    <div style="font-size:12px;color:#475569;margin-top:6px"><strong>Masa wyrobów:</strong> ${fmtL(totalKgPrint > 0 ? totalKgPrint : totalWykPrint, 3)} kg &nbsp;·&nbsp; <strong>Pozycji:</strong> ${wyroby.length}</div>
+  </div>
+</div>
+<div class="section-title">Pozycje dokumentu</div>
+<table><thead><tr>
+  <th style="width:32px;text-align:center">Lp.</th>
+  <th>Wyrób / Opakowanie</th>
+  <th>Nr partii (PW)</th>
+  <th class="r">Ilość</th>
+  <th class="r">Masa [kg]</th>
+</tr></thead><tbody>${pozycjeRowsHTML}</tbody></table>
+<div class="section-title">Podsumowanie wg towaru</div>
+<table><thead><tr><th>Towar</th><th class="r">Ilość (szt.)</th><th class="r">Masa (kg)</th></tr></thead><tbody>${podsumowanieRowsHTML}</tbody></table>
+${surowcePrint.length > 0 ? `<div class="section-title">Zużyte surowce (cała sesja)</div><table><thead><tr><th>Surowiec</th><th class="r">Ilość</th><th>J.M.</th></tr></thead><tbody>${surowceRowsHTML}</tbody></table>` : ""}
+<div class="bottom">
+  <div class="signatures">
+    <div class="sig-box"><div>Sporządził</div><div class="sig-line"></div></div>
+    <div class="sig-box"><div>Zatwierdził</div><div class="sig-line"></div></div>
+  </div>
+  <div class="footer">Wydrukowano z systemu ilGelato MES &middot; ${new Date().toLocaleString("pl-PL")}</div>
+</div>
+</body></html>`);
                       win.document.close();
                       win.print();
                     }}
@@ -2714,29 +2976,135 @@ export default function Produkcja() {
                   const totalPlan = viewSesjaData.wyroby.reduce((s, w) => s + w.planowana_ilosc_wyrobu, 0);
                   const totalWyk = viewSesjaData.wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0);
                   const totalOp = viewSesjaData.wyroby.reduce((s, w) => s + (w.opakowania?.length || 0), 0);
+                  const wydajnosc = totalPlan > 0 ? (totalWyk / totalPlan) * 100 : 0;
+                  const totalDocs = viewSesjaData.zlecenia.reduce((acc, z) => {
+                    const uniq = new Set((z.ruchy_magazynowe || []).map(r => r.referencja_dokumentu).filter(Boolean));
+                    return acc + uniq.size;
+                  }, 0);
+
+                  // Agregat surowców ze wszystkich ZP sesji
+                  const surowceMap = new Map<string, { nazwa: string; ilosc: number; jm: string }>();
+                  viewSesjaData.zlecenia.forEach(z => {
+                    (z.ruchy_magazynowe || []).filter(r => r.typ_ruchu === "Zuzycie").forEach(r => {
+                      const k = r.partia?.asortyment?.nazwa || "?";
+                      const jm = r.partia?.asortyment?.jednostka_miary || "kg";
+                      if (!surowceMap.has(k)) surowceMap.set(k, { nazwa: k, ilosc: 0, jm });
+                      surowceMap.get(k)!.ilosc += Math.abs(r.ilosc);
+                    });
+                  });
+                  const surowceSesji = [...surowceMap.values()].sort((a, b) => b.ilosc - a.ilosc);
+
+                  // Agregat opakowań ze wszystkich wyrobów
+                  const opMap = new Map<string, { nazwa: string; waga_kg: number; count: number }>();
+                  viewSesjaData.wyroby.forEach(w => {
+                    (w.opakowania || []).forEach(op => {
+                      const k = `${op.id_asortymentu}_${op.waga_kg}`;
+                      if (!opMap.has(k)) opMap.set(k, { nazwa: op.nazwa, waga_kg: op.waga_kg, count: 0 });
+                      opMap.get(k)!.count++;
+                    });
+                  });
+                  const opSesji = [...opMap.values()].sort((a, b) => a.nazwa.localeCompare(b.nazwa));
+
                   return (
                     <div className="space-y-6">
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      {/* ── metryki ── */}
+                      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                         <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
-                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Wyroby gotowe</div>
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Wyroby</div>
                           <div className="text-2xl font-black text-white">{viewSesjaData.wyroby.length} poz.</div>
                         </div>
                         <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
-                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Całkowita masa</div>
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Masa wyk.</div>
                           <div className="text-2xl font-black text-emerald-400">{fmtL(totalWyk, 2)} <span className="text-xs">kg</span></div>
+                          {totalPlan > 0 && <div className="text-[10px] text-[var(--text-muted)] mt-0.5">plan {fmtL(totalPlan, 2)} kg</div>}
                         </div>
                         <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
-                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Liczba opakowań</div>
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Wydajność</div>
+                          <div className={`text-2xl font-black ${wydajnosc >= 95 ? "text-emerald-400" : wydajnosc >= 80 ? "text-amber-400" : "text-red-400"}`}>
+                            {fmtL(wydajnosc, 1)}%
+                          </div>
+                          <div className="mt-1.5 h-1.5 rounded-full bg-slate-700 overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${wydajnosc >= 95 ? "bg-emerald-500" : wydajnosc >= 80 ? "bg-amber-500" : "bg-red-500"}`}
+                              style={{ width: `${Math.min(wydajnosc, 100)}%` }} />
+                          </div>
+                        </div>
+                        <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                          <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Opakowania</div>
                           <div className="text-2xl font-black text-blue-400">{totalOp} szt.</div>
+                          {opSesji.length > 0 && <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{opSesji.length} typ{opSesji.length > 1 ? "y" : ""}</div>}
                         </div>
                         <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
                           <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Dokumenty</div>
-                          <div className="text-2xl font-black text-amber-500">{viewSesjaData.zlecenia.reduce((acc, z) => acc + (z.ruchy_magazynowe?.length || 0), 0)}</div>
+                          <div className="text-2xl font-black text-amber-500">{totalDocs}</div>
+                          <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{surowceSesji.length} surowców</div>
                         </div>
                       </div>
+
+                      {/* ── wyroby gotowe ── */}
                       <div>
                         <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
-                          <Layers className="w-4 h-4 text-blue-400" /> Zestawienie ZP sesji
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Wyroby gotowe
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                          {viewSesjaData.wyroby.map((w, i) => {
+                            const wyk = w.rzeczywista_ilosc_wyrobu || 0;
+                            const delta = wyk - w.planowana_ilosc_wyrobu;
+                            const pct = w.planowana_ilosc_wyrobu > 0 ? (wyk / w.planowana_ilosc_wyrobu) * 100 : 0;
+                            const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
+                            const nrPartii = (przyjecie as any)?.partia?.numer_partii || w.numer_partii_wyrobu;
+                            const opWyrob = (w.opakowania || []);
+                            const opWagaTot = opWyrob.reduce((s, o) => s + o.waga_kg, 0);
+                            return (
+                              <div key={w.id} className="bg-[var(--bg-surface)] rounded-xl border border-[var(--border)] p-4">
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className="font-bold text-white text-sm leading-tight">{w.receptura?.asortyment_docelowy?.nazwa}</div>
+                                  <span className={`badge shrink-0 ml-2 ${w.status === "Zrealizowane" ? "badge-ok" : "badge-warn"}`}>{w.status}</span>
+                                </div>
+                                {nrPartii && (
+                                  <div className="mono text-xs text-blue-400 mb-3">{nrPartii}</div>
+                                )}
+                                <div className="grid grid-cols-3 gap-2 text-center mb-3">
+                                  <div>
+                                    <div className="text-[10px] text-[var(--text-muted)] uppercase font-black">Plan</div>
+                                    <div className="mono font-bold text-[var(--text-primary)] text-sm">{fmtL(w.planowana_ilosc_wyrobu, 2)}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-[var(--text-muted)] uppercase font-black">Wyk.</div>
+                                    <div className="mono font-bold text-emerald-400 text-sm">{fmtL(wyk, 2)}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-[var(--text-muted)] uppercase font-black">Delta</div>
+                                    <div className={`mono font-bold text-sm ${delta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                      {delta >= 0 ? "+" : ""}{fmtL(delta, 2)}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="mb-3">
+                                  <div className="flex justify-between text-[10px] text-[var(--text-muted)] mb-1">
+                                    <span>Wydajność</span>
+                                    <span className="font-bold">{fmtL(pct, 1)}%</span>
+                                  </div>
+                                  <div className="h-1.5 rounded-full bg-slate-700 overflow-hidden">
+                                    <div className={`h-full rounded-full ${pct >= 95 ? "bg-emerald-500" : pct >= 80 ? "bg-amber-500" : "bg-red-500"}`}
+                                      style={{ width: `${Math.min(pct, 100)}%` }} />
+                                  </div>
+                                </div>
+                                {opWyrob.length > 0 && (
+                                  <div className="text-[11px] text-[var(--text-muted)] border-t border-[var(--border)] pt-2 mt-1">
+                                    <span className="font-black uppercase mr-1">Opak.:</span>
+                                    {opWyrob.length} szt. · {fmtL(opWagaTot, 2)} kg
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* ── zestawienie ZP ── */}
+                      <div>
+                        <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-blue-400" /> Zestawienie zleceń sesji
                         </h3>
                         <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
                           <table className="w-full text-sm">
@@ -2745,13 +3113,15 @@ export default function Produkcja() {
                                 <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Nr ZP</th>
                                 <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Etap</th>
                                 <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Smak / Produkt</th>
-                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Plan [kg]</th>
-                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Wykonano [kg]</th>
+                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Plan</th>
+                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Wyk.</th>
+                                <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">%</th>
                                 <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Opakowania</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-[var(--border)]/50">
                               {sesjaAllZp.map((z, i) => {
+                                const pct = z.planowana_ilosc_wyrobu > 0 ? ((z.rzeczywista_ilosc_wyrobu || 0) / z.planowana_ilosc_wyrobu) * 100 : 0;
                                 const opGrupy: any[] = z.opakowania && z.opakowania.length > 0
                                   ? Object.values(z.opakowania.reduce((acc: any, op) => {
                                       const k = `${op.id_asortymentu}_${op.waga_kg}`;
@@ -2762,15 +3132,22 @@ export default function Produkcja() {
                                   : [];
                                 return (
                                   <tr key={i} className="hover:bg-[var(--bg-surface)]/40 transition-colors">
-                                    <td className="px-4 py-3 mono font-bold text-white">{z.numer_zlecenia || "—"}</td>
+                                    <td className="px-4 py-3 mono font-bold text-white text-xs">{z.numer_zlecenia || "—"}</td>
                                     <td className="px-4 py-3">
                                       <span className={`badge ${z.etap === 1 ? "badge-info" : "badge-ok"}`}>
-                                        {z.etap === 1 ? "Etap 1 · Baza" : "Etap 2 · Wyrób"}
+                                        {z.etap === 1 ? "E1 Baza" : "E2 Wyrób"}
                                       </span>
                                     </td>
-                                    <td className="px-4 py-3 font-semibold text-[var(--text-primary)]">{z.receptura?.asortyment_docelowy?.nazwa}</td>
-                                    <td className="px-4 py-3 text-right mono text-[var(--text-muted)]">{fmtL(z.planowana_ilosc_wyrobu, 3)}</td>
-                                    <td className="px-4 py-3 text-right mono font-bold text-white">{fmtL(z.rzeczywista_ilosc_wyrobu || 0, 3)}</td>
+                                    <td className="px-4 py-3 font-semibold text-[var(--text-primary)] text-sm">{z.receptura?.asortyment_docelowy?.nazwa}</td>
+                                    <td className="px-4 py-3 text-right mono text-[var(--text-muted)] text-xs">{fmtL(z.planowana_ilosc_wyrobu, 3)}</td>
+                                    <td className="px-4 py-3 text-right mono font-bold text-white text-xs">{fmtL(z.rzeczywista_ilosc_wyrobu || 0, 3)}</td>
+                                    <td className="px-4 py-3 text-right">
+                                      {z.status === "Zrealizowane" ? (
+                                        <span className={`text-xs font-bold mono ${pct >= 95 ? "text-emerald-400" : pct >= 80 ? "text-amber-400" : "text-red-400"}`}>
+                                          {fmtL(pct, 1)}%
+                                        </span>
+                                      ) : <span className="text-slate-600 text-xs">—</span>}
+                                    </td>
                                     <td className="px-4 py-3 text-xs text-[var(--text-primary)]">
                                       {opGrupy.length === 0
                                         ? <span className="text-slate-600">—</span>
@@ -2786,13 +3163,84 @@ export default function Produkcja() {
                             </tbody>
                             <tfoot>
                               <tr className="border-t-2 border-[var(--border)] bg-[var(--bg-surface)]">
-                                <td colSpan={3} className="px-4 py-3 font-black text-white uppercase text-[11px] tracking-widest">SUMA wyrobów</td>
-                                <td className="px-4 py-3 text-right mono text-[var(--text-muted)]">{fmtL(totalPlan, 3)}</td>
-                                <td className="px-4 py-3 text-right mono font-black text-xl" style={{ color: 'var(--ok)' }}>{fmtL(totalWyk, 2)}</td>
+                                <td colSpan={3} className="px-4 py-3 font-black text-white uppercase text-[11px] tracking-widest">SUMA wyrobów E2</td>
+                                <td className="px-4 py-3 text-right mono text-[var(--text-muted)] text-xs">{fmtL(totalPlan, 3)} kg</td>
+                                <td className="px-4 py-3 text-right mono font-black" style={{ color: 'var(--ok)' }}>{fmtL(totalWyk, 2)} kg</td>
+                                <td className="px-4 py-3 text-right mono font-bold text-xs" style={{ color: wydajnosc >= 95 ? 'var(--ok)' : 'var(--warn)' }}>{fmtL(wydajnosc, 1)}%</td>
                                 <td className="px-4 py-3 text-sm font-bold text-[var(--text-muted)]">{totalOp > 0 ? `${totalOp} szt.` : "—"}</td>
                               </tr>
                             </tfoot>
                           </table>
+                        </div>
+                      </div>
+
+                      {/* ── dolny rząd: surowce + opakowania ── */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Surowce sesji */}
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                            <Database className="w-4 h-4 text-blue-400" /> Surowce zużyte (cała sesja)
+                          </h3>
+                          <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                            {surowceSesji.length === 0 ? (
+                              <div className="px-4 py-6 text-center text-[var(--text-muted)] text-sm">Brak danych o zużyciu</div>
+                            ) : (
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="bg-[var(--bg-surface)]">
+                                    <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Surowiec</th>
+                                    <th className="text-right px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">Ilość</th>
+                                    <th className="text-left px-4 py-2.5 text-[11px] font-black uppercase text-[var(--text-muted)]">J.M.</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[var(--border)]/50">
+                                  {surowceSesji.map((s, i) => (
+                                    <tr key={i} className="hover:bg-[var(--bg-surface)]/40">
+                                      <td className="px-4 py-2.5 font-medium text-[var(--text-primary)]">{s.nazwa}</td>
+                                      <td className="px-4 py-2.5 text-right mono font-bold text-white">{fmtL(s.ilosc, 3)}</td>
+                                      <td className="px-4 py-2.5 text-[var(--text-muted)] text-xs">{s.jm}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Opakowania sesji */}
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                            <Package className="w-4 h-4 text-purple-400" /> Opakowania (cała sesja)
+                          </h3>
+                          <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                            {opSesji.length === 0 ? (
+                              <div className="px-4 py-6 text-center text-[var(--text-muted)] text-sm">Brak danych o pakowaniu</div>
+                            ) : (
+                              <>
+                                <div className="divide-y divide-[var(--border)]/50">
+                                  {opSesji.map((op, i) => (
+                                    <div key={i} className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-[var(--bg-surface)]/40">
+                                      <div>
+                                        <span className="text-[var(--text-primary)] font-medium">{op.nazwa}</span>
+                                        <span className="text-[10px] text-[var(--text-muted)] ml-2">({fmtL(op.waga_kg, 3)} kg/szt.)</span>
+                                      </div>
+                                      <div className="text-right">
+                                        <span className="mono font-bold text-blue-400">{op.count} szt.</span>
+                                        <span className="text-[10px] text-[var(--text-muted)] ml-1">= {fmtL(op.count * op.waga_kg, 2)} kg</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="flex justify-between items-center px-4 py-2.5 border-t-2 border-[var(--border)] bg-[var(--bg-surface)] text-sm">
+                                  <span className="font-black text-[var(--text-muted)] uppercase text-[11px] tracking-wider">Razem</span>
+                                  <div className="text-right">
+                                    <span className="mono font-black text-white">{totalOp} szt.</span>
+                                    <span className="text-[10px] text-[var(--text-muted)] ml-2">= {fmtL(opSesji.reduce((s, o) => s + o.count * o.waga_kg, 0), 2)} kg</span>
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>

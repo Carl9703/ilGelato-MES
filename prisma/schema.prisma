@@ -68,12 +68,14 @@ model Asortyment {
   jednostka_pomocnicza     String?  // np. "szt" gdy JM to "kg"
   przelicznik_jednostki    Float?   // 1 JM = X JM_pomocniczej
   czy_wymaga_daty_waznosci Boolean  @default(false)
+  czy_zasob_nieograniczony Boolean  @default(false)
   czy_aktywne              Boolean  @default(true)
   // Dodatkowe pola kartoteki
   producent                String?
   zrodlo_danych            String?  // np. "WŁASNE", "XMART", nazwa dostawcy
   skladniki_opis           String?  // Skład produktu (do etykiet)
   moze_zawierac            String?  // Alergeny śladowe "może zawierać"
+  id_grupy                 String?
   utworzono_dnia           DateTime @default(now())
   zaktualizowano_dnia      DateTime @updatedAt
 
@@ -84,6 +86,22 @@ model Asortyment {
   wartosci_odzywcze        Wartosci_Odzywcze?
   alergeny                 Alergeny_Asortymentu?
   opakowania_wyrobowe      Opakowania_Wyrobowe[]
+  grupa                    Grupy_Towarowe?       @relation(fields: [id_grupy], references: [id])
+}
+
+model Grupy_Towarowe {
+  id                  String   @id @default(uuid())
+  kod                 String   @unique
+  nazwa               String
+  id_grupy_nadrzednej String?
+  kolejnosc           Int      @default(0)
+  czy_aktywne         Boolean  @default(true)
+  utworzono_dnia      DateTime @default(now())
+  zaktualizowano_dnia DateTime @updatedAt
+
+  grupa_nadrzedna     Grupy_Towarowe?  @relation("GrupyHierarchia", fields: [id_grupy_nadrzednej], references: [id])
+  podgrupy            Grupy_Towarowe[] @relation("GrupyHierarchia")
+  asortyment          Asortyment[]
 }
 
 model Wartosci_Odzywcze {

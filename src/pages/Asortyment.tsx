@@ -11,7 +11,8 @@ import { EmptyState } from "../components/EmptyState";
 
 
 
-type AsortymentOgolne = { id: string; kod_towaru: string; nazwa: string; typ_asortymentu: string; jednostka_miary: string; jednostka_pomocnicza: string | null; przelicznik_jednostki: number | null; czy_wymaga_daty_waznosci: boolean; czy_aktywne: boolean; ilosc: number; rezerwacje: number; cena_srednia: number; };
+type GrupaTowarowa = { id: string; kod: string; nazwa: string; id_grupy_nadrzednej: string | null; kolejnosc: number; podgrupy?: GrupaTowarowa[] };
+type AsortymentOgolne = { id: string; kod_towaru: string; nazwa: string; typ_asortymentu: string; jednostka_miary: string; jednostka_pomocnicza: string | null; przelicznik_jednostki: number | null; czy_wymaga_daty_waznosci: boolean; czy_zasob_nieograniczony: boolean; czy_aktywne: boolean; ilosc: number; rezerwacje: number; cena_srednia: number; id_grupy: string | null; };
 type Podsumowanie = { stan_calkowity: number; zarezerwowane: number; dostepne: number; cena_srednia_wazona: number; wartosc_magazynowa: number };
 type Zasob = { id_partii: string; numer_partii: string; stan: number; zarezerwowane: number; dostepne: number; cena_jednostkowa: number; wartosc: number; data_produkcji: string | null; termin_waznosci: string | null; status_partii: string; dokument_przyjecia: string | null };
 type HistoriaRuch = { id: string; data: string; typ: string; referencja: string; partia: string; ilosc: number; cena_jednostkowa: number | null; saldo_po_operacji: number };
@@ -31,6 +32,8 @@ const typColors: Record<string, string> = { Surowiec: "bg-blue-500/20 text-blue-
 
 export default function Asortyment() {
   const [items, setItems] = useState<AsortymentOgolne[]>([]);
+  const [grupy, setGrupy] = useState<GrupaTowarowa[]>([]);
+  const [filterGrupa, setFilterGrupa] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -44,7 +47,8 @@ export default function Asortyment() {
   const [editingItem, setEditingItem] = useState<AsortymentOgolne | null>(null);
   const [formData, setFormData] = useState({
     kod_towaru: "", nazwa: "", typ_asortymentu: "Surowiec", jednostka_miary: "kg",
-    jednostka_pomocnicza: "", przelicznik_jednostki: "", czy_wymaga_daty_waznosci: false
+    jednostka_pomocnicza: "", przelicznik_jednostki: "", czy_wymaga_daty_waznosci: false,
+    czy_zasob_nieograniczony: false, id_grupy: ""
   });
 
   // Detail view state
@@ -81,7 +85,7 @@ export default function Asortyment() {
     } catch {} finally { setPreviewDocLoading(false); }
   };
 
-  useEffect(() => { fetchAll(); }, [showArchived]);
+  useEffect(() => { fetchAll(); fetchGrupy(); }, [showArchived]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -101,9 +105,16 @@ export default function Asortyment() {
     } catch (e) { console.error(e); }
   };
 
+  const fetchGrupy = async () => {
+    try {
+      const res = await fetch("/api/grupy-towarowe");
+      if (res.ok) setGrupy(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
   const openNew = () => {
     setEditingItem(null);
-    setFormData({ kod_towaru: "", nazwa: "", typ_asortymentu: "Surowiec", jednostka_miary: "kg", jednostka_pomocnicza: "", przelicznik_jednostki: "", czy_wymaga_daty_waznosci: false });
+    setFormData({ kod_towaru: "", nazwa: "", typ_asortymentu: "Surowiec", jednostka_miary: "kg", jednostka_pomocnicza: "", przelicznik_jednostki: "", czy_wymaga_daty_waznosci: false, czy_zasob_nieograniczony: false, id_grupy: "" });
     setShowModal(true);
   };
 
@@ -112,7 +123,8 @@ export default function Asortyment() {
     setFormData({
       kod_towaru: a.kod_towaru, nazwa: a.nazwa, typ_asortymentu: a.typ_asortymentu,
       jednostka_miary: a.jednostka_miary, jednostka_pomocnicza: a.jednostka_pomocnicza || "",
-      przelicznik_jednostki: a.przelicznik_jednostki?.toString() || "", czy_wymaga_daty_waznosci: a.czy_wymaga_daty_waznosci
+      przelicznik_jednostki: a.przelicznik_jednostki?.toString() || "", czy_wymaga_daty_waznosci: a.czy_wymaga_daty_waznosci,
+      czy_zasob_nieograniczony: a.czy_zasob_nieograniczony, id_grupy: a.id_grupy || ""
     });
     setShowModal(true);
   };
@@ -122,7 +134,8 @@ export default function Asortyment() {
     setFormData({
       kod_towaru: a.kod_towaru, nazwa: a.nazwa, typ_asortymentu: a.typ_asortymentu,
       jednostka_miary: a.jednostka_miary, jednostka_pomocnicza: a.jednostka_pomocnicza || "",
-      przelicznik_jednostki: a.przelicznik_jednostki?.toString() || "", czy_wymaga_daty_waznosci: a.czy_wymaga_daty_waznosci
+      przelicznik_jednostki: a.przelicznik_jednostki?.toString() || "", czy_wymaga_daty_waznosci: a.czy_wymaga_daty_waznosci,
+      czy_zasob_nieograniczony: a.czy_zasob_nieograniczony, id_grupy: a.id_grupy || ""
     });
     setDetailTab("ogolne");
     loadDetail(a.id);
@@ -171,7 +184,9 @@ export default function Asortyment() {
         jednostka_miary: a.jednostka_miary,
         jednostka_pomocnicza: a.jednostka_pomocnicza || "",
         przelicznik_jednostki: a.przelicznik_jednostki?.toString() || "",
-        czy_wymaga_daty_waznosci: a.czy_wymaga_daty_waznosci
+        czy_wymaga_daty_waznosci: a.czy_wymaga_daty_waznosci,
+        czy_zasob_nieograniczony: a.czy_zasob_nieograniczony,
+        id_grupy: a.id_grupy || ""
       });
     }
   }, [detailData]);
@@ -225,7 +240,8 @@ export default function Asortyment() {
         jednostka_miary: updatedItem.jednostka_miary,
         jednostka_pomocnicza: updatedItem.jednostka_pomocnicza || "",
         przelicznik_jednostki: updatedItem.przelicznik_jednostki?.toString() || "",
-        czy_wymaga_daty_waznosci: updatedItem.czy_wymaga_daty_waznosci
+        czy_wymaga_daty_waznosci: updatedItem.czy_wymaga_daty_waznosci,
+        czy_zasob_nieograniczony: updatedItem.czy_zasob_nieograniczony
       });
 
       if (detailData) {
@@ -275,13 +291,26 @@ export default function Asortyment() {
   const fillZero = (n: number) => fmtL(n, 2);
   const fmtDateTime = (d: string) => new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
+  const allGrupyIds = (g: GrupaTowarowa): string[] => [g.id, ...(g.podgrupy?.map(sg => sg.id) ?? [])];
+
   const filtered = sortBy<AsortymentOgolne>(
     items.filter(a => {
       const matchesFilter = filter === "all" || a.typ_asortymentu === filter;
       const matchesSearch = !search ||
         a.nazwa.toLowerCase().includes(search.toLowerCase()) ||
         a.kod_towaru.toLowerCase().includes(search.toLowerCase());
-      return matchesFilter && matchesSearch;
+      const matchesGrupa = !filterGrupa
+        ? true
+        : filterGrupa === "__brak__"
+          ? !a.id_grupy
+          : grupy.flatMap(allGrupyIds).includes(filterGrupa)
+            ? (() => {
+                const grp = grupy.find(g => g.id === filterGrupa);
+                if (grp) return allGrupyIds(grp).includes(a.id_grupy ?? "");
+                return a.id_grupy === filterGrupa;
+              })()
+            : a.id_grupy === filterGrupa;
+      return matchesFilter && matchesSearch && matchesGrupa;
     }),
     a => {
       switch (sortKey) {
@@ -588,43 +617,56 @@ export default function Asortyment() {
             {detailTab === "ogolne" && (
               <div className="mes-panel rounded p-5 grid grid-cols-1 lg:grid-cols-3 gap-5 animate-view">
                 <div className="lg:col-span-2 space-y-5">
-                  <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] space-y-4">
+                  <div className="bg-[var(--bg-app)] p-4 rounded-xl border border-[var(--border)] space-y-4">
                     <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest">Podstawowe informacje</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Nazwa produktu</label>
                         <input type="text" value={formData.nazwa} onChange={e => setFormData({ ...formData, nazwa: e.target.value })} required
-                          className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500 font-medium" />
+                          className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500 font-medium" />
                       </div>
                       <div>
                         <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Kod (indeks)</label>
                         <input type="text" value={formData.kod_towaru} onChange={e => setFormData({ ...formData, kod_towaru: e.target.value })} required
-                          className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500 font-mono font-bold" />
+                          className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500 font-mono font-bold" />
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] space-y-4">
+                  <div className="bg-[var(--bg-app)] p-4 rounded-xl border border-[var(--border)] space-y-4">
                     <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest">Logistyka i jednostki</h4>
+                    <div>
+                      <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Grupa towarowa</label>
+                      <select value={formData.id_grupy} onChange={e => setFormData({ ...formData, id_grupy: e.target.value })}
+                        className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500">
+                        <option value="">— brak —</option>
+                        {grupy.map(g => (
+                          <optgroup key={g.id} label={g.nazwa}>
+                            <option value={g.id}>{g.nazwa} (ogólnie)</option>
+                            {g.podgrupy?.map(sg => <option key={sg.id} value={sg.id}>{sg.nazwa}</option>)}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
                         <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Kategoria</label>
                         <select value={formData.typ_asortymentu} onChange={e => setFormData({ ...formData, typ_asortymentu: e.target.value })}
-                          className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500">
+                          className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500">
                           {typy.map(t => <option key={t} value={t}>{typLabels[t]}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Jednostka bazowa</label>
                         <select value={formData.jednostka_miary} onChange={e => setFormData({ ...formData, jednostka_miary: e.target.value })}
-                          className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500">
+                          className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500">
                           {UNITS.map(j => <option key={j} value={j}>{j}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Jednostka pomocnicza</label>
                         <select value={formData.jednostka_pomocnicza || ""} onChange={e => setFormData({ ...formData, jednostka_pomocnicza: e.target.value || null })}
-                          className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500">
+                          className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-blue-500">
                           <option value="">Brak</option>
                           {UNITS.map(j => <option key={j} value={j}>{j}</option>)}
                         </select>
@@ -633,10 +675,10 @@ export default function Asortyment() {
                   </div>
                 </div>
 
-                <div className="bg-[#0f172a] rounded-xl p-4 border border-[#334155] flex flex-col gap-4">
+                <div className="bg-[var(--bg-app)] rounded-xl p-4 border border-[var(--border)] flex flex-col gap-4">
                    <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest">Parametry zaawansowane</h4>
                    <div className="space-y-3">
-                     <div className="flex items-center justify-between p-3 bg-[#1e293b] rounded-xl border border-[#334155]">
+                     <div className="flex items-center justify-between p-3 bg-[var(--bg-surface)] rounded-xl border border-[var(--border)]">
                        <div className="text-sm font-medium text-white">Wymaga daty ważności</div>
                        <input
                          type="checkbox"
@@ -645,19 +687,31 @@ export default function Asortyment() {
                          className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
                        />
                      </div>
+                     <div className="flex items-center justify-between p-3 bg-[var(--bg-surface)] rounded-xl border border-[var(--border)]">
+                       <div>
+                         <div className="text-sm font-medium text-white">Zasób nieograniczony</div>
+                         <div className="text-xs text-[var(--text-muted)]">Bez kontroli stanu (woda, media)</div>
+                       </div>
+                       <input
+                         type="checkbox"
+                         checked={formData.czy_zasob_nieograniczony}
+                         onChange={e => setFormData({...formData, czy_zasob_nieograniczony: e.target.checked})}
+                         className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
+                       />
+                     </div>
                      {formData.jednostka_pomocnicza && (
-                       <div className="p-3 bg-[#1e293b] rounded-xl border border-[#334155]">
+                       <div className="p-3 bg-[var(--bg-surface)] rounded-xl border border-[var(--border)]">
                          <label className="text-slate-400 text-[10px] font-bold uppercase tracking-widest block mb-2">Przelicznik jednostek</label>
                             <div className="flex items-center gap-3">
                               <span className="text-slate-500 text-xs font-bold font-mono">1 {formData.jednostka_miary} =</span>
-                              <input type="text" value={formData.przelicznik_jednostki} onChange={e => setFormData({ ...formData, przelicznik_jednostki: e.target.value })} className="w-24 bg-[#334155] border border-[#475569] text-white rounded-lg px-2 py-1.5 outline-none focus:border-blue-500 font-mono font-bold text-center" />
+                              <input type="text" value={formData.przelicznik_jednostki} onChange={e => setFormData({ ...formData, przelicznik_jednostki: e.target.value })} className="w-24 bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-lg px-2 py-1.5 outline-none focus:border-blue-500 font-mono font-bold text-center" />
                               <span className="text-slate-500 text-xs font-bold font-mono">{formData.jednostka_pomocnicza}</span>
                             </div>
                           </div>
                         )}
                       </div>
                      <div
-                       className="flex items-center justify-between p-3 bg-[#1e293b] rounded-xl border border-[#334155] cursor-pointer select-none"
+                       className="flex items-center justify-between p-3 bg-[var(--bg-surface)] rounded-xl border border-[var(--border)] cursor-pointer select-none"
                        onClick={toggleAktywne}
                      >
                        <div>
@@ -705,38 +759,50 @@ export default function Asortyment() {
     <>
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-lg border border-[#334155] overflow-hidden">
-            <div className="flex justify-between items-center p-5 border-b border-[#334155]">
+          <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-lg border border-[var(--border)] overflow-hidden">
+            <div className="flex justify-between items-center p-5 border-b border-[var(--border)]">
               <h3 className="text-lg font-bold text-white">{editingItem ? "Edycja kartoteki" : "Nowy asortyment"}</h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[#334155]"><X className="w-5 h-5" /></button>
+              <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)]"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Kod towaru <span className="text-red-400">*</span></label>
-                  <input type="text" value={formData.kod_towaru} onChange={e => setFormData({ ...formData, kod_towaru: e.target.value })} required className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500 font-mono" autoFocus />
+                  <input type="text" value={formData.kod_towaru} onChange={e => setFormData({ ...formData, kod_towaru: e.target.value })} required className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500 font-mono" autoFocus />
                 </div>
                 <div>
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Typ <span className="text-red-400">*</span></label>
-                  <select value={formData.typ_asortymentu} onChange={e => setFormData({ ...formData, typ_asortymentu: e.target.value })} className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500">
+                  <select value={formData.typ_asortymentu} onChange={e => setFormData({ ...formData, typ_asortymentu: e.target.value })} className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500">
                     {typy.map(t => <option key={t} value={t}>{typLabels[t]}</option>)}
                   </select>
                 </div>
               </div>
               <div>
                 <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Nazwa <span className="text-red-400">*</span></label>
-                <input type="text" value={formData.nazwa} onChange={e => setFormData({ ...formData, nazwa: e.target.value })} required className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500" />
+                <input type="text" value={formData.nazwa} onChange={e => setFormData({ ...formData, nazwa: e.target.value })} required className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500" />
+              </div>
+              <div>
+                <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Grupa towarowa</label>
+                <select value={formData.id_grupy} onChange={e => setFormData({ ...formData, id_grupy: e.target.value })} className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500">
+                  <option value="">— brak —</option>
+                  {grupy.map(g => (
+                    <optgroup key={g.id} label={g.nazwa}>
+                      <option value={g.id}>{g.nazwa} (ogólnie)</option>
+                      {g.podgrupy?.map(sg => <option key={sg.id} value={sg.id}>{sg.nazwa}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Jednostka miary <span className="text-red-400">*</span></label>
-                  <select value={formData.jednostka_miary} onChange={e => setFormData({ ...formData, jednostka_miary: e.target.value })} className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500">
+                  <select value={formData.jednostka_miary} onChange={e => setFormData({ ...formData, jednostka_miary: e.target.value })} className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500">
                     {UNITS.map(j => <option key={j} value={j}>{j}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-1">J.M. pomocnicza</label>
-                  <select value={formData.jednostka_pomocnicza || ""} onChange={e => setFormData({ ...formData, jednostka_pomocnicza: e.target.value || null })} className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500">
+                  <select value={formData.jednostka_pomocnicza || ""} onChange={e => setFormData({ ...formData, jednostka_pomocnicza: e.target.value || null })} className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500">
                     <option value="">Brak</option>
                     {UNITS.map(j => <option key={j} value={j}>{j}</option>)}
                   </select>
@@ -745,11 +811,11 @@ export default function Asortyment() {
               {formData.jednostka_pomocnicza && (
                 <div>
                   <label className="block text-slate-400 text-xs font-bold uppercase mb-1">Przelicznik (1 {formData.jednostka_miary} = ? {formData.jednostka_pomocnicza})</label>
-                  <input type="text" value={formData.przelicznik_jednostki} onChange={e => setFormData({ ...formData, przelicznik_jednostki: e.target.value })} className="w-full bg-[#334155] border border-[#475569] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500 font-mono" placeholder="np. 1.5 lub 1,5" />
+                  <input type="text" value={formData.przelicznik_jednostki} onChange={e => setFormData({ ...formData, przelicznik_jednostki: e.target.value })} className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-indigo-500 font-mono" placeholder="np. 1.5 lub 1,5" />
                 </div>
               )}
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setShowModal(false)} className="px-5 py-2.5 text-slate-400 font-semibold hover:bg-[#334155] rounded-xl transition-colors">Anuluj</button>
+                <button type="button" onClick={() => setShowModal(false)} className="px-5 py-2.5 text-slate-400 font-semibold hover:bg-[var(--bg-hover)] rounded-xl transition-colors">Anuluj</button>
                 <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2"><Save className="w-5 h-5" />Zapisz</button>
               </div>
             </form>
@@ -765,6 +831,38 @@ export default function Asortyment() {
           </div>
           <button onClick={openNew} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white btn-hover-effect"><Plus className="w-4 h-4" />Dodaj towar</button>
         </div>
+
+        {grupy.length > 0 && (
+          <div className="flex flex-wrap gap-1 shrink-0">
+            <button
+              onClick={() => setFilterGrupa(null)}
+              className="px-3 py-1.5 rounded text-xs font-semibold transition-colors btn-hover-effect"
+              style={{ background: filterGrupa === null ? 'var(--accent)' : 'var(--bg-panel)', color: filterGrupa === null ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}
+            >Wszystkie grupy</button>
+            {grupy.map(g => (
+              <React.Fragment key={g.id}>
+                <button
+                  onClick={() => setFilterGrupa(filterGrupa === g.id ? null : g.id)}
+                  className="px-3 py-1.5 rounded text-xs font-semibold transition-colors btn-hover-effect"
+                  style={{ background: filterGrupa === g.id ? 'var(--accent)' : 'var(--bg-panel)', color: filterGrupa === g.id ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                >{g.nazwa}</button>
+                {g.podgrupy?.map(sg => (
+                  <button
+                    key={sg.id}
+                    onClick={() => setFilterGrupa(filterGrupa === sg.id ? null : sg.id)}
+                    className="px-3 py-1.5 rounded text-xs font-semibold transition-colors btn-hover-effect"
+                    style={{ background: filterGrupa === sg.id ? 'var(--accent)' : 'var(--bg-surface)', color: filterGrupa === sg.id ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)', paddingLeft: 10 }}
+                  >↳ {sg.nazwa}</button>
+                ))}
+              </React.Fragment>
+            ))}
+            <button
+              onClick={() => setFilterGrupa(filterGrupa === "__brak__" ? null : "__brak__")}
+              className="px-3 py-1.5 rounded text-xs font-semibold transition-colors btn-hover-effect"
+              style={{ background: filterGrupa === "__brak__" ? 'var(--warn)' : 'var(--bg-panel)', color: filterGrupa === "__brak__" ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}
+            >Bez grupy</button>
+          </div>
+        )}
 
         <div className="flex flex-col lg:flex-row gap-2 items-center shrink-0">
           <div className="flex gap-1 shrink-0">
@@ -819,6 +917,7 @@ export default function Asortyment() {
                 <tr>
                   <SortableTh label="Kod"          field="kod_towaru"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Nazwa"         field="nazwa"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <th style={{ color: 'var(--text-muted)', fontSize: 11 }}>Grupa</th>
                   <SortableTh label="Typ"           field="typ_asortymentu" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="J.M."          field="jednostka_miary" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Ilość"         field="ilosc"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
@@ -834,6 +933,15 @@ export default function Asortyment() {
                       {a.nazwa}
                       {!a.czy_aktywne && <span className="ml-2 text-[10px] font-bold uppercase tracking-widest opacity-60">archiwum</span>}
                     </td>
+                    <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{(() => {
+                      if (!a.id_grupy) return null;
+                      for (const g of grupy) {
+                        if (g.id === a.id_grupy) return g.nazwa;
+                        const sg = g.podgrupy?.find(s => s.id === a.id_grupy);
+                        if (sg) return <><span style={{ opacity: 0.5 }}>{g.nazwa} / </span>{sg.nazwa}</>;
+                      }
+                      return null;
+                    })()}</td>
                     <td>
                       <span className={`badge ${
                         a.typ_asortymentu === 'Surowiec' ? 'badge-info' :
@@ -851,6 +959,37 @@ export default function Asortyment() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr style={{ background: 'var(--bg-surface)', borderTop: '2px solid var(--border)' }}>
+                  <td colSpan={5} className="text-xs font-semibold" style={{ color: 'var(--text-muted)', padding: '6px 12px' }}>
+                    Łącznie ({filtered.length} poz.)
+                  </td>
+                  <td className="text-right mono font-bold" style={{ color: 'var(--text-primary)', padding: '6px 12px' }}>
+                    {Object.entries(
+                      filtered.reduce<Record<string, number>>((acc, a) => {
+                        acc[a.jednostka_miary] = (acc[a.jednostka_miary] ?? 0) + a.ilosc;
+                        return acc;
+                      }, {})
+                    ).map(([jm, sum]) => `${fillZero(sum)} ${jm}`).join(' / ')}
+                  </td>
+                  <td className="text-right mono font-bold" style={{ color: 'var(--warn)', padding: '6px 12px' }}>
+                    {Object.entries(
+                      filtered.reduce<Record<string, number>>((acc, a) => {
+                        acc[a.jednostka_miary] = (acc[a.jednostka_miary] ?? 0) + a.rezerwacje;
+                        return acc;
+                      }, {})
+                    ).map(([jm, sum]) => `${fillZero(sum)} ${jm}`).join(' / ')}
+                  </td>
+                  <td className="text-right mono font-bold" style={{ color: 'var(--ok)', padding: '6px 12px' }}>
+                    {Object.entries(
+                      filtered.reduce<Record<string, number>>((acc, a) => {
+                        acc[a.jednostka_miary] = (acc[a.jednostka_miary] ?? 0) + (a.ilosc - a.rezerwacje);
+                        return acc;
+                      }, {})
+                    ).map(([jm, sum]) => `${fillZero(sum)} ${jm}`).join(' / ')}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>

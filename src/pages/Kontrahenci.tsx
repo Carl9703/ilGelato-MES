@@ -151,26 +151,22 @@ export default function Kontrahenci() {
             {search ? "Brak wyników wyszukiwania" : "Brak kontrahentów. Dodaj pierwszego."}
           </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <table className="mes-table">
             <thead>
-              <tr style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border)" }}>
-                <SortableTh label="Kod"   field="kod"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }} />
-                <SortableTh label="Nazwa" field="nazwa" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }} />
-                <SortableTh label="Adres" field="adres" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }} />
-                <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>Akcje</th>
+              <tr>
+                <SortableTh label="Kod"   field="kod"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Nazwa" field="nazwa" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortableTh label="Adres" field="adres" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <th className="text-right">Akcje</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map(k => (
-                <tr key={k.id}
-                  style={{ borderBottom: "1px solid var(--border-dim)", transition: "background .1s" }}
-                  onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
-                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                >
-                  <td style={{ padding: "8px 12px", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--accent)" }}>{k.kod}</td>
-                  <td style={{ padding: "8px 12px", fontWeight: 600, color: "var(--text-primary)" }}>{k.nazwa}</td>
-                  <td style={{ padding: "8px 12px", color: "var(--text-secondary)", fontSize: 12 }}>{k.adres || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
-                  <td style={{ padding: "8px 12px" }}>
+                <tr key={k.id}>
+                  <td className="mono font-bold" style={{ color: "var(--accent)" }}>{k.kod}</td>
+                  <td className="font-semibold text-white">{k.nazwa}</td>
+                  <td className="text-xs" style={{ color: "var(--text-secondary)" }}>{k.adres || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
+                  <td>
                     <div className="flex items-center justify-end gap-1">
                       <button onClick={() => openEdit(k)} title="Edytuj"
                         className="p-1.5 rounded btn-hover-effect"
@@ -194,13 +190,13 @@ export default function Kontrahenci() {
       {/* Modal formularza */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#1e293b] rounded-2xl shadow-2xl w-full max-w-lg border border-[#334155]">
-            <div className="flex justify-between items-center p-5 border-b border-[#334155]">
+          <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-lg border border-[var(--border)]">
+            <div className="flex justify-between items-center p-5 border-b border-[var(--border)]">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Users className="w-4 h-4" style={{ color: "var(--accent)" }} />
                 {editId ? "Edytuj kontrahenta" : "Nowy kontrahent"}
               </h3>
-              <button onClick={() => setShowForm(false)} className="p-1.5 rounded-lg hover:bg-[#334155]" style={{ color: "var(--text-muted)" }}>
+              <button onClick={() => setShowForm(false)} className="p-1.5 rounded-lg hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-muted)" }}>
                 <X className="w-5 h-5" />
               </button>
             </div>
