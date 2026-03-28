@@ -793,6 +793,89 @@ async function startServer() {
             data_zatwierdzenia: new Date()
           }
         });
+
+        // ── AUTOMATYCZNA CYRKULACJA OPAKOWAŃ ────────────────────────────────
+        if (header.typ === "WZ") {
+          // Wydanie zewnętrzne (WZ) -> WYDA opakowania do kontrahenta
+          if (header.pozycje_json) {
+            try {
+              const pozycje = JSON.parse(header.pozycje_json) as any[];
+              const countsToCreate = new Map<string, number>(); // id_asortymentu -> totalCount
+
+              for (const p of pozycje) {
+                if (!p.sztuki || typeof p.sztuki !== "object") continue;
+                
+                // Pobierz partię aby uzyskać mapping id_asortymentu dla opakowań
+                const partia = await tx.partie_Magazynowe.findUnique({ where: { id: p.id_partii } });
+                if (!partia?.opakowania_json) continue;
+                const opMap = JSON.parse(partia.opakowania_json) as any[]; // [{id_asortymentu, waga_kg, nazwa}]
+                
+                for (const [label, count] of Object.entries(p.sztuki)) {
+                  const ilosc = Number(count);
+                  if (ilosc <= 0) continue;
+
+                  // Wyciągnij nazwę i wagę z labela "Pozetti (5,0 kg)"
+                  const match = label.match(/^(.*)\s+\((\d+(?:[\.,]\d+)?)\s*kg\)$/);
+                  if (!match) continue;
+                  const nazwaNominalna = match[1].trim();
+                  const wagaNominalna = parseFloat(match[2].replace(',', '.'));
+                  
+                  // Szukaj pasującego id_asortymentu w mappingu partii
+                  const matched = opMap.find(o => o.nazwa === nazwaNominalna && Math.abs(o.waga_kg - wagaNominalna) < 0.01);
+                  if (matched && matched.id_asortymentu) {
+                    countsToCreate.set(matched.id_asortymentu, (countsToCreate.get(matched.id_asortymentu) || 0) + ilosc);
+                  }
+                }
+              }
+
+              // Twórz skonsolidowane wpisy
+              for (const [id_asort, total] of countsToCreate.entries()) {
+                const packagingAsort = await tx.asortyment.findUnique({ where: { id: id_asort } });
+                if (packagingAsort?.czy_zwrotne) {
+                  await tx.ruchy_Opakowan_Zwrotnych.create({
+                    data: {
+                      id_asortymentu: id_asort,
+                      ilosc: total,
+                      typ_ruchu: "WYDA",
+                      id_kontrahenta: header.id_kontrahenta,
+                      referencja_dokumentu: ref,
+                      id_uzytkownika: user.id,
+                      uwagi: `Automat WZ: ${ref}`
+                    }
+                  });
+                }
+              }
+            } catch (e) { console.error("Błąd automatycznej cyrkulacji WZ:", e); }
+          }
+        } else if (header.typ === "PZ") {
+          // Przyjęcie zewnętrzne (PZ) -> PRZYJECIE lub ZWROT (jeśli od kontrahenta)
+          const ruchyPZ = await tx.ruchy_Magazynowe.findMany({
+            where: { referencja_dokumentu: ref },
+            include: { partia: { include: { asortyment: true } } }
+          });
+          
+          const countsToCreatePZ = new Map<string, number>();
+          for (const r of ruchyPZ) {
+             if (r.partia.asortyment.czy_zwrotne) {
+               const id = r.partia.asortyment.id;
+               countsToCreatePZ.set(id, (countsToCreatePZ.get(id) || 0) + Math.abs(r.ilosc));
+             }
+          }
+
+          for (const [id_asort, total] of countsToCreatePZ.entries()) {
+             await tx.ruchy_Opakowan_Zwrotnych.create({
+               data: {
+                 id_asortymentu: id_asort,
+                 ilosc: Math.round(total), // zaokrąglenie do Int (opakowania są zwykle całkowite)
+                 typ_ruchu: header.id_kontrahenta ? "ZWROT" : "PRZYJECIE",
+                 id_kontrahenta: header.id_kontrahenta,
+                 referencja_dokumentu: ref,
+                 id_uzytkownika: user.id,
+                 uwagi: `Automat PZ: ${ref}`
+               }
+             });
+          }
+        }
       });
 
       res.json({ success: true });
@@ -846,6 +929,11 @@ async function startServer() {
             id_uzytkownika_anulowania: user.id,
             data_anulowania: new Date()
           }
+        });
+
+        // Usuń automatyczne ruchy opakowań zwrotnych
+        await tx.ruchy_Opakowan_Zwrotnych.deleteMany({
+          where: { referencja_dokumentu: ref }
         });
       });
 
@@ -3103,6 +3191,188 @@ async function startServer() {
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Błąd generowania raportu" });
     }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CYRKULACJA OPAKOWAŃ ZWROTNYCH
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Pobierz kartoteki asortymentowe typu 'Opakowanie'
+  app.get("/api/opakowania-asortyment", async (req, res) => {
+    try {
+      const opakowania = await prisma.asortyment.findMany({
+        where: { typ_asortymentu: "Opakowanie", czy_aktywne: true },
+        orderBy: { nazwa: "asc" }
+      });
+      res.json(opakowania);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Oznacz kartotekę asortymentową jako zwrotną / niezwrotną
+  app.put("/api/asortyment/:id/zwrotne", async (req, res) => {
+    try {
+      const { czy_zwrotne } = req.body;
+      const item = await prisma.asortyment.update({
+        where: { id: req.params.id },
+        data: { czy_zwrotne: Boolean(czy_zwrotne) }
+      });
+      res.json(item);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Stan aktualny opakowań zwrotnych (oparty na kartotekach Asortyment)
+  app.get("/api/opakowania-zwrotne/stan", async (req, res) => {
+    try {
+      const opakowania = await prisma.asortyment.findMany({
+        where: { czy_aktywne: true, czy_zwrotne: true },
+        orderBy: { nazwa: "asc" }
+      });
+
+      const ruchy = await prisma.ruchy_Opakowan_Zwrotnych.findMany({
+        include: {
+          kontrahent: { select: { id: true, kod: true, nazwa: true } }
+        }
+      });
+
+      const kontrahenci = await prisma.kontrahenci.findMany({
+        where: { czy_aktywne: true },
+        select: { id: true, kod: true, nazwa: true }
+      });
+
+      const result = opakowania.map((asort: any) => {
+        const ruchyAsortymentu = ruchy.filter((r: any) => r.id_asortymentu === asort.id);
+
+        // Magazyn = PRZYJECIE + ZWROT - WYDA - STRATA
+        let magazyn = 0;
+        for (const r of ruchyAsortymentu) {
+          if (r.typ_ruchu === "PRZYJECIE" || r.typ_ruchu === "ZWROT") magazyn += r.ilosc;
+          else if (r.typ_ruchu === "WYDA" || r.typ_ruchu === "STRATA") magazyn -= r.ilosc;
+        }
+
+        // Stan per kontrahent
+        const kontrahentMap = new Map<string, number>();
+        for (const r of ruchyAsortymentu) {
+          if (!r.id_kontrahenta) continue;
+          const current = kontrahentMap.get(r.id_kontrahenta) || 0;
+          if (r.typ_ruchu === "WYDA") kontrahentMap.set(r.id_kontrahenta, current + r.ilosc);
+          else if (r.typ_ruchu === "ZWROT") kontrahentMap.set(r.id_kontrahenta, current - r.ilosc);
+        }
+
+        const kontrahenciStan = kontrahenci
+          .map((k: any) => ({ ...k, ilosc: kontrahentMap.get(k.id) || 0 }))
+          .filter((k: any) => k.ilosc > 0);
+
+        return {
+          id_asortymentu: asort.id,
+          nazwa_asortymentu: asort.nazwa,
+          czy_zwrotne: asort.czy_zwrotne,
+          magazyn: Math.max(0, magazyn),
+          kontrahenci: kontrahenciStan,
+          lacznie: Math.max(0, magazyn) + kontrahenciStan.reduce((s: number, k: any) => s + k.ilosc, 0)
+        };
+      });
+
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Historia ruchów (oparta na kartotekach Asortyment)
+  app.get("/api/opakowania-zwrotne/historia", async (req, res) => {
+    try {
+      const { id_asortymentu, id_kontrahenta, typ_ruchu, limit = "100" } = req.query as any;
+      const where: any = {};
+      if (id_asortymentu) where.id_asortymentu = id_asortymentu;
+      if (id_kontrahenta) where.id_kontrahenta = id_kontrahenta;
+      if (typ_ruchu) where.typ_ruchu = typ_ruchu;
+
+      const historia = await prisma.ruchy_Opakowan_Zwrotnych.findMany({
+        where,
+        include: {
+          asortyment: { select: { id: true, nazwa: true } },
+          kontrahent: { select: { id: true, kod: true, nazwa: true } },
+          uzytkownik: { select: { login: true } }
+        },
+        orderBy: { utworzono_dnia: "desc" },
+        take: parseInt(limit)
+      });
+
+      res.json(historia);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Rejestruj ruch opakowania zwrotnego
+  app.post("/api/opakowania-zwrotne/ruch", async (req, res) => {
+    try {
+      const { id_asortymentu, ilosc, typ_ruchu, id_kontrahenta, uwagi } = req.body;
+      if (!id_asortymentu) return res.status(400).json({ error: "Wymagany id_asortymentu" });
+      if (!ilosc || ilosc <= 0) return res.status(400).json({ error: "Ilość musi być większa od 0" });
+      if (!["PRZYJECIE", "WYDA", "ZWROT", "STRATA"].includes(typ_ruchu)) {
+        return res.status(400).json({ error: "Nieprawidłowy typ ruchu. Dozwolone: PRZYJECIE, WYDA, ZWROT, STRATA" });
+      }
+      if ((typ_ruchu === "WYDA" || typ_ruchu === "ZWROT") && !id_kontrahenta) {
+        return res.status(400).json({ error: "WYDA i ZWROT wymagają id_kontrahenta" });
+      }
+
+      // Sprawdź dostępność dla WYDA
+      if (typ_ruchu === "WYDA") {
+        const wszystkieRuchy = await prisma.ruchy_Opakowan_Zwrotnych.findMany({
+          where: { id_asortymentu }
+        });
+        let stanMagazyn = 0;
+        for (const r of wszystkieRuchy) {
+          if (r.typ_ruchu === "PRZYJECIE" || r.typ_ruchu === "ZWROT") stanMagazyn += r.ilosc;
+          else if (r.typ_ruchu === "WYDA" || r.typ_ruchu === "STRATA") stanMagazyn -= r.ilosc;
+        }
+        if (stanMagazyn < ilosc) {
+          return res.status(400).json({ error: `Niewystarczający stan magazynowy: dostępne ${stanMagazyn} szt.` });
+        }
+      }
+
+      // Sprawdź dostępność dla ZWROT
+      if (typ_ruchu === "ZWROT") {
+        const ruchyKontrahenta = await prisma.ruchy_Opakowan_Zwrotnych.findMany({
+          where: { id_asortymentu, id_kontrahenta }
+        });
+        let stanKontrahenta = 0;
+        for (const r of ruchyKontrahenta) {
+          if (r.typ_ruchu === "WYDA") stanKontrahenta += r.ilosc;
+          else if (r.typ_ruchu === "ZWROT") stanKontrahenta -= r.ilosc;
+        }
+        if (stanKontrahenta < ilosc) {
+          return res.status(400).json({ error: `Kontrahent ma tylko ${stanKontrahenta} szt. tej kartoteki` });
+        }
+      }
+
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) return res.status(400).json({ error: "Brak użytkownika w systemie" });
+
+      const ruch = await prisma.ruchy_Opakowan_Zwrotnych.create({
+        data: {
+          id_asortymentu,
+          ilosc: parseInt(ilosc),
+          typ_ruchu,
+          id_kontrahenta: id_kontrahenta || null,
+          uwagi: uwagi || null,
+          id_uzytkownika: user.id
+        },
+        include: {
+          asortyment: true,
+          kontrahent: true
+        }
+      });
+
+      res.json(ruch);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Usuń ruch (korekta) — tylko ostatni ruch można cofnąć
+  app.delete("/api/opakowania-zwrotne/ruch/:id", async (req, res) => {
+    try {
+      await prisma.ruchy_Opakowan_Zwrotnych.delete({
+        where: { id: req.params.id }
+      });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // Vite middleware for development

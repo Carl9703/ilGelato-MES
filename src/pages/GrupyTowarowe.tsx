@@ -206,6 +206,7 @@ function GrupaModal({ open, editingId, form, setForm, grupy, saving, onSave, onC
 
 // ─── Wiersz grupy (poza głównym komponentem) ──────────────────────────────────
 interface GroupRowProps {
+  key?: React.Key;
   g: Grupa;
   isSubgroup?: boolean;
   expanded: Set<string>;

@@ -22,6 +22,7 @@ model Uzytkownicy {
   dokumenty_utworzone      Dokumenty_Magazynowe[] @relation("DokumentUtworzony")
   dokumenty_zatwierdzone   Dokumenty_Magazynowe[] @relation("DokumentZatwierdzony")
   dokumenty_anulowane      Dokumenty_Magazynowe[] @relation("DokumentAnulowany")
+  ruchy_opakowan           Ruchy_Opakowan_Zwrotnych[]
 }
 
 model Kontrahenci {
@@ -34,6 +35,7 @@ model Kontrahenci {
   zaktualizowano_dnia DateTime @updatedAt
 
   dokumenty           Dokumenty_Magazynowe[]
+  ruchy_opakowan      Ruchy_Opakowan_Zwrotnych[]
 }
 
 model Dokumenty_Magazynowe {
@@ -76,6 +78,7 @@ model Asortyment {
   skladniki_opis           String?  // Skład produktu (do etykiet)
   moze_zawierac            String?  // Alergeny śladowe "może zawierać"
   id_grupy                 String?
+  czy_zwrotne              Boolean  @default(false)
   utworzono_dnia           DateTime @default(now())
   zaktualizowano_dnia      DateTime @updatedAt
 
@@ -87,6 +90,7 @@ model Asortyment {
   alergeny                 Alergeny_Asortymentu?
   opakowania_wyrobowe      Opakowania_Wyrobowe[]
   grupa                    Grupy_Towarowe?       @relation(fields: [id_grupy], references: [id])
+  ruchy_opakowan           Ruchy_Opakowan_Zwrotnych[]
 }
 
 model Grupy_Towarowe {
@@ -379,4 +383,31 @@ model Opakowania_Wyrobowe {
   typ_opakowania      Typy_Opakowan          @relation(fields: [id_typu_opakowania], references: [id])
   partia_bazy         Partie_Magazynowe?     @relation(fields: [id_partii_bazy],     references: [id])
   dokument_wz         Dokumenty_Magazynowe?  @relation(fields: [id_dokumentu_wz],    references: [id])
+}
+
+// ═══════════════════════════════════════════════════════
+// MODUŁ CYRKULACJI OPAKOWAŃ ZWROTNYCH
+// ═══════════════════════════════════════════════════════
+
+// Ruchy opakowań zwrotnych między magazynem a kontrahentami
+model Ruchy_Opakowan_Zwrotnych {
+  id                    String   @id @default(uuid())
+  id_asortymentu        String   // FK → Asortyment
+  ilosc                 Int      // Ilość opakowań (zawsze dodatnia)
+  typ_ruchu             String   // PRZYJECIE | WYDA | ZWROT | STRATA
+  id_kontrahenta        String?  // FK → Kontrahenci (dla WYDA i ZWROT)
+  referencja_dokumentu  String?  // Opcjonalne powiązanie z WZ/PZ
+  uwagi                 String?
+  id_uzytkownika        String   // FK → Uzytkownicy
+  utworzono_dnia        DateTime @default(now())
+
+  asortyment      Asortyment     @relation(fields: [id_asortymentu],   references: [id])
+  kontrahent      Kontrahenci?   @relation(fields: [id_kontrahenta],  references: [id])
+  uzytkownik      Uzytkownicy    @relation(fields: [id_uzytkownika],  references: [id])
+
+  @@index([id_asortymentu])
+  @@index([id_kontrahenta])
+  @@index([typ_ruchu])
+  @@index([referencja_dokumentu])
+  @@index([utworzono_dnia])
 }
