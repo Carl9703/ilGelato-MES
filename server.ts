@@ -4,6 +4,11 @@ import { createServer as createViteServer } from "vite";
 import { PrismaClient } from "@prisma/client";
 import path from "path";
 import QRCode from "qrcode";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
+
+const JWT_SECRET = process.env.JWT_SECRET || "ilgelato-dev-secret-2025-change-in-prod";
+const JWT_EXPIRES = "12h";
 
 const prisma = new PrismaClient();
 
@@ -164,9 +169,68 @@ async function startServer() {
   app.use(helmet({ contentSecurityPolicy: false })); // CSP wyłączone bo Vite dev serwuje inline scripts
   app.use(express.json({ limit: '10mb' }));
 
+  // --- AUTH MIDDLEWARE ---
+  const PUBLIC_PATHS = ["/api/auth/login", "/api/health", "/api/setup", "/api/init", "/api/reset"];
+
+  function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const auth = req.headers["authorization"];
+    if (!auth?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Wymagane logowanie" });
+    }
+    try {
+      const payload = jwt.verify(auth.slice(7), JWT_SECRET) as { userId: string; login: string };
+      (req as any).userId = payload.userId;
+      (req as any).userLogin = payload.login;
+      next();
+    } catch {
+      res.status(401).json({ error: "Sesja wygasła — zaloguj się ponownie" });
+    }
+  }
+
+  app.use("/api", (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (PUBLIC_PATHS.includes(req.path)) return next();
+    requireAuth(req, res, next);
+  });
+
   // --- API ROUTES ---
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // --- AUTH ENDPOINTS ---
+  app.post("/api/auth/login", async (req, res) => {
+    const { login, haslo } = req.body;
+    if (!login || !haslo) {
+      return res.status(400).json({ error: "Podaj login i hasło" });
+    }
+    try {
+      const user = await prisma.uzytkownicy.findUnique({ where: { login } });
+      if (!user || !user.czy_aktywne) {
+        return res.status(401).json({ error: "Nieprawidłowy login lub hasło" });
+      }
+      let valid = false;
+      if (user.haslo.startsWith("$2b$") || user.haslo.startsWith("$2a$")) {
+        valid = await bcrypt.compare(haslo, user.haslo);
+      } else {
+        // Migracja: hasło plaintekstowe → hash przy pierwszym logowaniu
+        valid = user.haslo === haslo;
+        if (valid) {
+          const hashed = await bcrypt.hash(haslo, 10);
+          await prisma.uzytkownicy.update({ where: { id: user.id }, data: { haslo: hashed } });
+        }
+      }
+      if (!valid) {
+        return res.status(401).json({ error: "Nieprawidłowy login lub hasło" });
+      }
+      const token = jwt.sign({ userId: user.id, login: user.login }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+      res.json({ token, login: user.login });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/auth/me", (req, res) => {
+    res.json({ userId: (req as any).userId, login: (req as any).userLogin });
   });
 
   // Jednorazowy setup — tworzy admina tylko jeśli brak użytkowników w systemie

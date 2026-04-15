@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router";
-import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package, Sun, Moon, Settings, Archive } from "lucide-react";
+import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package, Sun, Moon, Settings, Archive, LogOut } from "lucide-react";
 import logoImg from "./assets/logo.png";
 import Dashboard from "./pages/Dashboard";
 import Asortyment from "./pages/Asortyment";
@@ -13,6 +13,7 @@ import Raporty from "./pages/Raporty";
 import WyrobyGotowe from "./pages/WyrobyGotowe";
 import Ustawienia from "./pages/Ustawienia";
 import Opakowania from "./pages/Opakowania";
+import LoginPage from "./pages/Login";
 
 function useTheme() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -25,6 +26,43 @@ function useTheme() {
   }, [theme]);
 
   return { theme, toggle: () => setTheme(t => t === 'dark' ? 'light' : 'dark') };
+}
+
+function useAuth() {
+  const [auth, setAuth] = useState<{ token: string; login: string } | null>(() => {
+    const token = localStorage.getItem('mes-token');
+    const login = localStorage.getItem('mes-login');
+    return token && login ? { token, login } : null;
+  });
+  const [sprawdzanie, setSprawdzanie] = useState(true);
+
+  useEffect(() => {
+    if (!auth) { setSprawdzanie(false); return; }
+    // Weryfikacja tokenu przy starcie
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then((data) => setAuth(a => a ? { ...a, login: data.login } : null))
+      .catch(() => {
+        localStorage.removeItem('mes-token');
+        localStorage.removeItem('mes-login');
+        setAuth(null);
+      })
+      .finally(() => setSprawdzanie(false));
+  }, []);
+
+  function login(token: string, login: string) {
+    localStorage.setItem('mes-token', token);
+    localStorage.setItem('mes-login', login);
+    setAuth({ token, login });
+  }
+
+  function logout() {
+    localStorage.removeItem('mes-token');
+    localStorage.removeItem('mes-login');
+    setAuth(null);
+  }
+
+  return { auth, sprawdzanie, login, logout };
 }
 
 const navItems = [
@@ -40,7 +78,7 @@ const navItems = [
   { to: "/raporty",       icon: BarChart2,         label: "Raporty",      testId: "nav-raporty"        },
 ];
 
-function MainLayout({ children }: { children: React.ReactNode }) {
+function MainLayout({ children, userLogin, onLogout }: { children: React.ReactNode; userLogin: string; onLogout: () => void }) {
   const location = useLocation();
   const { theme, toggle } = useTheme();
   const isSettings = location.pathname.startsWith("/ustawienia");
@@ -141,6 +179,30 @@ function MainLayout({ children }: { children: React.ReactNode }) {
             <div style={{ color: 'var(--text-muted)' }}>
               {new Date().toLocaleDateString("pl-PL", { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
             </div>
+            {/* Użytkownik + wylogowanie */}
+            <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+              <span className="font-medium truncate" style={{ color: 'var(--text-secondary)' }}>{userLogin}</span>
+              <button
+                onClick={onLogout}
+                title="Wyloguj"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--border)',
+                  borderRadius: '6px',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '3px 6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  transition: 'color 0.15s, border-color 0.15s',
+                  flexShrink: 0,
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#ef4444'; (e.currentTarget as HTMLButtonElement).style.borderColor = '#ef4444'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; }}
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -156,11 +218,25 @@ function MainLayout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { auth, sprawdzanie, login, logout } = useAuth();
+
+  if (sprawdzanie) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-app)' }}>
+        <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Ładowanie...</span>
+      </div>
+    );
+  }
+
+  if (!auth) {
+    return <LoginPage onLogin={login} />;
+  }
+
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/*" element={
-          <MainLayout>
+          <MainLayout userLogin={auth.login} onLogout={logout}>
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
