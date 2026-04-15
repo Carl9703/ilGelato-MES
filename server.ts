@@ -233,6 +233,32 @@ async function startServer() {
     res.json({ userId: (req as any).userId, login: (req as any).userLogin });
   });
 
+  app.post("/api/auth/change-password", async (req, res) => {
+    const { stare_haslo, nowe_haslo } = req.body;
+    if (!stare_haslo || !nowe_haslo) {
+      return res.status(400).json({ error: "Podaj stare i nowe hasło" });
+    }
+    if (nowe_haslo.length < 4) {
+      return res.status(400).json({ error: "Nowe hasło musi mieć co najmniej 4 znaki" });
+    }
+    try {
+      const user = await prisma.uzytkownicy.findUnique({ where: { id: (req as any).userId } });
+      if (!user) return res.status(404).json({ error: "Użytkownik nie znaleziony" });
+      let valid = false;
+      if (user.haslo.startsWith("$2b$") || user.haslo.startsWith("$2a$")) {
+        valid = await bcrypt.compare(stare_haslo, user.haslo);
+      } else {
+        valid = user.haslo === stare_haslo;
+      }
+      if (!valid) return res.status(401).json({ error: "Stare hasło jest nieprawidłowe" });
+      const hashed = await bcrypt.hash(nowe_haslo, 10);
+      await prisma.uzytkownicy.update({ where: { id: user.id }, data: { haslo: hashed } });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Jednorazowy setup — tworzy admina tylko jeśli brak użytkowników w systemie
   app.get("/api/setup", async (req, res) => {
     const count = await prisma.uzytkownicy.count();

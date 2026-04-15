@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Settings, Tag } from "lucide-react";
+import { Settings, Tag, KeyRound } from "lucide-react";
 import GrupyTowarowe from "./GrupyTowarowe";
+import ZmianaHasla from "./ZmianaHasla";
 
 type Tab = {
   id: string;
@@ -16,9 +17,12 @@ const tabs: Tab[] = [
     icon: Tag,
     component: <GrupyTowarowe />,
   },
-  // Tutaj łatwo dodać kolejne zakładki ustawień, np.:
-  // { id: "jednostki", label: "Jednostki miary", icon: Ruler, component: <Jednostki /> },
-  // { id: "uzytkownicy", label: "Użytkownicy", icon: Users, component: <Uzytkownicy /> },
+  {
+    id: "haslo",
+    label: "Zmiana hasła",
+    icon: KeyRound,
+    component: <ZmianaHasla />,
+  },
 ];
 
 export default function Ustawienia() {
