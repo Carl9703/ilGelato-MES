@@ -170,7 +170,7 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
 
   // --- AUTH MIDDLEWARE ---
-  const PUBLIC_PATHS = ["/api/auth/login", "/api/health", "/api/setup", "/api/init", "/api/reset"];
+  const PUBLIC_PATHS = ["/auth/login", "/health", "/setup", "/init", "/reset"];
 
   function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
     const auth = req.headers["authorization"];
