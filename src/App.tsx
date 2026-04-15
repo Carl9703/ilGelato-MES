@@ -217,7 +217,7 @@ function MainLayout({ children, userLogin, onLogout }: { children: React.ReactNo
   );
 }
 
-export default function App() {
+function AppInner() {
   const { auth, sprawdzanie, login, logout } = useAuth();
 
   if (sprawdzanie) {
@@ -233,27 +233,33 @@ export default function App() {
   }
 
   return (
+    <Routes>
+      <Route path="/*" element={
+        <MainLayout userLogin={auth.login} onLogout={logout}>
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/asortyment" element={<Asortyment />} />
+            <Route path="/receptury" element={<Receptury />} />
+            <Route path="/produkcja" element={<Produkcja />} />
+            <Route path="/dokumenty" element={<Dokumenty />} />
+            <Route path="/wyroby-gotowe" element={<WyrobyGotowe />} />
+            <Route path="/opakowania" element={<Opakowania />} />
+            <Route path="/kontrahenci" element={<Kontrahenci />} />
+            <Route path="/traceability" element={<Traceability />} />
+            <Route path="/raporty" element={<Raporty />} />
+            <Route path="/ustawienia" element={<Ustawienia />} />
+          </Routes>
+        </MainLayout>
+      } />
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/*" element={
-          <MainLayout userLogin={auth.login} onLogout={logout}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/asortyment" element={<Asortyment />} />
-              <Route path="/receptury" element={<Receptury />} />
-              <Route path="/produkcja" element={<Produkcja />} />
-              <Route path="/dokumenty" element={<Dokumenty />} />
-              <Route path="/wyroby-gotowe" element={<WyrobyGotowe />} />
-              <Route path="/opakowania" element={<Opakowania />} />
-              <Route path="/kontrahenci" element={<Kontrahenci />} />
-              <Route path="/traceability" element={<Traceability />} />
-              <Route path="/raporty" element={<Raporty />} />
-              <Route path="/ustawienia" element={<Ustawienia />} />
-            </Routes>
-          </MainLayout>
-        } />
-      </Routes>
+      <AppInner />
     </BrowserRouter>
   );
 }
