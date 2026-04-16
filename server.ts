@@ -512,6 +512,57 @@ async function startServer() {
     }
   });
 
+  // ─── Import masowy z Excel ─────────────────────────────────────────────────
+  app.post("/api/asortyment/import-bulk", async (req, res) => {
+    try {
+      const { rows } = req.body as { rows: Array<{
+        kod_towaru: string; nazwa: string; typ_asortymentu: string;
+        jednostka_miary: string; jednostka_pomocnicza?: string | null;
+        przelicznik_jednostki?: string | null;
+        czy_wymaga_daty_waznosci?: boolean; czy_zasob_nieograniczony?: boolean;
+        producent?: string | null; zrodlo_danych?: string | null;
+      }> };
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(400).json({ error: "Brak danych do importu" });
+      }
+
+      const results = await Promise.all(rows.map(async (row) => {
+        try {
+          const parsedPrzelicznik = row.przelicznik_jednostki
+            ? parseFloat(String(row.przelicznik_jednostki).replace(",", "."))
+            : null;
+
+          await prisma.asortyment.create({
+            data: {
+              kod_towaru:               row.kod_towaru,
+              nazwa:                    row.nazwa,
+              typ_asortymentu:          row.typ_asortymentu,
+              jednostka_miary:          row.jednostka_miary,
+              jednostka_pomocnicza:     row.jednostka_pomocnicza   || null,
+              przelicznik_jednostki:    (parsedPrzelicznik && !isNaN(parsedPrzelicznik)) ? parsedPrzelicznik : null,
+              czy_wymaga_daty_waznosci: Boolean(row.czy_wymaga_daty_waznosci),
+              czy_zasob_nieograniczony: Boolean(row.czy_zasob_nieograniczony),
+              producent:                row.producent    || null,
+              zrodlo_danych:            row.zrodlo_danych || null,
+            },
+          });
+          return { kod_towaru: row.kod_towaru, success: true };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const friendly = msg.includes("Unique constraint")
+            ? "Kod towaru już istnieje w bazie"
+            : msg;
+          return { kod_towaru: row.kod_towaru, success: false, error: friendly };
+        }
+      }));
+
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: "Błąd importu asortymentu" });
+    }
+  });
+
   app.post("/api/asortyment", async (req, res) => {
     try {
       const { kod_towaru, nazwa, typ_asortymentu, jednostka_miary, jednostka_pomocnicza, przelicznik_jednostki, czy_wymaga_daty_waznosci, czy_zasob_nieograniczony, id_grupy } = req.body;

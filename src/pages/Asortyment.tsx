@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Save, X, Package, ArrowLeft, History, FileText, Search } from "lucide-react";
+import { Plus, Save, X, Package, ArrowLeft, History, FileText, Search, FileSpreadsheet } from "lucide-react";
 import { fmtL, fmtDate } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
+import ImportAsortymentuModal from "../components/ImportAsortymentuModal";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 import { useToast } from "../components/Toast";
@@ -43,6 +44,7 @@ export default function Asortyment() {
   const { showToast } = useToast();
   
   // Modal state
+  const [showImport, setShowImport] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<AsortymentOgolne | null>(null);
   const [formData, setFormData] = useState({
@@ -829,7 +831,10 @@ export default function Asortyment() {
             <h2 className="text-lg font-bold text-white tracking-wide">Asortyment</h2>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Centralna kartoteka i zarządzanie zapasami</p>
           </div>
-          <button onClick={openNew} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white btn-hover-effect"><Plus className="w-4 h-4" />Dodaj towar</button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowImport(true)} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-emerald-700 hover:bg-emerald-600 text-white btn-hover-effect"><FileSpreadsheet className="w-4 h-4" />Importuj z Excel</button>
+            <button onClick={openNew} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white btn-hover-effect"><Plus className="w-4 h-4" />Dodaj towar</button>
+          </div>
         </div>
 
         {grupy.length > 0 && (
@@ -994,6 +999,12 @@ export default function Asortyment() {
           )}
         </div>
       </div>
+      {showImport && (
+        <ImportAsortymentuModal
+          onClose={() => setShowImport(false)}
+          onImported={() => { setShowImport(false); fetchAll(); }}
+        />
+      )}
     </>
   );
 }
