@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   FileText, Printer, Search, Tag, X, Plus, PackageOpen,
   ArrowRightCircle, AlertCircle, Save, Eye, Trash2, ChevronDown, ChevronUp, Copy,
-  CheckCircle, Ban, Clock
+  CheckCircle, Ban, Clock, MinusCircle
 } from "lucide-react";
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
@@ -66,6 +66,17 @@ type WzRow = {
   loadingPartie: boolean;
 };
 
+type RwRow = {
+  _key: string;
+  id_asortymentu: string;
+  nazwa: string;
+  jednostka_miary: string;
+  id_partii: string;
+  ilosc: string;
+  dostepnePartie: PartiaDostepna[];
+  loadingPartie: boolean;
+};
+
 const typColors: Record<string, string> = {
   PZ: "bg-emerald-500/20 text-emerald-300",
   PW: "bg-blue-500/20 text-blue-300",
@@ -112,8 +123,9 @@ export default function Dokumenty() {
   // Modals
   const [showPz, setShowPz] = useState(false);
   const [showWz, setShowWz] = useState(false);
+  const [showRw, setShowRw] = useState(false);
   const [showSelektor, setShowSelektor] = useState(false);
-  const [selektorTryb, setSelektorTryb] = useState<"pz" | "wz">("pz");
+  const [selektorTryb, setSelektorTryb] = useState<"pz" | "wz" | "rw">("pz");
 
   // Formularz PZ
   const [pzRows, setPzRows] = useState<PzRow[]>([]);
@@ -125,6 +137,9 @@ export default function Dokumenty() {
   const [wzReferencja, setWzReferencja] = useState("");
   const [wzKontrahentId, setWzKontrahentId] = useState("");
   const [kontrahenci, setKontrahenci] = useState<Kontrahent[]>([]);
+
+  // Formularz RW
+  const [rwRows, setRwRows] = useState<RwRow[]>([]);
 
   const [sortKey, setSortKey] = useState("data");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -214,11 +229,12 @@ export default function Dokumenty() {
       if (showSelektor) { setShowSelektor(false); return; }
       if (showPz) { setShowPz(false);  return; }
       if (showWz) { setShowWz(false);  return; }
+      if (showRw) { setShowRw(false);  return; }
       if (showEtykiety) { setShowEtykiety(false); return; }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [previewDocRef, showSelektor, showPz, showWz, showEtykiety]);
+  }, [previewDocRef, showSelektor, showPz, showWz, showRw, showEtykiety]);
 
   // Gdy zmienia się referencja lub nextPzNumber, odśwież auto-uzupełnione numery partii
   useEffect(() => {
@@ -457,6 +473,84 @@ export default function Dokumenty() {
       showToast("Dokument WZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
       
+    } catch (err: any) { showToast(err.message, "error"); }
+  };
+
+  // ─── Otwieranie RW ─────────────────────────────────────────────────────────
+
+  const openRwModal = () => {
+    setRwRows([]);
+    setShowRw(true);
+  };
+
+  const openRwSelektor = () => {
+    setSelektorTryb("rw");
+    setShowSelektor(true);
+  };
+
+  const onSelektorRwConfirm = useCallback(async (wybrane: WybranyTowar[]) => {
+    setShowSelektor(false);
+    const newRows: RwRow[] = wybrane.map(w => ({
+      _key: genKey(),
+      id_asortymentu: w.id_asortymentu,
+      nazwa: w.nazwa,
+      jednostka_miary: w.jednostka_miary,
+      id_partii: "",
+      ilosc: "",
+      dostepnePartie: [],
+      loadingPartie: true,
+    }));
+    setRwRows(prev => [...prev, ...newRows]);
+
+    for (const row of newRows) {
+      try {
+        const res = await fetch(`/api/asortyment/${row.id_asortymentu}`);
+        if (res.ok) {
+          const detail = await res.json();
+          const partie: PartiaDostepna[] = (detail.zasoby || [])
+            .filter((z: any) => z.dostepne > 0)
+            .map((z: any) => ({
+              id: z.id_partii,
+              numer_partii: z.numer_partii,
+              asortyment: { nazwa: row.nazwa, jednostka_miary: row.jednostka_miary },
+              stan: z.dostepne,
+              termin_waznosci: z.termin_waznosci,
+              opakowania: null,
+            }));
+          setRwRows(prev => prev.map(r =>
+            r._key === row._key ? { ...r, dostepnePartie: partie, loadingPartie: false } : r
+          ));
+        }
+      } catch {
+        setRwRows(prev => prev.map(r => r._key === row._key ? { ...r, loadingPartie: false } : r));
+      }
+    }
+  }, []);
+
+  const updateRwRow = (key: string, field: keyof RwRow, value: any) => {
+    setRwRows(prev => prev.map(r => r._key === key ? { ...r, [field]: value } : r));
+  };
+
+  const removeRwRow = (key: string) => {
+    setRwRows(prev => prev.filter(r => r._key !== key));
+  };
+
+  const handleCreateRw = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (rwRows.length === 0) { showToast("Dodaj co najmniej jedną pozycję.", "error"); return; }
+    const missing = rwRows.find(r => !r.id_partii || !r.ilosc);
+    if (missing) { showToast(`Pozycja "${missing.nazwa}" wymaga wybrania partii i podania ilości.`, "error"); return; }
+    try {
+      const items = rwRows.map(r => ({ id_partii: r.id_partii, ilosc: parseFloat(r.ilosc) }));
+      const res = await fetch("/api/magazyn/rw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+      setShowRw(false);
+      showToast("Dokument RW zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
+      fetchDokumenty();
     } catch (err: any) { showToast(err.message, "error"); }
   };
 
@@ -800,7 +894,12 @@ ${(isWZ || isPW) ? `<div class="section-title">Podsumowanie wg towaru</div>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Rejestr i wystawianie dokumentów magazynowych</p>
         </div>
         <div className="flex gap-2 items-center">
-<button onClick={openWzModal}
+          <button onClick={openRwModal}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-colors btn-hover-effect"
+            style={{ background: '#991b1b', color: '#fff' }}>
+            <MinusCircle className="w-4 h-4" /> Nowy RW
+          </button>
+          <button onClick={openWzModal}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-colors btn-hover-effect"
             style={{ background: '#c2410c', color: '#fff' }}>
             <ArrowRightCircle className="w-4 h-4" /> Nowy WZ
@@ -1193,14 +1292,129 @@ ${(isWZ || isPW) ? `<div class="section-title">Podsumowanie wg towaru</div>
         </div>
       )}
 
+      {/* ═══ MODAL RW ══════════════════════════════════════════════════════════ */}
+      {showRw && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
+          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
+
+            <div className="flex justify-between items-center p-5 border-b border-[var(--border)] bg-red-900/20 shrink-0">
+              <h3 className="text-lg font-bold text-red-400 flex items-center gap-2">
+                <MinusCircle className="w-5 h-5" /> Nowy dokument RW — Rozchód wewnętrzny
+              </h3>
+              <button onClick={() => setShowRw(false)} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)]">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateRw} className="flex flex-col flex-1 overflow-hidden">
+              <div className="overflow-y-auto flex-1 p-5 space-y-5">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-white font-bold text-sm uppercase">
+                      Pozycje do rozchodu
+                      {rwRows.length > 0 && <span className="ml-2 px-2 py-0.5 bg-red-600/20 text-red-400 rounded-full text-xs">{rwRows.length}</span>}
+                    </h4>
+                    <button type="button" onClick={openRwSelektor}
+                      className="flex items-center gap-2 text-white px-4 py-2.5 rounded-xl font-semibold text-sm transition-colors min-h-[44px]"
+                      style={{ background: '#991b1b' }}>
+                      <Plus className="w-4 h-4" /> Dodaj pozycję
+                    </button>
+                  </div>
+
+                  {rwRows.length === 0 ? (
+                    <div onClick={openRwSelektor}
+                      className="border-2 border-dashed border-[var(--border)] hover:border-red-500/50 rounded-2xl p-10 text-center cursor-pointer transition-colors group">
+                      <MinusCircle className="w-10 h-10 text-slate-600 group-hover:text-red-500/50 mx-auto mb-3 transition-colors" />
+                      <p className="text-slate-500 group-hover:text-slate-400 font-semibold">Kliknij aby wybrać towary do rozchodu</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {rwRows.map(row => (
+                        <div key={row._key} className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="w-7 h-7 bg-red-600/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+                              <MinusCircle className="w-4 h-4 text-red-400" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-white font-semibold text-sm mb-3">{row.nazwa}</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">
+                                    Partia <span className="text-red-400">*</span>
+                                  </label>
+                                  {row.loadingPartie ? (
+                                    <div className="flex items-center gap-2 text-slate-500 py-2">
+                                      <div className="w-4 h-4 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+                                      <span className="text-xs">Ładowanie partii...</span>
+                                    </div>
+                                  ) : row.dostepnePartie.length === 0 ? (
+                                    <div className="text-red-400 text-xs py-2">Brak dostępnych partii na magazynie</div>
+                                  ) : (
+                                    <select required value={row.id_partii}
+                                      onChange={e => updateRwRow(row._key, "id_partii", e.target.value)}
+                                      className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-red-500 text-sm font-mono">
+                                      <option value="">-- wybierz partię --</option>
+                                      {row.dostepnePartie.map(p => (
+                                        <option key={p.id} value={p.id}>
+                                          {p.numer_partii} · dost: {fmtL(p.stan, 2)} {row.jednostka_miary}
+                                          {p.termin_waznosci ? ` · ww: ${fmt(p.termin_waznosci)}` : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+                                <div>
+                                  <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">
+                                    Ilość <span className="text-red-400">*</span>
+                                  </label>
+                                  <div className="flex items-center gap-2">
+                                    <input type="number" step="0.001" min="0.001" required
+                                      value={row.ilosc}
+                                      onChange={e => updateRwRow(row._key, "ilosc", e.target.value)}
+                                      placeholder="0"
+                                      className="flex-1 bg-[var(--bg-input)] border border-[var(--border)] text-red-300 rounded-xl px-4 py-2.5 outline-none focus:border-red-500 font-mono font-bold text-right" />
+                                    <span className="text-slate-400 text-sm shrink-0">{row.jednostka_miary}</span>
+                                  </div>
+                                  {row.id_partii && (() => {
+                                    const p = row.dostepnePartie.find(p => p.id === row.id_partii);
+                                    return p ? <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>dostępne: <span className="font-mono font-bold text-emerald-400">{fmtL(p.stan, 3)}</span></div> : null;
+                                  })()}
+                                </div>
+                              </div>
+                            </div>
+                            <button type="button" onClick={() => removeRwRow(row._key)}
+                              className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 p-5 border-t border-[var(--border)] bg-[var(--bg-app)]/50 shrink-0">
+                <button type="button" onClick={() => setShowRw(false)} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
+                  Anuluj
+                </button>
+                <button type="submit" className="text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px]" style={{ background: '#991b1b' }}>
+                  <Save className="w-5 h-5" /> Zarejestruj RW
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ═══ SELEKTOR ASORTYMENTU ══════════════════════════════════════════════ */}
       {showSelektor && (
         <AsortymentSelektor
           tryb={selektorTryb}
           typy={selektorTryb === "wz" ? ["Wyrob_Gotowy"] : undefined}
-          hideIlosc={selektorTryb === "wz"}
+          hideIlosc={selektorTryb === "wz" || selektorTryb === "rw"}
           onClose={() => setShowSelektor(false)}
-          onConfirm={selektorTryb === "pz" ? onSelektorPzConfirm : onSelektorWzConfirm}
+          onConfirm={selektorTryb === "pz" ? onSelektorPzConfirm : selektorTryb === "wz" ? onSelektorWzConfirm : onSelektorRwConfirm}
         />
       )}
 
@@ -1299,9 +1513,9 @@ ${(isWZ || isPW) ? `<div class="section-title">Podsumowanie wg towaru</div>
                 const color = typColor[doc.typ] || 'var(--text-muted)';
                 const bg    = typBg[doc.typ]    || 'transparent';
                 const isLoading = actionLoading === doc.referencja;
-                const canApprove = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status === "Bufor";
-                const canDelete  = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status === "Bufor";
-                const canCancel  = (doc.typ === "PZ" || doc.typ === "WZ") && doc.status === "Zatwierdzony";
+                const canApprove = (doc.typ === "PZ" || doc.typ === "WZ" || doc.typ === "RW") && doc.status === "Bufor";
+                const canDelete  = (doc.typ === "PZ" || doc.typ === "WZ" || doc.typ === "RW") && doc.status === "Bufor";
+                const canCancel  = (doc.typ === "PZ" || doc.typ === "WZ" || doc.typ === "RW") && doc.status === "Zatwierdzony";
                 return (
                   <tr key={doc.referencja} onClick={() => openDocPreview(doc.referencja)}
                     style={{ borderBottom: '1px solid var(--border-dim)', cursor: 'pointer', transition: 'background .1s', opacity: doc.status === 'Anulowany' ? 0.55 : 1 }}

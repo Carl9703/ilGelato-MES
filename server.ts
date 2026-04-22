@@ -752,15 +752,19 @@ async function startServer() {
       const { typ: filterTyp } = req.query;
       const dokumentyMap = new Map();
 
-      // PZ/WZ — pobieramy z Dokumenty_Magazynowe (żródło prawdy)
+      // PZ/WZ/RW(nagłówek) — pobieramy z Dokumenty_Magazynowe (żródło prawdy)
       const showPZ = !filterTyp || filterTyp === "all" || filterTyp === "PZ";
       const showWZ = !filterTyp || filterTyp === "all" || filterTyp === "WZ";
+      const showRW = !filterTyp || filterTyp === "all" || filterTyp === "RW";
 
-      if (showPZ || showWZ) {
-        const headerWhere: any = {};
-        if (filterTyp === "PZ") headerWhere.typ = "PZ";
-        else if (filterTyp === "WZ") headerWhere.typ = "WZ";
-        else headerWhere.typ = { in: ["PZ", "WZ"] };
+      let rwDocRefs: string[] = [];
+
+      if (showPZ || showWZ || showRW) {
+        const headerTypList: string[] = [];
+        if (showPZ) headerTypList.push("PZ");
+        if (showWZ) headerTypList.push("WZ");
+        if (showRW) headerTypList.push("RW");
+        const headerWhere: any = { typ: headerTypList.length === 1 ? headerTypList[0] : { in: headerTypList } };
 
         const headers = await prisma.dokumenty_Magazynowe.findMany({
           where: headerWhere,
@@ -805,19 +809,27 @@ async function startServer() {
             }))
           });
         }
+        rwDocRefs = headers.filter(h => h.typ === "RW").map(h => h.referencja);
       }
 
-      // PW/RW — pobieramy z Ruchy_Magazynowe (brak statusów)
+      // PW/RW(ruchy) — pobieramy z Ruchy_Magazynowe (brak statusów, bez pokrytych przez nagłówki)
       const showPW = !filterTyp || filterTyp === "all" || filterTyp === "PW";
-      const showRW = !filterTyp || filterTyp === "all" || filterTyp === "RW";
 
       if (showPW || showRW) {
         const ruchTypy: string[] = [];
         if (showPW) ruchTypy.push("Przyjecie_Z_Produkcji");
         if (showRW) ruchTypy.push("Zuzycie", "Strata");
 
+        const ruchWhere: any = { typ_ruchu: { in: ruchTypy }, czy_aktywne: true };
+        if (showRW && rwDocRefs.length > 0) {
+          ruchWhere.OR = [
+            { referencja_dokumentu: null },
+            { referencja_dokumentu: { notIn: rwDocRefs } },
+          ];
+        }
+
         const ruchy = await prisma.ruchy_Magazynowe.findMany({
-          where: { typ_ruchu: { in: ruchTypy }, czy_aktywne: true },
+          where: ruchWhere,
           include: { partia: { include: { asortyment: true } }, zlecenie: true, uzytkownik: true },
           orderBy: { utworzono_dnia: 'desc' }
         });
@@ -906,8 +918,8 @@ async function startServer() {
           include: { partia: { include: { ruchy_magazynowe: { where: { czy_aktywne: true } } } } }
         });
 
-        if (header.typ === "WZ") {
-          // Sprawdź dostępność dla WZ przed aktywacją
+        if (header.typ === "WZ" || header.typ === "RW") {
+          // Sprawdź dostępność przed aktywacją
           const niedobory: string[] = [];
           for (const ruch of ruchy) {
             const stanAktywny = ruch.partia.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
@@ -1431,6 +1443,72 @@ async function startServer() {
       res.json(result);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Błąd rejestracji dokumentu WZ" });
+    }
+  });
+
+  // --- MAGAZYN: RW (standalone) ---
+  app.post("/api/magazyn/rw", async (req, res) => {
+    try {
+      const { items } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Brak pozycji do rozchodu" });
+      }
+
+      const user = await prisma.uzytkownicy.findFirst();
+      if (!user) throw new Error("Brak użytkownika w systemie");
+
+      const result = await prisma.$transaction(async (tx) => {
+        const finalReferencja = await generateDocNumber(tx, "RW");
+
+        await tx.dokumenty_Magazynowe.create({
+          data: {
+            referencja: finalReferencja,
+            typ: "RW",
+            status: "Bufor",
+            id_uzytkownika_utworzenia: user.id,
+          }
+        });
+
+        const ruchy = [];
+        for (const item of items) {
+          const { id_partii, ilosc } = item;
+          const parsedIlosc = parseFloat(ilosc);
+          if (!id_partii || isNaN(parsedIlosc) || parsedIlosc <= 0) {
+            throw new Error("Nieprawidłowe dane pozycji RW");
+          }
+
+          const partia = await tx.partie_Magazynowe.findUnique({ where: { id: id_partii } });
+          if (!partia) throw new Error(`Partia ${id_partii} nie istnieje`);
+
+          const pzRuchy = await tx.ruchy_Magazynowe.findMany({
+            where: { id_partii, cena_jednostkowa: { not: null }, ilosc: { gt: 0 }, czy_aktywne: true }
+          });
+          let cena_jednostkowa: number | null = null;
+          if (pzRuchy.length > 0) {
+            const totalIlosc = pzRuchy.reduce((s, r) => s + r.ilosc, 0);
+            const totalWartosc = pzRuchy.reduce((s, r) => s + r.ilosc * (r.cena_jednostkowa || 0), 0);
+            if (totalIlosc > 0) cena_jednostkowa = totalWartosc / totalIlosc;
+          }
+
+          const ruch = await tx.ruchy_Magazynowe.create({
+            data: {
+              id_partii,
+              typ_ruchu: "Zuzycie",
+              ilosc: -parsedIlosc,
+              cena_jednostkowa,
+              referencja_dokumentu: finalReferencja,
+              id_uzytkownika: user.id,
+              czy_aktywne: false,
+            },
+          });
+          ruchy.push(ruch);
+        }
+        return { referencja: finalReferencja, ruchy };
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Błąd rejestracji dokumentu RW" });
     }
   });
 

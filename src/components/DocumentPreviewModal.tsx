@@ -67,21 +67,21 @@ export default function DocumentPreviewModal({
             {docData?.status && <StatusBadge status={docData.status} />}
           </div>
           <div className="flex items-center gap-2">
-            {onZatwierdz && docData && (docData.typ === "PZ" || docData.typ === "WZ") && docData.status === "Bufor" && (
+            {onZatwierdz && docData && (docData.typ === "PZ" || docData.typ === "WZ" || docData.typ === "RW") && docData.status === "Bufor" && (
               <button onClick={() => onZatwierdz(docRef)} disabled={actionLoading === docRef}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
                 style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>
                 <CheckCircle className="w-3.5 h-3.5" /> Zatwierdź
               </button>
             )}
-            {onUsun && docData && (docData.typ === "PZ" || docData.typ === "WZ") && docData.status === "Bufor" && (
+            {onUsun && docData && (docData.typ === "PZ" || docData.typ === "WZ" || docData.typ === "RW") && docData.status === "Bufor" && (
               <button onClick={() => onUsun(docRef)} disabled={actionLoading === docRef}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
                 style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
                 <Trash2 className="w-3.5 h-3.5" /> Usuń
               </button>
             )}
-            {onAnuluj && docData && (docData.typ === "PZ" || docData.typ === "WZ") && docData.status === "Zatwierdzony" && (
+            {onAnuluj && docData && (docData.typ === "PZ" || docData.typ === "WZ" || docData.typ === "RW") && docData.status === "Zatwierdzony" && (
               <button onClick={() => onAnuluj(docRef)} disabled={actionLoading === docRef}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-bold btn-hover-effect"
                 style={{ background: 'rgba(249,115,22,0.12)', color: '#f97316', border: '1px solid rgba(249,115,22,0.3)' }}>
