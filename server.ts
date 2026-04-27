@@ -1256,12 +1256,12 @@ async function startServer() {
 
             if (currentOps.length > 0) {
               // Grupujemy pozostałe
-              const grupy: Record<string, { nazwa: string; ilosc_szt: number; waga_orig: number; waga_jednostkowa: number }> = {};
+              const grupy: Record<string, { id_asortymentu: string; nazwa: string; ilosc_szt: number; waga_orig: number; waga_jednostkowa: number }> = {};
               let waga_orig_total = 0;
               for (const o of currentOps) {
                 const nazwaOp = opNazwyMap[o.id_asortymentu] ?? o.id_asortymentu;
                 const k = `${o.id_asortymentu}_${o.waga_kg}`;
-                if (!grupy[k]) grupy[k] = { nazwa: nazwaOp, ilosc_szt: 0, waga_orig: 0, waga_jednostkowa: o.waga_kg };
+                if (!grupy[k]) grupy[k] = { id_asortymentu: o.id_asortymentu, nazwa: nazwaOp, ilosc_szt: 0, waga_orig: 0, waga_jednostkowa: o.waga_kg };
                 grupy[k].ilosc_szt++;
                 grupy[k].waga_orig += o.waga_kg;
                 waga_orig_total += o.waga_kg;
@@ -1272,7 +1272,7 @@ async function startServer() {
               for (const g of Object.values(grupy)) {
                 const udzial = waga_orig_total > 0 ? g.waga_orig / waga_orig_total : 1 / Object.keys(grupy).length;
                 const ilosc_kg = Math.round(stan * udzial * 1000) / 1000;
-                rows.push({ ...base, opakowanie: g.nazwa, waga_jednostkowa: g.waga_jednostkowa, ilosc_szt: g.ilosc_szt, ilosc_kg });
+                rows.push({ ...base, opakowanie: g.nazwa, id_asortymentu_opakowania: g.id_asortymentu, waga_jednostkowa: g.waga_jednostkowa, ilosc_szt: g.ilosc_szt, ilosc_kg });
               }
               continue;
             }
@@ -3591,6 +3591,49 @@ async function startServer() {
         where: { id: req.params.id }
       });
       res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Zmiana typu opakowania dla partii wyrobu gotowego
+  app.patch("/api/partie/:id/zmien-opakowanie", async (req, res) => {
+    try {
+      const { id_asortymentu_stare, waga_kg_stare, id_asortymentu_nowe, waga_kg_nowe, ilosc_szt } = req.body as {
+        id_asortymentu_stare: string;
+        waga_kg_stare: number;
+        id_asortymentu_nowe: string;
+        waga_kg_nowe: number;
+        ilosc_szt: number;
+      };
+
+      if (!id_asortymentu_stare || !id_asortymentu_nowe || !waga_kg_nowe || !ilosc_szt)
+        return res.status(400).json({ error: "Brakujące parametry" });
+
+      const partia = await prisma.partie_Magazynowe.findUnique({ where: { id: req.params.id } });
+      if (!partia) return res.status(404).json({ error: "Partia nie istnieje" });
+
+      const noweOpak = await prisma.asortyment.findUnique({ where: { id: id_asortymentu_nowe }, select: { id: true, nazwa: true } });
+      if (!noweOpak) return res.status(404).json({ error: "Nowe opakowanie nie istnieje" });
+
+      let opList: { id_asortymentu: string; waga_kg: number }[] = [];
+      try { if (partia.opakowania_json) opList = JSON.parse(partia.opakowania_json); } catch {}
+
+      let zmieniono = 0;
+      for (let i = 0; i < opList.length && zmieniono < ilosc_szt; i++) {
+        const op = opList[i];
+        if (op.id_asortymentu === id_asortymentu_stare && Math.abs(op.waga_kg - waga_kg_stare) < 0.001) {
+          opList[i] = { id_asortymentu: id_asortymentu_nowe, waga_kg: waga_kg_nowe };
+          zmieniono++;
+        }
+      }
+
+      if (zmieniono === 0) return res.status(400).json({ error: "Nie znaleziono pasujących opakowań do zmiany" });
+
+      await prisma.partie_Magazynowe.update({
+        where: { id: req.params.id },
+        data: { opakowania_json: JSON.stringify(opList) },
+      });
+
+      res.json({ success: true, zmieniono });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

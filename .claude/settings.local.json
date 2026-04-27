@@ -127,7 +127,20 @@
       "Bash(cat D:/mes/prisma/migrations/*/migration.sql)",
       "Bash(python3 -m json.tool)",
       "Bash(python -c \"import json,sys; items=json.load\\(sys.stdin\\); w=[i for i in items if i.get\\(''''kod_towaru''''\\)==''''WOD001'''']; print\\(json.dumps\\(w, indent=2\\)\\)\")",
-      "Bash(cmd //c \"taskkill /F /IM node.exe\")"
+      "Bash(cmd //c \"taskkill /F /IM node.exe\")",
+      "Bash(git stash:*)",
+      "Bash(ls public/)",
+      "Bash(mkdir -p public)",
+      "Bash(npx tsx *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(ls *)",
+      "Bash(cmd *)",
+      "Bash(echo \"Server PID: $!\")",
+      "Bash(npm run *)",
+      "Bash(echo \"Vite PID: $!\")",
+      "Bash(sed -n '155,175p' prisma/schema.prisma)",
+      "Bash(sed -n '270,285p' prisma/schema.prisma)",
+      "PowerShell(Stop-Process *)"
     ]
   },
   "hooks": {

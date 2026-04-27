@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, FileText, ChevronDown, ChevronUp, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, FileText, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard } from "lucide-react";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 import { fmtL, fmtDate } from "../utils/fmt";
@@ -586,6 +586,8 @@ export default function Produkcja() {
   const wizTotalBazaUsed = wizWyroby.reduce((sum, w) => {
     return sum + getBazaUsageForWyrob(w.id_receptury, getIloscWyrobu(w));
   }, 0);
+  const wizTotalWyroby = wizWyroby.reduce((sum, w) => sum + getIloscWyrobu(w), 0);
+  const wizTotalDodatki = Math.max(0, wizTotalWyroby - wizTotalBazaUsed);
   const wizBazaAvail = parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", ".")) || 0;
   const wizBazaOk = !wizBazaAvail || wizTotalBazaUsed <= wizBazaAvail + 0.001;
 
@@ -2005,6 +2007,13 @@ export default function Produkcja() {
                         <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Dostępne </span><strong className="text-white font-mono">{fmtL(wizBazaAvail, 3)} {bazaRec?.asortyment_docelowy.jednostka_miary}</strong></span>
                         <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Użyte </span><strong className="font-mono" style={{ color: wizBazaOk ? 'var(--ok)' : 'var(--danger)' }}>{fmtL(wizTotalBazaUsed, 3)}</strong></span>
                         <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Pozostaje </span><strong className="font-mono text-white">{fmtL(Math.max(0, wizBazaAvail - wizTotalBazaUsed), 3)}</strong></span>
+                        {wizWyroby.length > 0 && (
+                          <>
+                            <span className="text-slate-600 mx-1 select-none">|</span>
+                            <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Dodatki </span><strong className="font-mono text-white">{fmtL(wizTotalDodatki, 3)} {bazaRec?.asortyment_docelowy.jednostka_miary}</strong></span>
+                            <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Łącznie wyrobów </span><strong className="font-mono text-white">{fmtL(wizTotalWyroby, 3)} {bazaRec?.asortyment_docelowy.jednostka_miary}</strong></span>
+                          </>
+                        )}
                         {!wizBazaOk && <AlertTriangle className="w-4 h-4 text-red-400 ml-auto" />}
                       </div>
                     )}
@@ -2751,19 +2760,36 @@ ${surowcePrint.length > 0 ? `<div class="section-title">Zużyte surowce (cała s
               </div>
 
               {/* Tab bar */}
-              <div className="flex items-end px-5 shrink-0 border-b border-[var(--border)]" style={{ background: 'var(--bg-surface)' }}>
-                {viewSesjaData.baza && (
-                  <button onClick={() => setSesjaTab("baza")} className={tabCls("baza")}>
-                    <span className="text-[10px] font-black text-blue-400 mr-1.5">E1</span>Baza
-                  </button>
-                )}
-                {viewSesjaData.wyroby.map(w => (
-                  <button key={w.id} onClick={() => setSesjaTab(w.id)} className={tabCls(w.id)}>
-                    <span className="text-[10px] font-black text-emerald-400 mr-1.5">E2</span>{w.receptura?.asortyment_docelowy?.nazwa}
-                  </button>
-                ))}
-                <div className="flex-1" />
-                <button onClick={() => setSesjaTab("podsumowanie")} className={tabCls("podsumowanie")}>
+              <div className="flex items-stretch shrink-0 border-b border-[var(--border)]" style={{ background: 'var(--bg-surface)' }}>
+                {/* scroll left */}
+                <button
+                  onClick={() => { const el = (document.getElementById('sesja-tabs-scroll') as HTMLElement); if (el) el.scrollBy({ left: -160, behavior: 'smooth' }); }}
+                  className="px-2 text-[var(--text-muted)] hover:text-white hover:bg-[var(--bg-hover)] transition-colors shrink-0 border-r border-[var(--border)]"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                {/* scrollable tabs */}
+                <div id="sesja-tabs-scroll" className="flex items-end overflow-x-auto flex-1" style={{ scrollbarWidth: 'none' }}>
+                  {viewSesjaData.baza && (
+                    <button onClick={() => setSesjaTab("baza")} className={tabCls("baza")}>
+                      <span className="text-[10px] font-black text-blue-400 mr-1.5">E1</span>Baza
+                    </button>
+                  )}
+                  {viewSesjaData.wyroby.map(w => (
+                    <button key={w.id} onClick={() => setSesjaTab(w.id)} className={tabCls(w.id)}>
+                      <span className="text-[10px] font-black text-emerald-400 mr-1.5">E2</span>{w.receptura?.asortyment_docelowy?.nazwa}
+                    </button>
+                  ))}
+                </div>
+                {/* scroll right */}
+                <button
+                  onClick={() => { const el = (document.getElementById('sesja-tabs-scroll') as HTMLElement); if (el) el.scrollBy({ left: 160, behavior: 'smooth' }); }}
+                  className="px-2 text-[var(--text-muted)] hover:text-white hover:bg-[var(--bg-hover)] transition-colors shrink-0 border-l border-r border-[var(--border)]"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                {/* fixed summary tab */}
+                <button onClick={() => setSesjaTab("podsumowanie")} className={tabCls("podsumowanie") + " shrink-0"}>
                   Podsumowanie
                 </button>
               </div>
@@ -2994,6 +3020,22 @@ ${surowcePrint.length > 0 ? `<div class="section-title">Zużyte surowce (cała s
                   });
                   const surowceSesji = [...surowceMap.values()].sort((a, b) => b.ilosc - a.ilosc);
 
+                  // Bilans bazy E1→E2 (tylko sesje lodowe)
+                  const e1Zp = viewSesjaData.baza;
+                  const bazaNazwa = e1Zp?.receptura?.asortyment_docelowy?.nazwa;
+                  const bazaJm = e1Zp?.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                  const bazaWyprodukowana = e1Zp?.rzeczywista_ilosc_wyrobu || 0;
+                  const bazaZuzytaWE2 = bazaNazwa ? (surowceMap.get(bazaNazwa)?.ilosc || 0) : 0;
+                  const bazaPozostala = bazaWyprodukowana - bazaZuzytaWE2;
+                  // Faktyczne zużycie dodatków = ruchy Zuzycie z E2 z wył. bazy
+                  const dodatkiFaktyczne = viewSesjaData.zlecenia
+                    .filter(z => z.etap === 2)
+                    .reduce((sum, z) => sum + (z.ruchy_magazynowe || [])
+                      .filter(r => r.typ_ruchu === "Zuzycie" && r.partia?.asortyment?.nazwa !== bazaNazwa)
+                      .reduce((s, r) => s + Math.abs(r.ilosc), 0), 0);
+                  const wejscieE2 = bazaZuzytaWE2 + dodatkiFaktyczne;
+                  const stratyProdukcji = Math.max(0, wejscieE2 - totalWyk);
+
                   // Agregat opakowań ze wszystkich wyrobów
                   const opMap = new Map<string, { nazwa: string; waga_kg: number; count: number }>();
                   viewSesjaData.wyroby.forEach(w => {
@@ -3039,6 +3081,47 @@ ${surowcePrint.length > 0 ? `<div class="section-title">Zużyte surowce (cała s
                           <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{surowceSesji.length} surowców</div>
                         </div>
                       </div>
+
+                      {/* ── Bilans bazy ── */}
+                      {e1Zp && (
+                        <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] px-5 py-4">
+                          <h3 className="text-xs font-black uppercase tracking-widest text-[var(--text-secondary)] mb-3 flex items-center gap-2">
+                            <Layers className="w-4 h-4 text-purple-400" /> Bilans bazy E1 → E2
+                          </h3>
+                          <div className="flex flex-wrap gap-x-8 gap-y-4">
+                            {/* ── Wejście ── */}
+                            <div>
+                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Baza wyprod. (E1)</div>
+                              <div className="mono font-bold text-white text-xl">{fmtL(bazaWyprodukowana, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Baza zużyta w E2</div>
+                              <div className="mono font-bold text-blue-400 text-xl">{fmtL(bazaZuzytaWE2, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
+                              {bazaPozostala > 0.005 && <div className="text-[10px] mt-0.5" style={{ color: 'var(--warn)' }}>pozostało {fmtL(bazaPozostala, 3)} {bazaJm}</div>}
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Dodatki zużyte (E2)</div>
+                              <div className="mono font-bold text-purple-400 text-xl">{fmtL(dodatkiFaktyczne, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Razem wejście E2</div>
+                              <div className="mono font-bold text-white text-xl">{fmtL(wejscieE2, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
+                            </div>
+                            {/* ── separator ── */}
+                            <div className="border-l border-[var(--border)] pl-8">
+                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Wyjście (wyk.)</div>
+                              <div className="mono font-bold text-emerald-400 text-xl">{fmtL(totalWyk, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Straty produkcji</div>
+                              <div className={`mono font-bold text-xl ${stratyProdukcji > 0.5 ? "text-red-400" : "text-slate-500"}`}>
+                                {fmtL(stratyProdukcji, 3)} <span className="text-xs opacity-50">{bazaJm}</span>
+                              </div>
+                              {wejscieE2 > 0 && <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{fmtL(stratyProdukcji / wejscieE2 * 100, 1)}% wejścia</div>}
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* ── wyroby gotowe ── */}
                       <div>

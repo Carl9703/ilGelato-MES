@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Package, RefreshCw, Search } from "lucide-react";
+import { Package, RefreshCw, Search, Pencil, X, Check } from "lucide-react";
 import { fmtDate } from "../utils/fmt";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
@@ -11,12 +11,22 @@ type Row = {
   nazwa: string;
   jednostka_miary: string;
   opakowanie: string | null;
+  id_asortymentu_opakowania: string | null;
   waga_jednostkowa: number | null;
   ilosc_szt: number | null;
   ilosc_kg: number;
   data_produkcji: string | null;
   termin_waznosci: string | null;
   status_partii: string;
+};
+
+type OpakowanieLista = { id: string; nazwa: string; };
+
+type ChangeModal = {
+  row: Row;
+  noweId: string;
+  saving: boolean;
+  error: string;
 };
 
 export default function WyrobyGotowe() {
@@ -27,6 +37,8 @@ export default function WyrobyGotowe() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
   const [error, setError] = useState("");
+  const [opakowanieLista, setOpakowanieLista] = useState<OpakowanieLista[]>([]);
+  const [changeModal, setChangeModal] = useState<ChangeModal | null>(null);
 
   const fetchStan = async () => {
     setLoading(true);
@@ -43,6 +55,44 @@ export default function WyrobyGotowe() {
   };
 
   useEffect(() => { fetchStan(); }, []);
+
+  useEffect(() => {
+    fetch("/api/opakowania-asortyment")
+      .then(r => r.json())
+      .then(setOpakowanieLista)
+      .catch(() => {});
+  }, []);
+
+  const openChange = (row: Row) => {
+    setChangeModal({ row, noweId: "", saving: false, error: "" });
+  };
+
+  const saveChange = async () => {
+    if (!changeModal) return;
+    const { row, noweId } = changeModal;
+    if (!noweId) { setChangeModal(m => m && ({ ...m, error: "Wybierz nowe opakowanie" })); return; }
+
+    setChangeModal(m => m && ({ ...m, saving: true, error: "" }));
+    try {
+      const res = await fetch(`/api/partie/${row.id_partii}/zmien-opakowanie`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id_asortymentu_stare: row.id_asortymentu_opakowania,
+          waga_kg_stare: row.waga_jednostkowa,
+          id_asortymentu_nowe: noweId,
+          waga_kg_nowe: row.waga_jednostkowa,
+          ilosc_szt: row.ilosc_szt,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Błąd zapisu");
+      setChangeModal(null);
+      fetchStan();
+    } catch (e: any) {
+      setChangeModal(m => m && ({ ...m, saving: false, error: e.message }));
+    }
+  };
 
   const q = search.toLowerCase();
   const filtered = sortBy<Row>(
@@ -144,6 +194,7 @@ export default function WyrobyGotowe() {
                 <SortableTh label="Ilość kg"  field="ilosc_kg"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right px-4 py-3 font-medium" style={{ color: "var(--text-muted)" }} />
                 <SortableTh label="Partia"    field="numer_partii"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
                 <SortableTh label="Termin"    field="termin_waznosci"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -165,12 +216,84 @@ export default function WyrobyGotowe() {
                   <td className="px-4 py-2.5 text-sm" style={{ color: row.termin_waznosci ? "var(--text-secondary)" : "var(--text-muted)" }}>
                     {fmtDate(row.termin_waznosci)}
                   </td>
+                  <td className="px-2 py-2.5 text-center">
+                    {row.id_asortymentu_opakowania && row.ilosc_szt != null && (
+                      <button
+                        onClick={() => openChange(row)}
+                        title="Zmień opakowanie"
+                        className="p-1.5 rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+
+      {/* Modal zmiany opakowania */}
+      {changeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => !changeModal.saving && setChangeModal(null)}>
+          <div className="w-full max-w-sm rounded-2xl p-6 space-y-5 shadow-2xl" style={{ background: "var(--bg-panel)", border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-white text-base">Zmień opakowanie</h2>
+              <button onClick={() => !changeModal.saving && setChangeModal(null)} className="text-[var(--text-muted)] hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Bieżące */}
+            <div className="rounded-lg p-3 space-y-1" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+              <div className="text-[10px] font-black uppercase text-[var(--text-muted)]">Aktualne opakowanie</div>
+              <div className="font-medium text-white">{changeModal.row.opakowanie}</div>
+              <div className="text-xs text-[var(--text-muted)]">{changeModal.row.waga_jednostkowa?.toFixed(2)} kg/szt · {changeModal.row.ilosc_szt} szt. w partii</div>
+            </div>
+
+            {/* Nowe opakowanie */}
+            <div>
+              <label className="block text-xs font-black uppercase text-[var(--text-muted)] mb-1.5">Nowe opakowanie</label>
+              <select
+                value={changeModal.noweId}
+                onChange={e => setChangeModal(m => m && ({ ...m, noweId: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none"
+                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+              >
+                <option value="">— wybierz —</option>
+                {opakowanieLista.map(op => (
+                  <option key={op.id} value={op.id}>{op.nazwa}</option>
+                ))}
+              </select>
+            </div>
+
+            {changeModal.error && (
+              <p className="text-sm" style={{ color: "var(--warn)" }}>{changeModal.error}</p>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setChangeModal(null)}
+                disabled={changeModal.saving}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{ background: "var(--bg-surface)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={saveChange}
+                disabled={changeModal.saving}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors"
+                style={{ background: "var(--accent)", color: "#fff" }}
+              >
+                <Check className="w-4 h-4" />
+                {changeModal.saving ? "Zapisuję…" : "Zmień"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
