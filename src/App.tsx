@@ -29,10 +29,11 @@ function useTheme() {
 }
 
 function useAuth() {
-  const [auth, setAuth] = useState<{ token: string; login: string } | null>(() => {
+  const [auth, setAuth] = useState<{ token: string; login: string; baza: "prod" | "test" } | null>(() => {
     const token = localStorage.getItem('mes-token');
     const login = localStorage.getItem('mes-login');
-    return token && login ? { token, login } : null;
+    const baza = (localStorage.getItem('mes-baza') as "prod" | "test") || "prod";
+    return token && login ? { token, login, baza } : null;
   });
   const [sprawdzanie, setSprawdzanie] = useState(true);
 
@@ -45,20 +46,23 @@ function useAuth() {
       .catch(() => {
         localStorage.removeItem('mes-token');
         localStorage.removeItem('mes-login');
+        localStorage.removeItem('mes-baza');
         setAuth(null);
       })
       .finally(() => setSprawdzanie(false));
   }, []);
 
-  function login(token: string, login: string) {
+  function login(token: string, login: string, baza: "prod" | "test") {
     localStorage.setItem('mes-token', token);
     localStorage.setItem('mes-login', login);
-    setAuth({ token, login });
+    localStorage.setItem('mes-baza', baza);
+    setAuth({ token, login, baza });
   }
 
   function logout() {
     localStorage.removeItem('mes-token');
     localStorage.removeItem('mes-login');
+    localStorage.removeItem('mes-baza');
     setAuth(null);
   }
 
@@ -78,7 +82,7 @@ const navItems = [
   { to: "/raporty",       icon: BarChart2,         label: "Raporty",      testId: "nav-raporty"        },
 ];
 
-function MainLayout({ children, userLogin, onLogout }: { children: React.ReactNode; userLogin: string; onLogout: () => void }) {
+function MainLayout({ children, userLogin, baza, onLogout }: { children: React.ReactNode; userLogin: string; baza: "prod" | "test"; onLogout: () => void }) {
   const location = useLocation();
   const { theme, toggle } = useTheme();
   const isSettings = location.pathname.startsWith("/ustawienia");
@@ -181,7 +185,24 @@ function MainLayout({ children, userLogin, onLogout }: { children: React.ReactNo
             </div>
             {/* Użytkownik + wylogowanie */}
             <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
-              <span className="font-medium truncate" style={{ color: 'var(--text-secondary)' }}>{userLogin}</span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    letterSpacing: '0.06em',
+                    padding: '1px 5px',
+                    borderRadius: '4px',
+                    flexShrink: 0,
+                    background: baza === 'prod' ? 'rgba(34,197,94,0.15)' : 'rgba(251,146,60,0.15)',
+                    color: baza === 'prod' ? '#22c55e' : '#fb923c',
+                    border: `1px solid ${baza === 'prod' ? 'rgba(34,197,94,0.3)' : 'rgba(251,146,60,0.3)'}`,
+                  }}
+                >
+                  {baza === 'prod' ? 'PROD' : 'TEST'}
+                </span>
+                <span className="font-medium truncate" style={{ color: 'var(--text-secondary)' }}>{userLogin}</span>
+              </div>
               <button
                 onClick={onLogout}
                 title="Wyloguj"
@@ -235,7 +256,7 @@ function AppInner() {
   return (
     <Routes>
       <Route path="/*" element={
-        <MainLayout userLogin={auth.login} onLogout={logout}>
+        <MainLayout userLogin={auth.login} baza={auth.baza} onLogout={logout}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />

@@ -16,13 +16,18 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetch("/api/dashboard").then(r => r.json()).then(setData).finally(() => setLoading(false));
+    fetch("/api/dashboard")
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(setData)
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <Spinner.Page />;
   if (!data) return null;
 
-  const hasAlerts = data.alerty_waznosc.length > 0;
+  const alerty = data.alerty_waznosc ?? [];
+  const hasAlerts = alerty.length > 0;
 
   return (
     <div className="h-full flex flex-col gap-3 animate-view">
@@ -104,7 +109,7 @@ export default function Dashboard() {
             Centrum alertów
           </div>
           {hasAlerts && (
-            <span className="badge badge-danger">{data.alerty_waznosc.length} aktywne</span>
+            <span className="badge badge-danger">{alerty.length} aktywne</span>
           )}
         </div>
 
@@ -120,7 +125,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {data.alerty_waznosc.map((a, i) => (
+              {alerty.map((a, i) => (
                 <tr key={i}>
                   <td className="font-medium text-white">{a.asortyment}</td>
                   <td className="mono" style={{ color: 'var(--text-code)' }}>{a.numer_partii}</td>

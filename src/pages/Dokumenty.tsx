@@ -9,6 +9,7 @@ import DocumentPreviewModal from "../components/DocumentPreviewModal";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 import { fmtL } from "../utils/fmt";
+import { printDocument } from "../utils/printDoc";
 import ConfirmModal from "../components/ConfirmModal";
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
@@ -59,8 +60,11 @@ type WzRow = {
   id_asortymentu: string;
   nazwa: string;
   jednostka_miary: string;
+  typ_asortymentu: string;
   id_partii: string;
   ilosc: string;
+  cena_brutto: string;
+  stawka_vat: string;
   sztuki: Record<string, number>; // nazwa_opakowania -> szt
   dostepnePartie: PartiaDostepna[];
   loadingPartie: boolean;
@@ -122,8 +126,11 @@ export default function Dokumenty() {
 
   // Modals
   const [showPz, setShowPz] = useState(false);
+  const [pzSaving, setPzSaving] = useState(false);
   const [showWz, setShowWz] = useState(false);
+  const [wzSaving, setWzSaving] = useState(false);
   const [showRw, setShowRw] = useState(false);
+  const [rwSaving, setRwSaving] = useState(false);
   const [showSelektor, setShowSelektor] = useState(false);
   const [selektorTryb, setSelektorTryb] = useState<"pz" | "wz" | "rw">("pz");
 
@@ -330,12 +337,11 @@ export default function Dokumenty() {
     });
   };
 
-  const handleCreatePz = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleCreatePz = async (autoZatwierdz: boolean) => {
     if (pzRows.length === 0) { showToast("Dodaj co najmniej jedną pozycję do dokumentu.", "error"); return; }
     const missing = pzRows.find(r => !r.numer_partii.trim() || !r.ilosc);
     if (missing) { showToast(`Pozycja "${missing.nazwa}" wymaga numeru partii i ilości.`, "error"); return; }
+    setPzSaving(true);
     try {
       const pozycje = pzRows.map(r => ({
         id_asortymentu: r.id_asortymentu,
@@ -351,11 +357,18 @@ export default function Dokumenty() {
         body: JSON.stringify({ pozycje, referencja_zewnetrzna: pzReferencja || undefined }),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+      const data = await res.json();
+      if (autoZatwierdz) {
+        const res2 = await fetch(`/api/dokumenty/${encodeURIComponent(data.referencja)}/zatwierdz`, { method: "POST" });
+        if (!res2.ok) throw new Error((await res2.json()).error || "Błąd zatwierdzenia");
+        showToast("Dokument PZ zatwierdzony. Stany magazynowe zaktualizowane.", "ok");
+      } else {
+        showToast("Dokument PZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
+      }
       setShowPz(false);
-      showToast("Dokument PZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
-      
     } catch (err: any) { showToast(err.message, "error"); }
+    finally { setPzSaving(false); }
   };
 
   // ─── Otwieranie WZ ─────────────────────────────────────────────────────────
@@ -384,20 +397,24 @@ export default function Dokumenty() {
       id_asortymentu: w.id_asortymentu,
       nazwa: w.nazwa,
       jednostka_miary: w.jednostka_miary,
+      typ_asortymentu: "",
       id_partii: "",
       ilosc: w.ilosc || "",
+      cena_brutto: "",
+      stawka_vat: "",
       sztuki: {},
       dostepnePartie: [],
       loadingPartie: true,
     }));
     setWzRows(prev => [...prev, ...newRows]);
 
-    // Pobierz dostępne partie dla każdego asortymentu
+    // Pobierz dostępne partie + dane cenowe dla każdego asortymentu
     for (const row of newRows) {
       try {
         const res = await fetch(`/api/asortyment/${row.id_asortymentu}`);
         if (res.ok) {
           const detail = await res.json();
+          const og = detail.ogolne || {};
           const partie: PartiaDostepna[] = (detail.zasoby || [])
             .filter((z: any) => z.dostepne > 0)
             .map((z: any) => ({
@@ -409,7 +426,20 @@ export default function Dokumenty() {
               opakowania: z.opakowania || null,
             }));
           setWzRows(prev => prev.map(r =>
-            r._key === row._key ? { ...r, dostepnePartie: partie, loadingPartie: false } : r
+            r._key === row._key ? {
+              ...r,
+              typ_asortymentu: og.typ_asortymentu || "",
+              cena_brutto: (() => {
+                const netto = og.cena_sprzedazy != null ? parseFloat(og.cena_sprzedazy) : null;
+                const vat = og.stawka_vat != null ? parseFloat(og.stawka_vat) : null;
+                if (netto == null) return "";
+                const brutto = vat != null ? netto * (1 + vat / 100) : netto;
+                return brutto.toFixed(2);
+              })(),
+              stawka_vat: og.stawka_vat != null ? String(og.stawka_vat) : "",
+              dostepnePartie: partie,
+              loadingPartie: false,
+            } : r
           ));
         }
       } catch {
@@ -440,13 +470,16 @@ export default function Dokumenty() {
     setWzRows(prev => prev.filter(r => r._key !== key));
   };
 
-  const handleCreateWz = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleCreateWz = async (autoZatwierdz: boolean) => {
     if (wzRows.length === 0) { showToast("Dodaj co najmniej jedną pozycję.", "error"); return; }
-    const missing = wzRows.find(r => !r.id_partii || !r.ilosc);
-    if (missing) { showToast(`Pozycja "${missing.nazwa}" wymaga wybrania partii i podania ilości.`, "error"); return; }
     if (!wzKontrahentId) { showToast("Wybierz kontrahenta (odbiorcę).", "error"); return; }
+    const missing = wzRows.find(r => !r.id_partii || !r.ilosc);
+    if (missing) { showToast(`Pozycja „${missing.nazwa}" wymaga wybrania partii i podania ilości.`, "error"); return; }
+    const missingCena = wzRows.find(r => !r.cena_brutto || parseFloat(r.cena_brutto) <= 0);
+    if (missingCena) { showToast(`Pozycja „${missingCena.nazwa}" wymaga podania ceny brutto.`, "error"); return; }
+    const missingVat = wzRows.find(r => r.stawka_vat === "");
+    if (missingVat) { showToast(`Pozycja „${missingVat.nazwa}" wymaga podania stawki VAT (wpisz 0 jeśli zwolniona).`, "error"); return; }
+    setWzSaving(true);
     try {
       const items = wzRows.map(r => {
         const partia = r.dostepnePartie.find(p => p.id === r.id_partii);
@@ -461,7 +494,17 @@ export default function Dokumenty() {
           const szt = r.sztuki[`${op.id_asortymentu}_${op.waga_kg}`] || 0;
           if (szt > 0) sztukiLabels[`${op.nazwa} (${op.waga_kg} kg)`] = szt;
         });
-        return { id_partii: r.id_partii, ilosc: parseFloat(r.ilosc), sztuki: sztukiLabels };
+        const brutto = parseFloat(r.cena_brutto) || null;
+        const vat = r.stawka_vat !== "" ? parseFloat(r.stawka_vat) : null;
+        const netto = brutto != null && vat != null ? brutto / (1 + vat / 100) : null;
+        return {
+          id_partii: r.id_partii,
+          ilosc: parseFloat(r.ilosc),
+          sztuki: sztukiLabels,
+          cena_brutto: brutto,
+          stawka_vat: vat,
+          cena_netto: netto != null ? Math.round(netto * 10000) / 10000 : null,
+        };
       });
       const res = await fetch("/api/magazyn/wz", {
         method: "POST",
@@ -469,11 +512,21 @@ export default function Dokumenty() {
         body: JSON.stringify({ items, referencja_zewnetrzna: wzReferencja || undefined, id_kontrahenta: wzKontrahentId }),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+      const data = await res.json();
+      if (autoZatwierdz) {
+        const res2 = await fetch(`/api/dokumenty/${encodeURIComponent(data.referencja)}/zatwierdz`, { method: "POST" });
+        if (!res2.ok) throw new Error((await res2.json()).error || "Błąd zatwierdzenia");
+        showToast("Dokument WZ zatwierdzony. Stany magazynowe zaktualizowane.", "ok");
+      } else {
+        showToast("Dokument WZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
+      }
       setShowWz(false);
-      showToast("Dokument WZ zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
-      
-    } catch (err: any) { showToast(err.message, "error"); }
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setWzSaving(false);
+    }
   };
 
   // ─── Otwieranie RW ─────────────────────────────────────────────────────────
@@ -535,11 +588,11 @@ export default function Dokumenty() {
     setRwRows(prev => prev.filter(r => r._key !== key));
   };
 
-  const handleCreateRw = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateRw = async (autoZatwierdz: boolean) => {
     if (rwRows.length === 0) { showToast("Dodaj co najmniej jedną pozycję.", "error"); return; }
     const missing = rwRows.find(r => !r.id_partii || !r.ilosc);
     if (missing) { showToast(`Pozycja "${missing.nazwa}" wymaga wybrania partii i podania ilości.`, "error"); return; }
+    setRwSaving(true);
     try {
       const items = rwRows.map(r => ({ id_partii: r.id_partii, ilosc: parseFloat(r.ilosc) }));
       const res = await fetch("/api/magazyn/rw", {
@@ -548,10 +601,18 @@ export default function Dokumenty() {
         body: JSON.stringify({ items }),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+      const data = await res.json();
+      if (autoZatwierdz) {
+        const res2 = await fetch(`/api/dokumenty/${encodeURIComponent(data.referencja)}/zatwierdz`, { method: "POST" });
+        if (!res2.ok) throw new Error((await res2.json()).error || "Błąd zatwierdzenia");
+        showToast("Dokument RW zatwierdzony. Stany magazynowe zaktualizowane.", "ok");
+      } else {
+        showToast("Dokument RW zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
+      }
       setShowRw(false);
-      showToast("Dokument RW zapisany w buforze. Zatwierdź go aby zaktualizować stany magazynowe.", "ok");
       fetchDokumenty();
     } catch (err: any) { showToast(err.message, "error"); }
+    finally { setRwSaving(false); }
   };
 
   // ─── Etykiety ──────────────────────────────────────────────────────────────
@@ -602,205 +663,15 @@ export default function Dokumenty() {
   };
 
   const handlePrintDoc = async (doc: Dokument) => {
-    const win = window.open("", "_blank", "width=860,height=700");
-    if (!win) return;
-
-    // Dla WZ i PW pobieramy pełne dane z podglądu (opakowania, wyrob, ilosc_kg)
-    let pozycje: any[] = doc.pozycje;
-    if (doc.typ === "WZ" || doc.typ === "PW") {
-      try {
-        const res = await fetch(`/api/dokumenty/podglad/${encodeURIComponent(doc.referencja)}`);
-        if (res.ok) {
-          const full = await res.json();
-          pozycje = full.pozycje || doc.pozycje;
-        }
-      } catch { /* fallback do lokalnych danych */ }
-    }
-
-    const isWZ = doc.typ === "WZ";
-    const isPW = doc.typ === "PW";
-    const hasOpakowania = (isWZ || isPW) && pozycje.some((p: any) => p.wyrob);
-
-    // ── Pozycje ──
-    const pozycjeHTML = pozycje.map((p: any, i: number) => {
-      if (hasOpakowania) {
-        const iloscKg = p.ilosc_kg != null ? `<span style="display:block;font-size:10px;color:#64748b;font-family:monospace">${fmtL(p.ilosc_kg, 3)} kg</span>` : "";
-        return `<tr>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${i + 1}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb">
-            <div style="font-weight:700">${p.wyrob || p.asortyment}</div>
-            ${p.wyrob ? `<div style="font-size:11px;color:#64748b;margin-top:1px">${p.asortyment}</div>` : ""}
-          </td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px">${p.numer_partii}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${fmt(p.data_produkcji)}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${fmt(p.termin_waznosci)}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">
-            ${fmtL(p.ilosc, p.jednostka === "szt." ? 0 : 3)}&nbsp;${p.jednostka}
-            ${iloscKg}
-          </td>
-        </tr>`;
+    try {
+      const res = await fetch(`/api/dokumenty/podglad/${encodeURIComponent(doc.referencja)}`);
+      if (res.ok) {
+        printDocument(await res.json());
+        return;
       }
-      return `<tr>
-        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${i + 1}</td>
-        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px">${p.kod_towaru}</td>
-        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${p.asortyment}</td>
-        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.numer_partii}</td>
-        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${fmt(p.data_produkcji)}</td>
-        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${fmt(p.termin_waznosci)}</td>
-        <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${fmtL(p.ilosc, 3)}&nbsp;${p.jednostka}</td>
-      </tr>`;
-    }).join("");
-
-    // ── Nagłówek tabeli pozycji ──
-    const theadHTML = hasOpakowania
-      ? `<thead><tr>
-          <th style="width:32px;text-align:center">Lp.</th>
-          <th>Wyrób / Opakowanie</th>
-          <th>Nr partii / LOT</th>
-          <th style="text-align:center">Data prod.</th>
-          <th style="text-align:center">Ważność</th>
-          <th class="r">Ilość</th>
-        </tr></thead>`
-      : `<thead><tr>
-          <th style="width:32px;text-align:center">Lp.</th>
-          <th>Kod towaru</th>
-          <th>Towar</th>
-          <th>Nr partii / LOT</th>
-          <th style="text-align:center">Data prod.</th>
-          <th style="text-align:center">Ważność</th>
-          <th class="r">Ilość</th>
-        </tr></thead>`;
-
-    // ── Podsumowanie ──
-    let podsumowanieHTML = "";
-    let lacWagaRow = "";
-    if (hasOpakowania) {
-      // grupuj po wyrobie (produkcie), sumuj kg
-      const sumaWyrob = new Map<string, { szt: number; kg: number }>();
-      for (const p of pozycje as any[]) {
-        const key = p.wyrob || p.asortyment;
-        if (!sumaWyrob.has(key)) sumaWyrob.set(key, { szt: 0, kg: 0 });
-        const e = sumaWyrob.get(key)!;
-        if (p.jednostka === "szt.") e.szt += p.ilosc;
-        e.kg += p.ilosc_kg != null ? parseFloat(p.ilosc_kg) : (p.jednostka === "kg" ? p.ilosc : 0);
-      }
-      const totalKg = [...sumaWyrob.values()].reduce((s, e) => s + e.kg, 0);
-      const totalSzt = [...sumaWyrob.values()].reduce((s, e) => s + e.szt, 0);
-      podsumowanieHTML = [...sumaWyrob.entries()].map(([nazwa, e]) =>
-        `<tr>
-          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${nazwa}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${e.szt > 0 ? `${e.szt} szt.` : "—"}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(e.kg, 3)} kg</td>
-        </tr>`
-      ).join("");
-      lacWagaRow = `<tr style="background:#f8fafc;border-top:2px solid #1e293b">
-        <td style="padding:8px;font-weight:900">ŁĄCZNIE</td>
-        <td style="padding:8px;text-align:right;font-family:monospace;font-weight:700">${totalSzt > 0 ? `${totalSzt} szt.` : "—"}</td>
-        <td style="padding:8px;text-align:right;font-weight:900;font-size:15px;font-family:monospace">${fmtL(totalKg, 3)}&nbsp;kg</td>
-      </tr>`;
-    } else {
-      const sumaMap = new Map<string, { nazwa: string; partie: number; iloscPerJm: Map<string, number> }>();
-      for (const p of pozycje as any[]) {
-        const key = p.kod_towaru;
-        if (!sumaMap.has(key)) sumaMap.set(key, { nazwa: p.asortyment, partie: 0, iloscPerJm: new Map() });
-        const e = sumaMap.get(key)!;
-        e.partie++;
-        e.iloscPerJm.set(p.jednostka, (e.iloscPerJm.get(p.jednostka) ?? 0) + p.ilosc);
-      }
-      podsumowanieHTML = [...sumaMap.values()].map(e =>
-        [...e.iloscPerJm.entries()].map(([jm, il]) =>
-          `<tr>
-            <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${e.nazwa}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${e.partie}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${fmtL(il, 3)}&nbsp;${jm}</td>
-          </tr>`
-        ).join("")
-      ).join("");
-      const lacWagaKg = (pozycje as any[]).filter(p => p.jednostka === "kg").reduce((s, p) => s + p.ilosc, 0);
-      lacWagaRow = lacWagaKg > 0
-        ? `<tr style="background:#f8fafc"><td colspan="2" style="padding:8px;font-weight:700;text-align:right">Łączna waga:</td><td style="padding:8px;text-align:right;font-weight:900;font-size:15px">${fmtL(lacWagaKg, 3)}&nbsp;kg</td></tr>`
-        : "";
-    }
-
-    const podsumowanieThead = hasOpakowania
-      ? `<thead><tr><th>Towar</th><th class="r">Ilość (szt.)</th><th class="r">Masa (kg)</th></tr></thead>`
-      : `<thead><tr><th>Towar</th><th style="text-align:center">Liczba partii</th><th class="r">Łączna ilość</th></tr></thead>`;
-
-    // ── Reszta metadanych ──
-    const kontrahentHTML = doc.typ === "WZ" ? (doc.kontrahent
-      ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Odbiorca</span><div style="font-size:15px;font-weight:700;margin-top:2px">${doc.kontrahent.nazwa}</div><div style="font-family:monospace;font-size:12px;color:#64748b">${doc.kontrahent.kod}</div></div>`
-      : `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Odbiorca</span><div style="color:#94a3b8;font-style:italic;margin-top:2px">—</div></div>`) : "";
-
-    const zlecHTML = doc.numer_zlecenia
-      ? `<div style="margin-top:10px;font-size:12px;color:#64748b">Powiązane zlecenie: <strong style="font-family:monospace;color:#1e293b">${doc.numer_zlecenia}</strong></div>`
-      : "";
-
-    const statusColor = doc.status === "Zatwierdzony" ? "#15803d" : doc.status === "Anulowany" ? "#dc2626" : "#d97706";
-    const statusBg   = doc.status === "Zatwierdzony" ? "#dcfce7"  : doc.status === "Anulowany" ? "#fee2e2"  : "#fef9c3";
-
-    const docTypeLabel: Record<string, string> = { PZ: "PRZYJĘCIE ZEWNĘTRZNE", PW: "PRZYJĘCIE WEWNĘTRZNE", WZ: "WYDANIE ZEWNĘTRZNE", RW: "ROZCHÓD WEWNĘTRZNY" };
-
-    win.document.write(`<!DOCTYPE html><html><head><title>${doc.referencja}</title>
-<style>
-  *{box-sizing:border-box}
-  html,body{height:100%}
-  body{font-family:Inter,system-ui,sans-serif;padding:36px 44px;color:#1e293b;max-width:860px;margin:0 auto;font-size:13px;display:flex;flex-direction:column;min-height:100vh}
-  h1{font-size:22px;font-weight:800;margin:0 0 2px;letter-spacing:-.3px}
-  .sub{font-size:12px;color:#64748b;margin-bottom:20px}
-  .header-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:16px 0;border-top:2px solid #0f172a;border-bottom:1px solid #e2e8f0;margin-bottom:20px}
-  table{width:100%;border-collapse:collapse}
-  th{text-align:left;padding:8px;border-bottom:2px solid #1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;white-space:nowrap}
-  th.r{text-align:right} td.r{text-align:right}
-  .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:24px 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
-  .signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;padding-top:20px;border-top:1px solid #e2e8f0}
-  .sig-box{font-size:12px;color:#64748b}
-  .sig-line{border-bottom:1px solid #94a3b8;height:32px;margin-top:8px}
-  .badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700}
-  .bottom{margin-top:auto;padding-top:32px}
-  .footer{margin-top:16px;padding-top:8px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;text-align:right}
-  @media print{html,body{height:auto}body{padding:16px 20px;min-height:unset}.bottom{position:fixed;bottom:12mm;left:12mm;right:12mm}@page{size:A4;margin:12mm}}
-</style>
-</head><body>
-<h1>${docTypeLabel[doc.typ] ?? doc.typ} &nbsp;<span class="badge" style="background:${statusBg};color:${statusColor}">${doc.status.toUpperCase()}</span></h1>
-<div class="sub">ilGelato MES · Magazyn główny</div>
-
-<div class="header-grid">
-  <div>
-    <div style="margin-bottom:10px">
-      <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Numer dokumentu</span>
-      <div style="font-size:18px;font-weight:900;font-family:monospace;margin-top:2px">${doc.referencja}</div>
-    </div>
-    <div style="font-size:12px;color:#475569"><strong>Data wystawienia:</strong> ${fmtFull(doc.data)}</div>
-    <div style="font-size:12px;color:#475569"><strong>Wystawił:</strong> ${doc.uzytkownik}</div>
-    ${zlecHTML}
-  </div>
-  ${kontrahentHTML}
-</div>
-
-<div class="section-title">Pozycje dokumentu</div>
-<table>${theadHTML}<tbody>${pozycjeHTML}</tbody></table>
-
-${(isWZ || isPW) ? `<div class="section-title">Podsumowanie wg towaru</div>
-<table>${podsumowanieThead}<tbody>${podsumowanieHTML}${lacWagaRow}</tbody></table>` : ""}
-
-<div class="bottom">
-  <div class="signatures">
-    <div class="sig-box">
-      <div>Wystawił: <strong>${doc.uzytkownik}</strong></div>
-      <div class="sig-line"></div>
-      <div style="margin-top:4px">Data: ${new Date(doc.data).toLocaleDateString("pl-PL")} &nbsp;&nbsp; Podpis i pieczątka</div>
-    </div>
-    <div class="sig-box">
-      <div>Odebrał: ${doc.kontrahent ? `<strong>${doc.kontrahent.nazwa}</strong>` : "............................................"}</div>
-      <div class="sig-line"></div>
-      <div style="margin-top:4px">Data: ................ &nbsp;&nbsp; Podpis i pieczątka</div>
-    </div>
-  </div>
-  <div class="footer">Wygenerowano przez ilGelato MES · ${new Date().toLocaleString("pl-PL")}</div>
-</div>
-</body></html>`);
-    win.document.close();
-    win.print();
+    } catch { /* fallback */ }
+    // fallback: dane bez szczegółów opakowania
+    printDocument(doc);
   };
 
   const handlePrintAllLabels = async (referencja: string) => {
@@ -948,235 +819,419 @@ ${(isWZ || isPW) ? `<div class="section-title">Podsumowanie wg towaru</div>
 
       {/* ═══ MODAL PZ ══════════════════════════════════════════════════════════ */}
       {showPz && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
-          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm pl-16 lg:pl-60 pt-2.5 pb-2.5 pr-2.5">
+          <div className="flex h-full border-l border-r border-b rounded-b-xl overflow-hidden shadow-2xl"
+               style={{ background: 'var(--bg-panel)', borderColor: 'var(--border)' }}>
 
-            {/* Nagłówek */}
-            <div className="flex justify-between items-center p-5 border-b border-[var(--border)] bg-emerald-900/20 shrink-0">
-              <h3 className="text-lg font-bold text-emerald-400 flex items-center gap-2">
-                <PackageOpen className="w-5 h-5" /> Nowy dokument PZ — Przyjęcie zewnętrzne
-              </h3>
-              <button onClick={() => { setShowPz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            {/* ── PRAWY PANEL META ── */}
+            <div className="w-72 shrink-0 flex flex-col border-l"
+                 style={{ order: 2, borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
 
-            <form onSubmit={handleCreatePz} className="flex flex-col flex-1 overflow-hidden">
-              <div className="overflow-y-auto flex-1 p-5 space-y-5">
-                {/* Referencja zewnętrzna */}
-                <div className="bg-[var(--bg-app)] p-4 rounded-xl border border-[var(--border)]">
-                  <label className="block text-slate-400 text-xs font-bold uppercase mb-2">Numer zewnętrzny (f-ra / WZ dostawcy) — opcjonalnie</label>
-                  <input
-                    type="text" value={pzReferencja} onChange={e => setPzReferencja(e.target.value)}
-                    placeholder="np. FV/2026/03/001 lub WZ-DOST-123"
-                    className="w-full md:w-1/2 bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-emerald-500 font-mono"
-                  />
+              {/* Nagłówek */}
+              <div className="px-5 pt-5 pb-4 border-b shrink-0"
+                   style={{ borderColor: 'var(--border)', background: 'linear-gradient(to bottom, rgba(22,163,74,0.12) 0%, transparent 100%)' }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                         style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)' }}>
+                      <PackageOpen className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(74,222,128,0.6)' }}>Nowy dokument</div>
+                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>PZ</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setShowPz(false)}
+                    className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)] mt-0.5 shrink-0"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
+                <p className="text-[11px] font-mono mt-3" style={{ color: 'var(--text-muted)' }}>
+                  Przyjęcie Zewnętrzne · {new Date().toLocaleDateString('pl-PL')}
+                </p>
+              </div>
 
-                {/* Pozycje */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-white font-bold text-sm uppercase tracking-wide">
-                      Pozycje dokumentu
-                      {pzRows.length > 0 && <span className="ml-2 px-2 py-0.5 bg-emerald-600/20 text-emerald-400 rounded-full text-xs">{pzRows.length}</span>}
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={openPzSelektor}
-                      className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl font-semibold text-sm transition-colors min-h-[44px]"
-                    >
-                      <Plus className="w-4 h-4" /> Dodaj pozycję
+              {/* Pola */}
+              <div className="p-4 space-y-4 flex-1 overflow-y-auto">
+                <div>
+                  <label className="block text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                    Nr zewnętrzny — opcjonalnie
+                  </label>
+                  <input type="text" value={pzReferencja} onChange={e => setPzReferencja(e.target.value)}
+                    placeholder="np. FV/2026/03/001"
+                    className="mes-input text-sm font-mono" />
+                  <p className="text-[10px] mt-1.5" style={{ color: 'var(--text-muted)' }}>Nr faktury lub WZ dostawcy</p>
+                </div>
+                {nextPzNumber && (
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Kolejny nr dokumentu</div>
+                    <div className="font-mono text-sm font-bold" style={{ color: '#4ade80' }}>{nextPzNumber}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Stopka */}
+              {(() => {
+                const iloscTotal = pzRows.reduce((s, r) => s + (parseFloat(r.ilosc) || 0), 0);
+                return (
+                  <div className="p-4 border-t space-y-2 shrink-0" style={{ borderColor: 'var(--border)' }}>
+                    {pzRows.length > 0 && (
+                      <div className="text-xs font-mono mb-3 flex items-center justify-between">
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          <span className="font-bold" style={{ color: 'var(--text-primary)' }}>{pzRows.length}</span> poz.
+                        </span>
+                        {iloscTotal > 0 && (
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            <span className="font-bold" style={{ color: '#4ade80' }}>{fmtL(iloscTotal, 3)}</span> jedn.
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <button type="button" onClick={() => handleCreatePz(true)} disabled={pzSaving}
+                      className="btn w-full justify-center font-bold text-sm"
+                      style={{ background: '#16a34a', borderColor: '#16a34a', color: 'white' }}>
+                      {pzSaving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                      Zatwierdź
+                    </button>
+                    <button type="button" onClick={() => handleCreatePz(false)} disabled={pzSaving}
+                      className="btn btn-ghost w-full justify-center"
+                      style={{ border: '1px solid var(--border)' }}>
+                      {pzSaving ? <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
+                      Bufor
+                    </button>
+                    <button type="button" onClick={() => setShowPz(false)} disabled={pzSaving}
+                      className="btn btn-ghost w-full justify-center">
+                      Anuluj
                     </button>
                   </div>
+                );
+              })()}
+            </div>
 
-                  {pzRows.length === 0 ? (
-                    <div
-                      onClick={openPzSelektor}
-                      className="border-2 border-dashed border-[var(--border)] hover:border-emerald-500/50 rounded-xl p-8 text-center cursor-pointer transition-colors group"
-                    >
-                      <PackageOpen className="w-8 h-8 text-slate-600 group-hover:text-emerald-500/50 mx-auto mb-2 transition-colors" />
-                      <p className="text-slate-500 group-hover:text-slate-400 font-semibold text-sm">Kliknij aby wybrać towary z asortymentu</p>
+            {/* ── PRAWY PANEL (pozycje) ── */}
+            <div className="flex-1 flex flex-col min-w-0">
+              <div className="px-5 py-3 border-b shrink-0 flex items-center justify-between"
+                   style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                  <PackageOpen className="w-3.5 h-3.5 text-emerald-400" />
+                  Pozycje dokumentu
+                  {pzRows.length > 0 && (
+                    <span className="ml-1 px-2 py-0.5 rounded font-mono font-bold text-[10px]"
+                          style={{ background: 'rgba(22,163,74,0.08)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.2)' }}>
+                      {pzRows.length}
+                    </span>
+                  )}
+                </div>
+                <button type="button" onClick={openPzSelektor}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm text-white"
+                  style={{ background: '#16a34a' }}>
+                  <Plus className="w-4 h-4" /> Dodaj pozycję
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto">
+                {pzRows.length === 0 ? (
+                  <div onClick={openPzSelektor}
+                    className="h-full flex flex-col items-center justify-center gap-4 cursor-pointer group"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                         style={{ background: 'rgba(22,163,74,0.06)', border: '2px dashed rgba(34,197,94,0.2)' }}>
+                      <PackageOpen className="w-7 h-7 group-hover:text-emerald-400 transition-colors" style={{ color: 'rgba(34,197,94,0.4)' }} />
                     </div>
-                  ) : (
-                    <div className="rounded-xl overflow-hidden border border-[var(--border)]">
-                      {/* Nagłówek tabeli */}
-                      <div className="grid bg-[var(--bg-app)] border-b border-[var(--border)] text-[10px] font-bold uppercase tracking-widest text-slate-500"
-                        style={{ gridTemplateColumns: '28px 1fr 200px 100px 110px 120px 32px', padding: '6px 8px', gap: 6 }}>
-                        <div>#</div>
-                        <div>Towar</div>
-                        <div>Nr partii *</div>
-                        <div className="text-right">Ilość *</div>
-                        <div>Termin ważności</div>
-                        <div />
-                      </div>
-
-                      {/* Wiersze */}
-                      {pzRows.map((row, idx) => (
-                        <div key={row._key}
-                          className="grid items-center border-b border-[var(--border-dim)] last:border-b-0 hover:bg-[var(--bg-hover)]/40 transition-colors"
-                          style={{ gridTemplateColumns: '28px 1fr 200px 100px 120px 32px', padding: '4px 8px', gap: 6 }}>
-
-                          {/* # */}
-                          <div className="text-[11px] font-mono font-bold text-slate-500 text-center">{idx + 1}</div>
-
-                          {/* Nazwa */}
-                          <div className="min-w-0">
-                            <div className="text-white text-[12px] font-semibold truncate">{row.nazwa}</div>
-                            <div className="text-slate-500 text-[10px] font-mono">{row.jednostka_miary}</div>
-                          </div>
-
-                          {/* Nr partii */}
-                          <input
-                            type="text"
-                            value={row.numer_partii}
-                            onChange={e => updatePzRow(row._key, "numer_partii", e.target.value)}
-                            placeholder="auto"
-                            className="w-full text-[11px] font-mono outline-none rounded px-2 py-1.5 transition-colors"
-                            style={{
-                              background: 'var(--bg-input)',
-                              border: `1px solid ${row._autoPartia ? 'rgba(34,197,94,.4)' : 'var(--border)'}`,
-                              color: row._autoPartia ? '#86efac' : 'var(--text-primary)',
-                            }}
-                          />
-
-                          {/* Ilość */}
-                          <input
-                            type="number" step="0.001" min="0"
-                            value={row.ilosc}
-                            onChange={e => updatePzRow(row._key, "ilosc", e.target.value)}
-                            placeholder="0"
-                            className="w-full text-[12px] font-mono font-bold text-right outline-none rounded px-2 py-1.5"
-                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: '#4ade80' }}
-                          />
-
-                          {/* Termin ważności */}
-                          <input
-                            type="date"
-                            value={row.termin_waznosci}
-                            onChange={e => updatePzRow(row._key, "termin_waznosci", e.target.value)}
-                            className="w-full text-[11px] outline-none rounded px-2 py-1.5"
-                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-secondary)', colorScheme: 'dark' }}
-                          />
-
-                          {/* Usuń */}
-                          <button
-                            type="button"
-                            onClick={() => removePzRow(row._key)}
-                            className="flex items-center justify-center w-6 h-6 rounded text-red-400 hover:bg-red-500/10 transition-colors"
-                          >
+                    <div className="text-center">
+                      <p className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>Brak pozycji do przyjęcia</p>
+                      <p className="text-xs mt-1">Kliknij aby wybrać towary z asortymentu</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-5 space-y-2">
+                    {pzRows.map(row => (
+                      <div key={row._key} className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl overflow-hidden">
+                        {/* Nagłówek karty */}
+                        <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                          <PackageOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <span className="text-sm font-semibold text-white flex-1 truncate">{row.nazwa}</span>
+                          <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>{row.jednostka_miary}</span>
+                          <button type="button" onClick={() => removePzRow(row._key)} className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors shrink-0">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
 
-              {/* Footer formularza */}
-              {(() => {
-                const iloscTotal = pzRows.reduce((sum, r) => sum + (parseFloat(r.ilosc) || 0), 0);
-                return (
-              <div className="flex justify-between items-center gap-3 p-4 border-t border-[var(--border)] bg-[var(--bg-app)]/50 shrink-0">
-                <div className="flex items-center gap-4 text-xs font-mono">
-                  {pzRows.length > 0 && (
-                    <>
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        <span className="font-bold text-white">{pzRows.length}</span> poz.
-                      </span>
-                      {iloscTotal > 0 && (
-                        <span style={{ color: 'var(--text-muted)' }}>
-                          łącznie <span className="font-bold text-white">{fmtL(iloscTotal, 3)}</span> jedn.
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-                <div className="flex gap-3">
-                  <button type="button" onClick={() => { setShowPz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
-                    Anuluj
-                  </button>
-                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors min-h-[44px]">
-                    <Save className="w-5 h-5" /> Zarejestruj PZ
-                  </button>
-                </div>
+                        {/* Pola */}
+                        <div className="p-3">
+                          <div className="grid gap-1.5" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
+
+                            {/* Nr partii */}
+                            <div>
+                              <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>
+                                Nr partii <span className="text-red-400">*</span>
+                              </label>
+                              <input type="text" value={row.numer_partii}
+                                onChange={e => updatePzRow(row._key, "numer_partii", e.target.value)}
+                                placeholder="auto"
+                                className="w-full rounded px-2 py-1 text-[11px] font-mono outline-none"
+                                style={{ background: 'var(--bg-input)', border: `1px solid ${row._autoPartia ? 'rgba(34,197,94,.4)' : 'var(--border)'}`, color: row._autoPartia ? '#86efac' : 'var(--text-primary)' }}
+                              />
+                            </div>
+
+                            {/* Ilość */}
+                            <div>
+                              <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>
+                                Ilość <span className="text-red-400">*</span>
+                              </label>
+                              <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
+                                <input type="number" step="0.001" min="0" value={row.ilosc}
+                                  onChange={e => updatePzRow(row._key, "ilosc", e.target.value)}
+                                  placeholder="0"
+                                  className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono font-bold bg-transparent outline-none text-right"
+                                  style={{ color: '#4ade80' }}
+                                />
+                                <span className="px-1 text-[9px] font-semibold border-l shrink-0" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>{row.jednostka_miary}</span>
+                              </div>
+                            </div>
+
+                            {/* Cena jedn. */}
+                            <div>
+                              <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena jedn.</label>
+                              <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
+                                <input type="number" step="0.01" min="0" value={row.cena_jednostkowa}
+                                  onChange={e => updatePzRow(row._key, "cena_jednostkowa", e.target.value)}
+                                  placeholder="—"
+                                  className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
+                                  style={{ color: 'var(--text-primary)' }}
+                                />
+                                <span className="px-1 text-[9px] font-semibold border-l shrink-0" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>zł</span>
+                              </div>
+                            </div>
+
+                            {/* Data produkcji */}
+                            <div>
+                              <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Data prod.</label>
+                              <input type="date" value={row.data_produkcji}
+                                onChange={e => updatePzRow(row._key, "data_produkcji", e.target.value)}
+                                className="w-full rounded px-2 py-1 text-[11px] outline-none"
+                                style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-secondary)', colorScheme: 'dark' }}
+                              />
+                            </div>
+
+                            {/* Termin ważności */}
+                            <div>
+                              <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Termin ważn.</label>
+                              <input type="date" value={row.termin_waznosci}
+                                onChange={e => updatePzRow(row._key, "termin_waznosci", e.target.value)}
+                                className="w-full rounded px-2 py-1 text-[11px] outline-none"
+                                style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-secondary)', colorScheme: 'dark' }}
+                              />
+                            </div>
+
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-                );
-              })()}
-            </form>
+            </div>
+
           </div>
         </div>
       )}
 
       {/* ═══ MODAL WZ ══════════════════════════════════════════════════════════ */}
       {showWz && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
-          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm pl-16 lg:pl-60 pt-2.5 pb-2.5 pr-2.5">
+          <form onSubmit={e => e.preventDefault()}
+            className="flex h-full border-l border-r border-b rounded-b-xl overflow-hidden shadow-2xl"
+            style={{ background: 'var(--bg-panel)', borderColor: 'var(--border)' }}>
 
-            <div className="flex justify-between items-center p-5 border-b border-[var(--border)] bg-orange-900/20 shrink-0">
-              <h3 className="text-lg font-bold text-orange-400 flex items-center gap-2">
-                <ArrowRightCircle className="w-5 h-5" /> Nowy dokument WZ — Wydanie zewnętrzne
-              </h3>
-              <button onClick={() => { setShowWz(false);  }} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            {/* ── PRAWY PANEL META ── */}
+            <div className="w-72 shrink-0 flex flex-col border-l"
+                 style={{ order: 2, borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
 
-            <form onSubmit={handleCreateWz} className="flex flex-col flex-1 overflow-hidden">
-              <div className="overflow-y-auto flex-1 p-5 space-y-5">
-                <div className="bg-[var(--bg-app)] p-4 rounded-xl border border-[var(--border)] grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-slate-400 text-xs font-bold uppercase mb-2">
-                      Kontrahent (odbiorca) <span className="text-red-400">*</span>
-                    </label>
-                    <select
-                      required
-                      value={wzKontrahentId}
-                      onChange={e => setWzKontrahentId(e.target.value)}
-                      className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 text-sm"
-                    >
-                      <option value="">-- wybierz kontrahenta --</option>
-                      {kontrahenci.map(k => (
-                        <option key={k.id} value={k.id}>{k.kod} — {k.nazwa}</option>
-                      ))}
-                    </select>
+              {/* Nagłówek */}
+              <div className="px-5 pt-5 pb-4 border-b shrink-0"
+                   style={{ borderColor: 'var(--border)', background: 'linear-gradient(to bottom, rgba(194,65,12,0.12) 0%, transparent 100%)' }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                         style={{ background: 'rgba(234,88,12,0.15)', border: '1px solid rgba(234,88,12,0.3)' }}>
+                      <ArrowRightCircle className="w-5 h-5 text-orange-400" />
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(251,146,60,0.6)' }}>Nowy dokument</div>
+                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>WZ</div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-slate-400 text-xs font-bold uppercase mb-2">Numer zewnętrzny — opcjonalnie</label>
-                    <input
-                      type="text" value={wzReferencja} onChange={e => setWzReferencja(e.target.value)}
-                      placeholder="np. ZAM-2026/03/001"
-                      className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-3 outline-none focus:border-orange-500 font-mono"
-                    />
-                  </div>
+                  <button type="button" onClick={() => setShowWz(false)}
+                    className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)] mt-0.5 shrink-0"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[11px] font-mono mt-3" style={{ color: 'var(--text-muted)' }}>
+                  Wydanie Zewnętrzne · {new Date().toLocaleDateString('pl-PL')}
+                </p>
+              </div>
+
+              {/* Pola formularza */}
+              <div className="p-4 space-y-4 flex-1 overflow-y-auto">
+                <div>
+                  <label className="block text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                    Kontrahent (odbiorca) <span className="text-red-400">*</span>
+                  </label>
+                  <select required value={wzKontrahentId} onChange={e => setWzKontrahentId(e.target.value)}
+                    className="mes-input text-sm">
+                    <option value="">— wybierz kontrahenta —</option>
+                    {kontrahenci.map(k => <option key={k.id} value={k.id}>{k.kod} — {k.nazwa}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                    Nr zewnętrzny — opcjonalnie
+                  </label>
+                  <input type="text" value={wzReferencja} onChange={e => setWzReferencja(e.target.value)}
+                    placeholder="np. ZAM-2026/03/001"
+                    className="mes-input text-sm font-mono" />
                 </div>
 
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-white font-bold text-sm uppercase">
-                      Pozycje do wydania
-                      {wzRows.length > 0 && <span className="ml-2 px-2 py-0.5 bg-orange-600/20 text-orange-400 rounded-full text-xs">{wzRows.length}</span>}
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={openWzSelektor}
-                      className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2.5 rounded-xl font-semibold text-sm transition-colors min-h-[44px]"
-                    >
-                      <Plus className="w-4 h-4" /> Dodaj pozycję
+                {/* Rozliczenie VAT — pojawia się gdy są pozycje z ceną */}
+                {(() => {
+                  const wyrobyRows = wzRows.filter(r => r.typ_asortymentu === "Wyrob_Gotowy" && parseFloat(r.cena_brutto) > 0 && r.stawka_vat !== "");
+                  if (wyrobyRows.length === 0) return null;
+                  let totalNetto = 0, totalVat = 0, totalBrutto = 0;
+                  const vatGroups: Record<string, { netto: number; vat: number; brutto: number }> = {};
+                  for (const r of wyrobyRows) {
+                    const brutto = parseFloat(r.cena_brutto) || 0;
+                    const vat = parseFloat(r.stawka_vat) || 0;
+                    const netto = brutto / (1 + vat / 100);
+                    const ilosc = parseFloat(r.ilosc) || 0;
+                    const rNetto = netto * ilosc;
+                    const rBrutto = brutto * ilosc;
+                    const rVat = rBrutto - rNetto;
+                    totalNetto += rNetto; totalVat += rVat; totalBrutto += rBrutto;
+                    const key = String(vat);
+                    if (!vatGroups[key]) vatGroups[key] = { netto: 0, vat: 0, brutto: 0 };
+                    vatGroups[key].netto += rNetto;
+                    vatGroups[key].vat += rVat;
+                    vatGroups[key].brutto += rBrutto;
+                  }
+                  const groups = Object.entries(vatGroups).sort(([a], [b]) => parseFloat(a) - parseFloat(b));
+                  return (
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Rozliczenie VAT</div>
+                      <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr style={{ background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)' }}>
+                              {['Stawka', 'Netto', 'VAT', 'Brutto'].map(h => (
+                                <th key={h} className="px-3 py-1.5 text-right font-semibold first:text-left" style={{ color: 'var(--text-muted)', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {groups.map(([rate, g]) => (
+                              <tr key={rate} style={{ borderBottom: '1px solid var(--border-dim)', background: 'var(--bg-app)' }}>
+                                <td className="px-3 py-1.5 font-bold font-mono" style={{ color: 'var(--text-secondary)' }}>{rate}%</td>
+                                <td className="px-3 py-1.5 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{g.netto.toFixed(2)}</td>
+                                <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{ color: 'var(--warn)' }}>{g.vat.toFixed(2)}</td>
+                                <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{ color: '#fb923c' }}>{g.brutto.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                            {groups.length > 1 && (
+                              <tr style={{ background: 'rgba(249,115,22,0.06)', borderTop: '2px solid rgba(249,115,22,0.3)' }}>
+                                <td className="px-3 py-2 font-bold" style={{ color: 'var(--text-primary)' }}>ŁĄCZNIE</td>
+                                <td className="px-3 py-2 text-right font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{totalNetto.toFixed(2)}</td>
+                                <td className="px-3 py-2 text-right font-mono font-bold" style={{ color: 'var(--warn)' }}>{totalVat.toFixed(2)}</td>
+                                <td className="px-3 py-2 text-right font-mono font-bold" style={{ color: '#fb923c' }}>{totalBrutto.toFixed(2)}</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Stopka lewego panelu — przyciski */}
+              {(() => {
+                const totalBrutto = wzRows.reduce((sum, r) => {
+                  const b = parseFloat(r.cena_brutto) || 0;
+                  const il = parseFloat(r.ilosc) || 0;
+                  return sum + b * il;
+                }, 0);
+                return (
+                  <div className="p-4 border-t space-y-2 shrink-0" style={{ borderColor: 'var(--border)' }}>
+                    {wzRows.length > 0 && (
+                      <div className="text-xs font-mono mb-3 flex items-center justify-between">
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          <span className="font-bold" style={{ color: 'var(--text-primary)' }}>{wzRows.length}</span> poz.
+                        </span>
+                        {totalBrutto > 0 && (
+                          <span className="font-bold" style={{ color: '#fb923c' }}>{totalBrutto.toFixed(2)} zł</span>
+                        )}
+                      </div>
+                    )}
+                    <button type="button" onClick={() => handleCreateWz(true)} disabled={wzSaving}
+                      className="btn w-full justify-center font-bold text-sm"
+                      style={{ background: '#ea580c', borderColor: '#ea580c', color: 'white' }}>
+                      {wzSaving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                      Zatwierdź
+                    </button>
+                    <button type="button" onClick={() => handleCreateWz(false)} disabled={wzSaving}
+                      className="btn btn-ghost w-full justify-center"
+                      style={{ border: '1px solid var(--border)' }}>
+                      {wzSaving ? <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
+                      Bufor
+                    </button>
+                    <button type="button" onClick={() => setShowWz(false)} disabled={wzSaving}
+                      className="btn btn-ghost w-full justify-center">
+                      Anuluj
                     </button>
                   </div>
+                );
+              })()}
+            </div>
 
-                  {wzRows.length === 0 ? (
-                    <div
-                      onClick={openWzSelektor}
-                      className="border-2 border-dashed border-[var(--border)] hover:border-orange-500/50 rounded-2xl p-10 text-center cursor-pointer transition-colors group"
-                    >
-                      <ArrowRightCircle className="w-10 h-10 text-slate-600 group-hover:text-orange-500/50 mx-auto mb-3 transition-colors" />
-                      <p className="text-slate-500 group-hover:text-slate-400 font-semibold">Kliknij aby wybrać towary do wydania</p>
-                      <p className="text-slate-600 text-sm mt-1">Tylko towary z dostępnym stanem na magazynie</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
+            {/* ── PRAWY PANEL (pozycje) ── */}
+            <div className="flex-1 flex flex-col min-w-0">
+              <div className="px-5 py-3 border-b shrink-0 flex items-center justify-between"
+                   style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                  <ArrowRightCircle className="w-3.5 h-3.5 text-orange-400" />
+                  Pozycje dokumentu
+                  {wzRows.length > 0 && (
+                    <span className="ml-1 px-2 py-0.5 rounded font-mono font-bold text-[10px]"
+                          style={{ background: 'rgba(234,88,12,0.08)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.2)' }}>
+                      {wzRows.length}
+                    </span>
+                  )}
+                </div>
+                <button type="button" onClick={openWzSelektor}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm text-white"
+                  style={{ background: '#ea580c' }}>
+                  <Plus className="w-4 h-4" /> Dodaj pozycję
+                </button>
+              </div>
+
+              {/* Ciało — scrollowalne */}
+              <div className="flex-1 overflow-y-auto">
+              {wzRows.length === 0 ? (
+                <div onClick={openWzSelektor}
+                  className="h-full flex flex-col items-center justify-center gap-4 cursor-pointer group"
+                  style={{ color: 'var(--text-muted)' }}>
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                       style={{ background: 'rgba(234,88,12,0.06)', border: '2px dashed rgba(234,88,12,0.2)' }}>
+                    <ArrowRightCircle className="w-7 h-7 group-hover:text-orange-400 transition-colors" style={{ color: 'rgba(234,88,12,0.4)' }} />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>Brak pozycji do wydania</p>
+                    <p className="text-xs mt-1">Kliknij aby wybrać towary z asortymentu</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-5 space-y-2">
                       {wzRows.map(row => {
                         const selectedPartia = row.dostepnePartie.find(p => p.id === row.id_partii);
                         const groupedOpakowania = (selectedPartia?.opakowania || []).reduce((acc: any, op) => {
@@ -1186,223 +1241,352 @@ ${(isWZ || isPW) ? `<div class="section-title">Podsumowanie wg towaru</div>
                           return acc;
                         }, {});
                         const typy_opakowan: any[] = Object.values(groupedOpakowania).sort((a: any, b: any) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg);
+                        const isWyrob = row.typ_asortymentu === "Wyrob_Gotowy";
+                        const brutto = parseFloat(row.cena_brutto) || 0;
+                        const vat = row.stawka_vat !== "" ? parseFloat(row.stawka_vat) : null;
+                        const netto = brutto > 0 && vat != null ? brutto / (1 + vat / 100) : null;
+                        const kwotaVat = netto != null ? brutto - netto : null;
+                        const ilosc = parseFloat(row.ilosc) || 0;
+
                         return (
-                          <div key={row._key} className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl p-4">
-                            <div className="flex items-start gap-3">
-                              <div className="w-7 h-7 bg-orange-600/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-                                <ArrowRightCircle className="w-4 h-4 text-orange-400" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-white font-semibold text-sm mb-3">{row.nazwa}</div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                  {/* Wybór partii */}
-                                  <div>
-                                    <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">
-                                      Partia do wydania <span className="text-red-400">*</span>
-                                    </label>
-                                    {row.loadingPartie ? (
-                                      <div className="flex items-center gap-2 text-slate-500 py-2">
-                                        <div className="w-4 h-4 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
-                                        <span className="text-xs">Ładowanie partii...</span>
-                                      </div>
-                                    ) : row.dostepnePartie.length === 0 ? (
-                                      <div className="text-red-400 text-xs py-2">Brak dostępnych partii na magazynie</div>
-                                    ) : (
-                                      <select
-                                        required
-                                        value={row.id_partii}
-                                        onChange={e => updateWzRow(row._key, "id_partii", e.target.value)}
-                                        className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-orange-500 text-sm font-mono"
-                                      >
-                                        <option value="">-- wybierz partię --</option>
-                                        {row.dostepnePartie.map(p => (
-                                          <option key={p.id} value={p.id}>
-                                            {p.numer_partii} · dostępne: {fmtL(p.stan, 2)} {row.jednostka_miary}
-                                            {p.termin_waznosci ? ` · ww: ${fmt(p.termin_waznosci)}` : ""}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    )}
-                                  </div>
-                                  {/* Opakowania */}
-                                  <div>
-                                    {selectedPartia?.opakowania?.length ? (
-                                      <>
-                                        <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">Opakowania</label>
-                                        <div className="space-y-1.5">
-                                          {typy_opakowan.map((op, i) => {
-                                            const dostepneSzt = op.count;
-                                            const opKey = `${op.id_asortymentu}_${op.waga_kg}`;
-                                            return (
-                                              <div key={i} className="flex items-center gap-3 bg-[var(--bg-surface)] rounded-lg px-3 py-1.5">
-                                                <div className="flex-1 min-w-0">
-                                                  <span className="text-sm text-white font-medium">{op.nazwa}</span>
-                                                  <span className="font-mono text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{op.waga_kg} kg/szt.</span>
-                                                  <div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>dost. {dostepneSzt} szt.</div>
-                                                </div>
-                                                <input
-                                                  type="number" min="0" max={dostepneSzt} step="1"
-                                                  value={row.sztuki[opKey] ?? ""}
-                                                  placeholder="0"
-                                                  className="w-16 bg-[var(--bg-app)] border border-[#475569] text-white rounded-lg px-2 py-1.5 font-mono font-bold text-sm outline-none focus:border-orange-500 text-right shrink-0"
-                                                  onChange={e => updateWzSztuki(row._key, opKey, parseFloat(e.target.value) || 0, selectedPartia!.opakowania!)}
-                                                />
-                                                <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>szt.</span>
-                                              </div>
-                                            );
-                                          })}
-                                          <div className="text-xs pt-1 flex justify-between px-1" style={{ color: 'var(--text-muted)' }}>
-                                            <span>Łącznie: <span className="text-white font-mono font-bold">{fmtL(parseFloat(row.ilosc) || 0, 3)} {row.jednostka_miary}</span></span>
-                                            <span>stan: <span className="text-emerald-400 font-mono font-bold">{fmtL(selectedPartia.stan, 3)}</span></span>
-                                          </div>
-                                        </div>
-                                      </>
-                                    ) : selectedPartia ? (
-                                      <div className="text-slate-500 text-xs pt-5">Brak zdefiniowanych opakowań</div>
-                                    ) : null}
-                                  </div>
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => removeWzRow(row._key)}
-                                className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0"
-                              >
-                                <Trash2 className="w-4 h-4" />
+                          <div key={row._key} className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl overflow-hidden">
+                            {/* Nagłówek wiersza */}
+                            <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                              <ArrowRightCircle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                              <span className="text-sm font-semibold text-white flex-1 truncate">{row.nazwa}</span>
+                              <button type="button" onClick={() => removeWzRow(row._key)} className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors shrink-0">
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
 
-              <div className="flex justify-end gap-3 p-5 border-t border-[var(--border)] bg-[var(--bg-app)]/50 shrink-0">
-                <button type="button" onClick={() => { setShowWz(false);  }} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
-                  Anuluj
-                </button>
-                <button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px]">
-                  <Save className="w-5 h-5" /> Zarejestruj WZ
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+                            {/* Główna siatka pól */}
+                            <div className="p-3">
+                              <div className="grid gap-1.5 grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr]">
 
-      {/* ═══ MODAL RW ══════════════════════════════════════════════════════════ */}
-      {showRw && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
-          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col overflow-hidden" style={{ height: '80vh', marginTop: '10vh' }}>
-
-            <div className="flex justify-between items-center p-5 border-b border-[var(--border)] bg-red-900/20 shrink-0">
-              <h3 className="text-lg font-bold text-red-400 flex items-center gap-2">
-                <MinusCircle className="w-5 h-5" /> Nowy dokument RW — Rozchód wewnętrzny
-              </h3>
-              <button onClick={() => setShowRw(false)} className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateRw} className="flex flex-col flex-1 overflow-hidden">
-              <div className="overflow-y-auto flex-1 p-5 space-y-5">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-white font-bold text-sm uppercase">
-                      Pozycje do rozchodu
-                      {rwRows.length > 0 && <span className="ml-2 px-2 py-0.5 bg-red-600/20 text-red-400 rounded-full text-xs">{rwRows.length}</span>}
-                    </h4>
-                    <button type="button" onClick={openRwSelektor}
-                      className="flex items-center gap-2 text-white px-4 py-2.5 rounded-xl font-semibold text-sm transition-colors min-h-[44px]"
-                      style={{ background: '#991b1b' }}>
-                      <Plus className="w-4 h-4" /> Dodaj pozycję
-                    </button>
-                  </div>
-
-                  {rwRows.length === 0 ? (
-                    <div onClick={openRwSelektor}
-                      className="border-2 border-dashed border-[var(--border)] hover:border-red-500/50 rounded-2xl p-10 text-center cursor-pointer transition-colors group">
-                      <MinusCircle className="w-10 h-10 text-slate-600 group-hover:text-red-500/50 mx-auto mb-3 transition-colors" />
-                      <p className="text-slate-500 group-hover:text-slate-400 font-semibold">Kliknij aby wybrać towary do rozchodu</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {rwRows.map(row => (
-                        <div key={row._key} className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl p-4">
-                          <div className="flex items-start gap-3">
-                            <div className="w-7 h-7 bg-red-600/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-                              <MinusCircle className="w-4 h-4 text-red-400" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-white font-semibold text-sm mb-3">{row.nazwa}</div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {/* Partia */}
                                 <div>
-                                  <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">
+                                  <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>
                                     Partia <span className="text-red-400">*</span>
                                   </label>
                                   {row.loadingPartie ? (
-                                    <div className="flex items-center gap-2 text-slate-500 py-2">
-                                      <div className="w-4 h-4 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
-                                      <span className="text-xs">Ładowanie partii...</span>
+                                    <div className="flex items-center gap-1.5 h-7 text-slate-500 text-xs">
+                                      <div className="w-3 h-3 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+                                      Ładowanie…
                                     </div>
                                   ) : row.dostepnePartie.length === 0 ? (
-                                    <div className="text-red-400 text-xs py-2">Brak dostępnych partii na magazynie</div>
+                                    <div className="text-red-400 text-xs h-7 flex items-center">Brak partii na stanie</div>
                                   ) : (
-                                    <select required value={row.id_partii}
-                                      onChange={e => updateRwRow(row._key, "id_partii", e.target.value)}
-                                      className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded-xl px-4 py-2.5 outline-none focus:border-red-500 text-sm font-mono">
-                                      <option value="">-- wybierz partię --</option>
+                                    <select
+                                      required
+                                      value={row.id_partii}
+                                      onChange={e => updateWzRow(row._key, "id_partii", e.target.value)}
+                                      className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded px-2 py-1 outline-none focus:border-orange-500 text-[11px] font-mono"
+                                    >
+                                      <option value="">— wybierz —</option>
                                       {row.dostepnePartie.map(p => (
                                         <option key={p.id} value={p.id}>
-                                          {p.numer_partii} · dost: {fmtL(p.stan, 2)} {row.jednostka_miary}
+                                          {p.numer_partii} · dost. {fmtL(p.stan, 2)} {row.jednostka_miary}
                                           {p.termin_waznosci ? ` · ww: ${fmt(p.termin_waznosci)}` : ""}
                                         </option>
                                       ))}
                                     </select>
                                   )}
                                 </div>
-                                <div>
-                                  <label className="block text-slate-400 text-[10px] font-bold uppercase mb-1">
-                                    Ilość <span className="text-red-400">*</span>
-                                  </label>
-                                  <div className="flex items-center gap-2">
-                                    <input type="number" step="0.001" min="0.001" required
-                                      value={row.ilosc}
-                                      onChange={e => updateRwRow(row._key, "ilosc", e.target.value)}
-                                      placeholder="0"
-                                      className="flex-1 bg-[var(--bg-input)] border border-[var(--border)] text-red-300 rounded-xl px-4 py-2.5 outline-none focus:border-red-500 font-mono font-bold text-right" />
-                                    <span className="text-slate-400 text-sm shrink-0">{row.jednostka_miary}</span>
-                                  </div>
-                                  {row.id_partii && (() => {
-                                    const p = row.dostepnePartie.find(p => p.id === row.id_partii);
-                                    return p ? <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>dostępne: <span className="font-mono font-bold text-emerald-400">{fmtL(p.stan, 3)}</span></div> : null;
-                                  })()}
-                                </div>
+
+                                {/* Cena netto */}
+                                    <div>
+                                      <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena netto</label>
+                                      <div className="rounded px-2 py-1 text-[11px] font-mono text-right h-7 flex items-center justify-end" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: netto != null ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                                        {netto != null ? <>{netto.toFixed(2)} <span className="text-[9px] ml-0.5 opacity-60">zł</span></> : <span className="opacity-40">—</span>}
+                                      </div>
+                                    </div>
+
+                                    {/* Cena brutto */}
+                                    <div>
+                                      <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena brutto</label>
+                                      <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
+                                        <input
+                                          type="number" step="0.01" min="0"
+                                          value={row.cena_brutto}
+                                          onChange={e => updateWzRow(row._key, "cena_brutto", e.target.value)}
+                                          className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
+                                          style={{ color: 'var(--text-primary)' }}
+                                          placeholder="0.00"
+                                        />
+                                        <span className="px-1 text-[9px] font-semibold border-l shrink-0" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>zł</span>
+                                      </div>
+                                    </div>
+
+                                    {/* VAT */}
+                                    <div>
+                                      <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>VAT %</label>
+                                      <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
+                                        <input
+                                          type="number" step="0.01" min="0" max="100"
+                                          value={row.stawka_vat}
+                                          onChange={e => updateWzRow(row._key, "stawka_vat", e.target.value)}
+                                          className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
+                                          style={{ color: 'var(--text-primary)' }}
+                                          placeholder="—"
+                                        />
+                                        <span className="px-1 text-[9px] font-semibold border-l shrink-0" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>%</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Wartość netto */}
+                                    <div>
+                                      <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Wartość netto</label>
+                                      <div className="rounded px-2 py-1 text-[11px] font-mono text-right h-7 flex items-center justify-end" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: netto != null ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                                        {netto != null && ilosc > 0 ? <>{(netto * ilosc).toFixed(2)} <span className="text-[9px] ml-0.5 opacity-60">zł</span></> : <span className="opacity-40">—</span>}
+                                      </div>
+                                    </div>
+
+                                    {/* Wartość brutto */}
+                                    <div>
+                                      <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: '#fb923c' }}>Wartość brutto</label>
+                                      <div className="rounded px-2 py-1 text-[11px] font-mono font-bold text-right h-7 flex items-center justify-end" style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', color: brutto > 0 && ilosc > 0 ? '#fb923c' : 'var(--text-muted)' }}>
+                                        {brutto > 0 && ilosc > 0 ? <>{(brutto * ilosc).toFixed(2)} <span className="text-[9px] ml-0.5 font-normal opacity-70">zł</span></> : <span className="opacity-40">—</span>}
+                                      </div>
+                                    </div>
                               </div>
+
+                              {/* Opakowania — widoczne dla wszystkich typów towarów */}
+                              {selectedPartia?.opakowania?.length ? (
+                                <div className="mt-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                                  <label className="block text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Opakowania</label>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {typy_opakowan.map((op, i) => {
+                                      const opKey = `${op.id_asortymentu}_${op.waga_kg}`;
+                                      return (
+                                        <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                                          <span className="text-xs text-white">{op.nazwa} <span className="font-mono opacity-50">{op.waga_kg}kg</span></span>
+                                          <input
+                                            type="number" min="0" max={op.count} step="1"
+                                            value={row.sztuki[opKey] ?? ""}
+                                            placeholder="0"
+                                            className="w-14 bg-[var(--bg-app)] border border-[var(--border)] text-white rounded px-1.5 py-1 font-mono text-xs outline-none focus:border-orange-500 text-right"
+                                            onChange={e => updateWzSztuki(row._key, opKey, parseFloat(e.target.value) || 0, selectedPartia!.opakowania!)}
+                                          />
+                                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>/{op.count} szt.</span>
+                                        </div>
+                                      );
+                                    })}
+                                    <div className="self-center text-[10px] ml-1" style={{ color: 'var(--text-muted)' }}>
+                                      Łącznie: <span className="text-white font-mono font-bold">{fmtL(ilosc, 3)} {row.jednostka_miary}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
-                            <button type="button" onClick={() => removeRwRow(row._key)}
-                              className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
+
+              </div>
+            </div>
+
+          </form>
+        </div>
+      )}
+
+      {/* ═══ MODAL RW ══════════════════════════════════════════════════════════ */}
+      {showRw && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm pl-16 lg:pl-60 pt-2.5 pb-2.5 pr-2.5">
+          <div className="flex h-full border-l border-r border-b rounded-b-xl overflow-hidden shadow-2xl"
+               style={{ background: 'var(--bg-panel)', borderColor: 'var(--border)' }}>
+
+            {/* ── PRAWY PANEL META ── */}
+            <div className="w-72 shrink-0 flex flex-col border-l"
+                 style={{ order: 2, borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+
+              {/* Nagłówek */}
+              <div className="px-5 pt-5 pb-4 border-b shrink-0"
+                   style={{ borderColor: 'var(--border)', background: 'linear-gradient(to bottom, rgba(153,27,27,0.15) 0%, transparent 100%)' }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                         style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                      <MinusCircle className="w-5 h-5 text-red-400" />
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(252,165,165,0.6)' }}>Nowy dokument</div>
+                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>RW</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setShowRw(false)}
+                    className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)] mt-0.5 shrink-0"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
+                <p className="text-[11px] font-mono mt-3" style={{ color: 'var(--text-muted)' }}>
+                  Rozchód Wewnętrzny · {new Date().toLocaleDateString('pl-PL')}
+                </p>
               </div>
 
-              <div className="flex justify-end gap-3 p-5 border-t border-[var(--border)] bg-[var(--bg-app)]/50 shrink-0">
-                <button type="button" onClick={() => setShowRw(false)} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
+              {/* Info o pozycjach */}
+              <div className="p-4 flex-1 overflow-y-auto">
+                {rwRows.length > 0 && (() => {
+                  const totalIlosc = rwRows.reduce((s, r) => s + (parseFloat(r.ilosc) || 0), 0);
+                  const grupyJm: Record<string, number> = rwRows.reduce((acc: Record<string, number>, r) => {
+                    const v = parseFloat(r.ilosc) || 0;
+                    if (v > 0) acc[r.jednostka_miary] = (acc[r.jednostka_miary] || 0) + v;
+                    return acc;
+                  }, {});
+                  return (
+                    <div className="space-y-3">
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Podsumowanie</div>
+                      <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+                        {Object.entries(grupyJm).map(([jm, il]) => (
+                          <div key={jm} className="flex justify-between items-center px-3 py-2" style={{ borderBottom: '1px solid var(--border-dim)', background: 'var(--bg-app)' }}>
+                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{jm}</span>
+                            <span className="font-mono font-bold text-xs" style={{ color: '#f87171' }}>{fmtL(il, 3)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Stopka */}
+              <div className="p-4 border-t space-y-2 shrink-0" style={{ borderColor: 'var(--border)' }}>
+                {rwRows.length > 0 && (
+                  <div className="text-xs font-mono mb-3">
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      <span className="font-bold" style={{ color: 'var(--text-primary)' }}>{rwRows.length}</span> poz. do rozchodu
+                    </span>
+                  </div>
+                )}
+                <button type="button" onClick={() => handleCreateRw(true)} disabled={rwSaving}
+                  className="btn w-full justify-center font-bold text-sm"
+                  style={{ background: '#991b1b', borderColor: '#991b1b', color: 'white' }}>
+                  {rwSaving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                  Zatwierdź
+                </button>
+                <button type="button" onClick={() => handleCreateRw(false)} disabled={rwSaving}
+                  className="btn btn-ghost w-full justify-center"
+                  style={{ border: '1px solid var(--border)' }}>
+                  {rwSaving ? <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
+                  Bufor
+                </button>
+                <button type="button" onClick={() => setShowRw(false)} disabled={rwSaving}
+                  className="btn btn-ghost w-full justify-center">
                   Anuluj
                 </button>
-                <button type="submit" className="text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px]" style={{ background: '#991b1b' }}>
-                  <Save className="w-5 h-5" /> Zarejestruj RW
+              </div>
+            </div>
+
+            {/* ── PRAWY PANEL (pozycje) ── */}
+            <div className="flex-1 flex flex-col min-w-0">
+              <div className="px-5 py-3 border-b shrink-0 flex items-center justify-between"
+                   style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                  <MinusCircle className="w-3.5 h-3.5 text-red-400" />
+                  Pozycje do rozchodu
+                  {rwRows.length > 0 && (
+                    <span className="ml-1 px-2 py-0.5 rounded font-mono font-bold text-[10px]"
+                          style={{ background: 'rgba(153,27,27,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)' }}>
+                      {rwRows.length}
+                    </span>
+                  )}
+                </div>
+                <button type="button" onClick={openRwSelektor}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm text-white"
+                  style={{ background: '#991b1b' }}>
+                  <Plus className="w-4 h-4" /> Dodaj pozycję
                 </button>
               </div>
-            </form>
+
+              <div className="flex-1 overflow-y-auto">
+                {rwRows.length === 0 ? (
+                  <div onClick={openRwSelektor}
+                    className="h-full flex flex-col items-center justify-center gap-4 cursor-pointer group"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                         style={{ background: 'rgba(153,27,27,0.06)', border: '2px dashed rgba(239,68,68,0.2)' }}>
+                      <MinusCircle className="w-7 h-7 group-hover:text-red-400 transition-colors" style={{ color: 'rgba(239,68,68,0.4)' }} />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>Brak pozycji do rozchodu</p>
+                      <p className="text-xs mt-1">Kliknij aby wybrać towary z asortymentu</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-5 space-y-2">
+                    {rwRows.map(row => (
+                      <div key={row._key} className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl overflow-hidden">
+                        {/* Nagłówek karty */}
+                        <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                          <MinusCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                          <span className="text-sm font-semibold text-white flex-1 truncate">{row.nazwa}</span>
+                          <button type="button" onClick={() => removeRwRow(row._key)} className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors shrink-0">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Pola */}
+                        <div className="p-3">
+                          <div className="grid gap-1.5 grid-cols-[2fr_1fr]">
+
+                            {/* Partia */}
+                            <div>
+                              <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>
+                                Partia <span className="text-red-400">*</span>
+                              </label>
+                              {row.loadingPartie ? (
+                                <div className="flex items-center gap-1.5 h-7 text-slate-500 text-xs">
+                                  <div className="w-3 h-3 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+                                  Ładowanie…
+                                </div>
+                              ) : row.dostepnePartie.length === 0 ? (
+                                <div className="text-red-400 text-xs h-7 flex items-center">Brak partii na stanie</div>
+                              ) : (
+                                <select required value={row.id_partii}
+                                  onChange={e => updateRwRow(row._key, "id_partii", e.target.value)}
+                                  className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded px-2 py-1 outline-none focus:border-red-500 text-[11px] font-mono">
+                                  <option value="">— wybierz —</option>
+                                  {row.dostepnePartie.map(p => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.numer_partii} · dost. {fmtL(p.stan, 2)} {row.jednostka_miary}
+                                      {p.termin_waznosci ? ` · ww: ${fmt(p.termin_waznosci)}` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              {row.id_partii && (() => {
+                                const p = row.dostepnePartie.find(p => p.id === row.id_partii);
+                                return p ? <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>dostępne: <span className="font-mono font-bold text-emerald-400">{fmtL(p.stan, 3)} {row.jednostka_miary}</span></div> : null;
+                              })()}
+                            </div>
+
+                            {/* Ilość */}
+                            <div>
+                              <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>
+                                Ilość <span className="text-red-400">*</span>
+                              </label>
+                              <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
+                                <input type="number" step="0.001" min="0.001" value={row.ilosc}
+                                  onChange={e => updateRwRow(row._key, "ilosc", e.target.value)}
+                                  placeholder="0"
+                                  className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono font-bold bg-transparent outline-none text-right"
+                                  style={{ color: '#f87171' }}
+                                />
+                                <span className="px-1 text-[9px] font-semibold border-l shrink-0" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>{row.jednostka_miary}</span>
+                              </div>
+                            </div>
+
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
       )}

@@ -10,7 +10,7 @@ Interfejs i baza danych w języku **polskim**.
 ## Uruchamianie
 
 ```bash
-# Frontend (Vite, port 3000)
+# Frontend (Vite, port 5173)
 npm run dev
 
 # Backend (Express, port 3001)
@@ -18,6 +18,9 @@ npx tsx server.ts
 
 # Seed przykładowych danych (czyści bazę i wgrywa od zera)
 npx tsx prisma/seed.ts
+
+# Tworzenie konta administratora (pierwsza instalacja)
+npx tsx prisma/create-admin.ts
 ```
 
 **Zmiana schematu Prisma (Windows):** `prisma db push` nie może nadpisać DLL jeśli serwer działa. Kolejność:
@@ -39,8 +42,8 @@ npx tsx server.ts                     # uruchom serwer ponownie
 | Baza danych| SQLite via Prisma 6 ORM                                  |
 | Ikony/animacje | Lucide React, Motion                                |
 
-**Plik bazy:** `prisma/dev.db`
-**API prefix:** `/api/`
+**Plik bazy:** `prisma/prod.db` (testowa: `prisma/test.db`)
+**API prefix:** `/api/` — Vite proxy przekierowuje `/api/*` → `localhost:3001`
 
 ---
 
@@ -52,17 +55,28 @@ src/
     Dashboard.tsx       — pulpit operacyjny, metryki, alerty
     Asortyment.tsx      — katalog produktów, stany magazynowe, partie
     Receptury.tsx       — receptury z BOM, wersjonowanie, kalkulator kosztów
-    Produkcja.tsx       — zlecenia produkcyjne, kontrola jakości, realizacja
+    Produkcja.tsx       — zlecenia produkcyjne + wizard sesji gelato
     Dokumenty.tsx       — dokumenty magazynowe PZ/WZ/PW/RW
+    WyrobyGotowe.tsx    — stan opakowań wyrobów gotowych (pozzetti itp.)
+    Opakowania.tsx      — cyrkulacja opakowań zwrotnych
+    Kontrahenci.tsx     — słownik kontrahentów
+    GrupyTowarowe.tsx   — hierarchia grup towarowych
     Traceability.tsx    — genealogia partii, śledzenie serii
+    Raporty.tsx         — raporty sprzedaży per kontrahent
+    Ustawienia.tsx      — ustawienia konta, zmiana hasła
   components/
-    AsortymentSelektor.tsx  — modal multi-select produktów (wielokrotne użycie)
-    ConfirmModal.tsx         — dialog potwierdzenia (wielokrotne użycie)
+    AsortymentSelektor.tsx    — modal multi-select produktów (wielokrotne użycie)
+    ConfirmModal.tsx           — dialog potwierdzenia (wielokrotne użycie)
+    DocumentPreviewModal.tsx   — podgląd dokumentu magazynowego
+    ImportAsortymentuModal.tsx — import asortymentu z Excel
+    Toast.tsx                  — system powiadomień (useToast hook)
+    Spinner.tsx / EmptyState.tsx / SortableTh.tsx / Modal.tsx
   App.tsx               — router główny, nawigacja boczna
 prisma/
   schema.prisma         — schemat bazy danych
   seed.ts               — dane przykładowe
-server.ts               — API Express (~2500 linii)
+  create-admin.ts       — tworzenie konta admina
+server.ts               — API Express (~3700 linii)
 docs/                   — dokumentacja domenowa (PL)
 ```
 
@@ -73,19 +87,26 @@ docs/                   — dokumentacja domenowa (PL)
 | Model                     | Opis                                                  |
 |---------------------------|-------------------------------------------------------|
 | `Asortyment`              | Katalog produktów (surowce, półprodukty, wyroby gotowe) |
+| `Grupy_Towarowe`          | Hierarchia grup towarowych (drzewo)                   |
 | `Partie_Magazynowe`       | Partie/LOTy z datami i statusem                       |
 | `Ruchy_Magazynowe`        | Dziennik ruchów (każda transakcja magazynowa)         |
+| `Dokumenty_Magazynowe`    | Nagłówki dokumentów PZ/WZ + pozycje w `pozycje_json` |
+| `Kontrahenci`             | Słownik dostawców i odbiorców                         |
 | `Receptury`               | Receptury z wersjami i parametrami produkcji          |
 | `Skladniki_Receptury`     | Pozycje BOM (składniki → receptury)                   |
 | `Zlecenia_Produkcyjne`    | Zlecenia produkcyjne z planem i realizacją            |
-| `Punkty_Kontrolne`        | Punkty kontrolne HACCP (per receptura)                |
-| `Wyniki_Kontroli`         | Wyniki pomiaru dla punktów kontrolnych                |
+| `Sesje_Produkcji`         | Grupowanie zleceń w sesję (SP-NNN/MM/RR)              |
 | `Rezerwacje_Magazynowe`   | Rezerwacje surowców pod zlecenia                      |
-| `Rejestr_Przestojow`      | Log przestojów dla OEE (tabela istnieje, UI brak)     |
+| `Wartosci_Odzywcze`       | Tabela wartości odżywczych per asortyment (1:1)       |
+| `Alergeny_Asortymentu`    | 14 alergenów UE per asortyment (1:1)                  |
 | `Uzytkownicy`             | Użytkownicy systemu (auth uproszczony)                |
 | `Sesje_Produkcji_Gelato`  | Sesje produkcyjne gelato (turnus baza → wyroby)       |
 | `Pozycje_Sesji_Gelato`    | Smaki/receptury w ramach sesji gelato                 |
 | `Opakowania_Wyrobowe`     | Fizyczne opakowania wyrobów gotowych (pozzetti itp.)  |
+| `Typy_Opakowan`           | Słownik typów opakowań (pozzetti, kuweta itp.)        |
+| `Ruchy_Opakowan_Zwrotnych`| Cyrkulacja opakowań zwrotnych (PRZYJECIE/WYDA/ZWROT)  |
+| `Sesja_Robocza`           | Persystencja stanu wizarda gelato (jeden rekord)      |
+| `Sesja_Robocza_Log`       | Log kroków wizarda gelato                             |
 
 ---
 
@@ -98,7 +119,7 @@ docs/                   — dokumentacja domenowa (PL)
 | WZ     | Wydanie Zewnętrzne      | -magazyn |
 | RW     | Rozchód Wewnętrzny      | -magazyn (zużycie) |
 
-Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`, sesje gelato: `SPG-NNN/MM/RR`
+Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`, sesje gelato: `SPG-NNN/MM/RR`, opakowania: `OW-NNNN/MM/RR`
 
 ---
 
@@ -111,6 +132,10 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 **Rezerwacje:** `Aktywna` | `Zrealizowana` | `Anulowana`
 
 **Sesje gelato:** `Otwarta` | `Zamknieta`
+
+**Opakowania wyrobowe:** `Dostepne` | `Wydane` | `Zwrot` | `Zniszczone`
+
+**Dokumenty:** `Bufor` | `Zatwierdzony` | `Anulowany`
 
 ---
 
@@ -126,20 +151,16 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 - Przelicznik: 1 JM = X JM_pomocnicza
 - Kalkulacje zawsze w JM głównej
 
-**Koszty**
+**Koszty i ceny**
 - Cena ważona z PZ/PW (weighted average)
 - Koszt produkcji = Σ(ilosc_składnika × cena_jednostkowa_składnika)
 - Koszt wyrobu = total_koszt_wejść ÷ ilość_wyprodukowana
 - Narzut % w recepturze dla kalkulacji ceny sprzedaży
+- `cena_sprzedazy` i `stawka_vat` na `Asortyment` — ręcznie ustawiane dla wyrobów gotowych (zakładka "Ceny")
 
 **Traceability**
 - Genealogia rekurencyjna: które partie składników → która partia wyrobu
 - Powiązanie przez `Ruchy_Magazynowe` (id_zlecenia)
-
-**Kontrola jakości**
-- Punkty HACCP definiowane per receptura
-- Wymagane punkty blokują realizację zlecenia
-- Auto-walidacja min/max przy zapisie wyniku
 
 **Zasoby nieograniczone (`czy_zasob_nieograniczony`)**
 - Flag na `Asortyment` dla mediów jak woda z kranu — bez kontroli stanu, bez PZ, bez rezerwacji
@@ -163,7 +184,8 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 - `computeWyrobySurowce()` — przelicza surowce dla wszystkich wyrobów i ładuje partie async
 - Typy: `WizSurowiecBaza`, `WizSurowiecWyrob` — oba mają `czy_zasob_nieograniczony: boolean`
 - `renderSurowceTable()` — wspólny renderer tabeli surowców dla bazy i wyrobów
-- `POST /api/sesja-gelato` — finalizacja całej sesji w jednej transakcji
+- `POST /api/produkcja/sesja` — finalizacja całej sesji w jednej transakcji
+- **Persystencja szkicu:** `GET/PUT/DELETE /api/produkcja/sesja-robocza` — jeden rekord `Sesja_Robocza` przechowuje JSON stanu wizarda; przy wejściu sprawdzany jest szkic
 
 ---
 
@@ -185,24 +207,26 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 - `handleSubmit` — modal tworzenia/edycji (wywoływany przez `openNew`/`openEdit`)
 - `handleDetailSubmit` — inline panel szczegółów (wywoływany przez przycisk "Zapisz zmiany")
 - `useEffect` na `detailData` nadpisuje `formData` przy załadowaniu detali — każde nowe pole w `Asortyment` musi być dodane do WSZYSTKICH `setFormData` wywołań (3 miejsca + useEffect)
+- Zakładki szczegółów: Specyfikacja, Zasoby/Partie, Dziennik zdarzeń, Wartości odżywcze, Alergeny, **Ceny** (tylko dla `Wyrob_Gotowy`)
 
 **Backend (server.ts)**
-- Wszystkie endpointy w jednym pliku
+- Wszystkie endpointy w jednym pliku (~3700 linii)
 - Transakcje Prisma dla operacji wieloetapowych (PZ, realizacja zlecenia)
 - Miękkie usuwanie: `czy_aktywne = false` zamiast DELETE
 - Numeracja dokumentów: `generateDocNumber(tx, prefix)`
+- Dwa klienty Prisma: `prisma` (prod.db) i `prismaTest` (test.db) — przełączane przez `DATABASE_URL`
 
 ---
 
 ## Ważne ograniczenia (stan aktualny)
 
-- **Autentykacja:** uproszczona, hardcoded user "admin" — nie gotowe na produkcję
+- **Autentykacja:** uproszczona JWT — nie gotowe na produkcję
 - **Testy:** brak suite testów (vitest/jest)
-- **OEE:** tabela `Rejestr_Przestojow` istnieje w DB, ale UI nie zaimplementowane
-- **QR/Etykiety:** biblioteka `qrcode` zainstalowana, ale nie zaimplementowana w UI
+- **OEE:** brak UI — moduł przestojów niezaimplementowany
+- **QR/Etykiety:** endpointy `/api/etykieta/:numer_partii` i `/api/etykiety-dokumentu/:referencja` istnieją, ale brak UI wydruku
 - **PDF/wydruk:** klasy CSS do druku obecne, ale brak stylów printowych
 - **Wielomagazynowość:** brak — jeden domyślny magazyn
-- **Dostawcy/PO:** brak modułu
+- **HACCP:** modele `Punkty_Kontrolne` i `Wyniki_Kontroli` usunięte ze schematu — logika kontroli jakości niezaimplementowana
 
 ---
 

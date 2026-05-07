@@ -8,6 +8,7 @@ services:
       NODE_ENV: production
       PORT: 5000
       DATABASE_URL: file:/data/gelato.db
+      DATABASE_URL_TEST: file:/data/test.db
     volumes:
       - /volume1/docker/ilgelato/data:/data
     networks:

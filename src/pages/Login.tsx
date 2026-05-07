@@ -2,12 +2,13 @@ import React, { useState } from "react";
 import { Lock, User, IceCream } from "lucide-react";
 
 interface Props {
-  onLogin: (token: string, login: string) => void;
+  onLogin: (token: string, login: string, baza: "prod" | "test") => void;
 }
 
 export default function LoginPage({ onLogin }: Props) {
   const [login, setLogin] = useState("");
   const [haslo, setHaslo] = useState("");
+  const [baza, setBaza] = useState<"prod" | "test">("prod");
   const [blad, setBlad] = useState<string | null>(null);
   const [ladowanie, setLadowanie] = useState(false);
 
@@ -19,14 +20,14 @@ export default function LoginPage({ onLogin }: Props) {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ login, haslo }),
+        body: JSON.stringify({ login, haslo, baza }),
       });
       const data = await res.json();
       if (!res.ok) {
         setBlad(data.error || "Błąd logowania");
         return;
       }
-      onLogin(data.token, data.login);
+      onLogin(data.token, data.login, data.baza ?? baza);
     } catch {
       setBlad("Brak połączenia z serwerem");
     } finally {
@@ -70,6 +71,46 @@ export default function LoginPage({ onLogin }: Props) {
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {/* Wybór bazy */}
+          <div
+            className="flex rounded-lg overflow-hidden"
+            style={{ border: "1px solid var(--border)", background: "var(--bg-input)" }}
+          >
+            {(["prod", "test"] as const).map((b) => (
+              <button
+                key={b}
+                type="button"
+                onClick={() => setBaza(b)}
+                style={{
+                  flex: 1,
+                  padding: "8px 0",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  border: "none",
+                  transition: "background 0.15s, color 0.15s",
+                  background:
+                    baza === b
+                      ? b === "prod"
+                        ? "rgba(34,197,94,0.18)"
+                        : "rgba(251,146,60,0.18)"
+                      : "transparent",
+                  color:
+                    baza === b
+                      ? b === "prod"
+                        ? "#22c55e"
+                        : "#fb923c"
+                      : "var(--text-muted)",
+                  borderRight: b === "prod" ? "1px solid var(--border)" : "none",
+                }}
+              >
+                {b === "prod" ? "Produkcja" : "Test"}
+              </button>
+            ))}
+          </div>
+
           {/* Login */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>

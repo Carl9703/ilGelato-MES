@@ -10,6 +10,8 @@ coverage/
 # SQLite database files
 prisma/*.db
 prisma/*.db-journal
+prisma/**/*.db
+prisma/**/*.db-journal
 
 /src/generated/prisma
 

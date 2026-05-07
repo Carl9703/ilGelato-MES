@@ -1,7 +1,9 @@
+import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
 import { createServer as createViteServer } from "vite";
 import { PrismaClient } from "@prisma/client";
+import { AsyncLocalStorage } from "async_hooks";
 import path from "path";
 import QRCode from "qrcode";
 import jwt from "jsonwebtoken";
@@ -10,7 +12,20 @@ import bcrypt from "bcryptjs";
 const JWT_SECRET = process.env.JWT_SECRET || "ilgelato-dev-secret-2025-change-in-prod";
 const JWT_EXPIRES = "12h";
 
-const prisma = new PrismaClient();
+const prismaProdukcja = new PrismaClient({
+  datasources: { db: { url: process.env.DATABASE_URL || "file:./prod.db" } },
+});
+const prismaTest = new PrismaClient({
+  datasources: { db: { url: process.env.DATABASE_URL_TEST || "file:./test.db" } },
+});
+const dbStorage = new AsyncLocalStorage<PrismaClient>();
+const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const db = dbStorage.getStore() ?? prismaProdukcja;
+    const val = (db as any)[prop];
+    return typeof val === "function" ? val.bind(db) : val;
+  },
+});
 
 async function generateDocNumber(tx: any, prefix: string) {
   const date = new Date();
@@ -178,10 +193,12 @@ async function startServer() {
       return res.status(401).json({ error: "Wymagane logowanie" });
     }
     try {
-      const payload = jwt.verify(auth.slice(7), JWT_SECRET) as { userId: string; login: string };
+      const payload = jwt.verify(auth.slice(7), JWT_SECRET) as { userId: string; login: string; baza: "prod" | "test" };
       (req as any).userId = payload.userId;
       (req as any).userLogin = payload.login;
-      next();
+      (req as any).baza = payload.baza;
+      const db = payload.baza === "test" ? prismaTest : prismaProdukcja;
+      dbStorage.run(db, next);
     } catch {
       res.status(401).json({ error: "Sesja wygasła — zaloguj się ponownie" });
     }
@@ -199,12 +216,14 @@ async function startServer() {
 
   // --- AUTH ENDPOINTS ---
   app.post("/api/auth/login", async (req, res) => {
-    const { login, haslo } = req.body;
+    const { login, haslo, baza } = req.body;
     if (!login || !haslo) {
       return res.status(400).json({ error: "Podaj login i hasło" });
     }
+    const selectedBaza: "prod" | "test" = baza === "test" ? "test" : "prod";
+    const db = selectedBaza === "test" ? prismaTest : prismaProdukcja;
     try {
-      const user = await prisma.uzytkownicy.findUnique({ where: { login } });
+      const user = await db.uzytkownicy.findUnique({ where: { login } });
       if (!user || !user.czy_aktywne) {
         return res.status(401).json({ error: "Nieprawidłowy login lub hasło" });
       }
@@ -216,14 +235,14 @@ async function startServer() {
         valid = user.haslo === haslo;
         if (valid) {
           const hashed = await bcrypt.hash(haslo, 10);
-          await prisma.uzytkownicy.update({ where: { id: user.id }, data: { haslo: hashed } });
+          await db.uzytkownicy.update({ where: { id: user.id }, data: { haslo: hashed } });
         }
       }
       if (!valid) {
         return res.status(401).json({ error: "Nieprawidłowy login lub hasło" });
       }
-      const token = jwt.sign({ userId: user.id, login: user.login }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-      res.json({ token, login: user.login });
+      const token = jwt.sign({ userId: user.id, login: user.login, baza: selectedBaza }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+      res.json({ token, login: user.login, baza: selectedBaza });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -743,6 +762,36 @@ async function startServer() {
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: "Błąd zapisu kartoteki" });
+    }
+  });
+
+  // --- CENY SPRZEDAŻY (wyroby gotowe) ---
+  app.get("/api/asortyment/:id/ceny", async (req, res) => {
+    try {
+      const data = await prisma.asortyment.findUnique({
+        where: { id: req.params.id },
+        select: { cena_sprzedazy: true, stawka_vat: true },
+      });
+      res.json(data || {});
+    } catch {
+      res.status(500).json({ error: "Błąd pobierania cen" });
+    }
+  });
+
+  app.put("/api/asortyment/:id/ceny", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const cena = req.body.cena_sprzedazy !== undefined && req.body.cena_sprzedazy !== ""
+        ? parseFloat(req.body.cena_sprzedazy) : null;
+      const vat = req.body.stawka_vat !== undefined && req.body.stawka_vat !== ""
+        ? parseFloat(req.body.stawka_vat) : null;
+      const result = await prisma.asortyment.update({
+        where: { id },
+        data: { cena_sprzedazy: cena, stawka_vat: vat },
+      });
+      res.json({ cena_sprzedazy: result.cena_sprzedazy, stawka_vat: result.stawka_vat });
+    } catch {
+      res.status(500).json({ error: "Błąd zapisu cen" });
     }
   });
 
@@ -1376,6 +1425,7 @@ async function startServer() {
   app.post("/api/magazyn/wz", async (req, res) => {
     try {
       const { items, referencja_zewnetrzna, id_kontrahenta } = req.body;
+      console.log("[WZ DEBUG] items received:", JSON.stringify(items?.map((i: any) => ({ id_partii: i.id_partii, cena_brutto: i.cena_brutto, cena_netto: i.cena_netto, stawka_vat: i.stawka_vat }))));
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Brak pozycji do wydania" });
       }
@@ -1397,7 +1447,14 @@ async function startServer() {
             status: "Bufor",
             id_uzytkownika_utworzenia: user.id,
             id_kontrahenta: id_kontrahenta || null,
-            pozycje_json: JSON.stringify(items.map((it: any) => ({ id_partii: it.id_partii, ilosc: it.ilosc, sztuki: it.sztuki || {} }))),
+            pozycje_json: JSON.stringify(items.map((it: any) => ({
+              id_partii: it.id_partii,
+              ilosc: it.ilosc,
+              sztuki: it.sztuki || {},
+              cena_brutto: it.cena_brutto ?? null,
+              cena_netto: it.cena_netto ?? null,
+              stawka_vat: it.stawka_vat ?? null,
+            }))),
           }
         });
 
@@ -1542,12 +1599,16 @@ async function startServer() {
       const firstRuch = ruchy[0];
       const status = header?.status || "Zatwierdzony";
 
-      // Parse sztuki breakdown from header if available
+      // Parse sztuki + ceny z pozycje_json
       let sztukiByPartia: Record<string, Record<string, number>> = {};
+      let cenyByPartia: Record<string, { cena_brutto: number | null; cena_netto: number | null; stawka_vat: number | null }> = {};
       if (header?.pozycje_json) {
         try {
-          const parsed = JSON.parse(header.pozycje_json) as { id_partii: string; sztuki: Record<string, number> }[];
-          parsed.forEach(p => { sztukiByPartia[p.id_partii] = p.sztuki || {}; });
+          const parsed = JSON.parse(header.pozycje_json) as { id_partii: string; sztuki?: Record<string, number>; cena_brutto?: number | null; cena_netto?: number | null; stawka_vat?: number | null }[];
+          parsed.forEach(p => {
+            sztukiByPartia[p.id_partii] = p.sztuki || {};
+            cenyByPartia[p.id_partii] = { cena_brutto: p.cena_brutto ?? null, cena_netto: p.cena_netto ?? null, stawka_vat: p.stawka_vat ?? null };
+          });
         } catch {}
       }
 
@@ -1596,6 +1657,9 @@ async function startServer() {
             const iloscKg = Math.round(szt * wagaKg * 1000) / 1000;
             const wartosc = iloscKg * cena;
             wartosc_calkowita += wartosc;
+            const ceny = cenyByPartia[r.id_partii];
+            const wartosc_netto = ceny?.cena_netto != null && iloscKg > 0 ? Math.round(ceny.cena_netto * iloscKg * 100) / 100 : null;
+            const wartosc_brutto = ceny?.cena_brutto != null && iloscKg > 0 ? Math.round(ceny.cena_brutto * iloscKg * 100) / 100 : null;
             pozycje.push({
               asortyment: nazwaOp,
               wyrob: r.partia.asortyment.nazwa,
@@ -1608,11 +1672,19 @@ async function startServer() {
               termin_waznosci: r.partia.termin_waznosci,
               cena_jednostkowa: cena > 0 ? cena : null,
               wartosc,
+              cena_netto: ceny?.cena_netto ?? null,
+              cena_brutto: ceny?.cena_brutto ?? null,
+              stawka_vat: ceny?.stawka_vat ?? null,
+              wartosc_netto,
+              wartosc_brutto,
             });
           }
         } else {
           const wartosc = ilosc * cena;
           wartosc_calkowita += wartosc;
+          const ceny2 = cenyByPartia[r.id_partii];
+          const wartosc_netto2 = ceny2?.cena_netto != null ? Math.round(ceny2.cena_netto * ilosc * 100) / 100 : null;
+          const wartosc_brutto2 = ceny2?.cena_brutto != null ? Math.round(ceny2.cena_brutto * ilosc * 100) / 100 : null;
           pozycje.push({
             asortyment: r.partia.asortyment.nazwa,
             wyrob: null,
@@ -1625,6 +1697,11 @@ async function startServer() {
             termin_waznosci: r.partia.termin_waznosci,
             cena_jednostkowa: r.cena_jednostkowa,
             wartosc,
+            cena_netto: ceny2?.cena_netto ?? null,
+            cena_brutto: ceny2?.cena_brutto ?? null,
+            stawka_vat: ceny2?.stawka_vat ?? null,
+            wartosc_netto: wartosc_netto2,
+            wartosc_brutto: wartosc_brutto2,
           });
         }
       }

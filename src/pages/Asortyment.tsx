@@ -57,7 +57,7 @@ export default function Asortyment() {
   const [selectedItem, setSelectedItem] = useState<AsortymentOgolne | null>(null);
   const [detailData, setDetailData] = useState<AsortymentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailTab, setDetailTab] = useState<"ogolne" | "zasoby" | "historia" | "odzywcze" | "alergeny">("ogolne");
+  const [detailTab, setDetailTab] = useState<"ogolne" | "zasoby" | "historia" | "odzywcze" | "alergeny" | "ceny">("ogolne");
 
   // Wartości odżywcze
   const [odzywczeForm, setOdzywczeForm] = useState<Record<string,string>>({});
@@ -68,6 +68,10 @@ export default function Asortyment() {
   const [alergenySaving, setAlergenySaving] = useState(false);
   const [skladnikiOpisForm, setSkladnikiOpisForm] = useState({ producent: "", zrodlo_danych: "", skladniki_opis: "", moze_zawierac: "" });
   const [kartoSaving, setKartoSaving] = useState(false);
+
+  // Ceny sprzedaży
+  const [cenyForm, setCenyForm] = useState({ cena_sprzedazy: "", stawka_vat: "" });
+  const [cenySaving, setCenySaving] = useState(false);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
 
@@ -152,6 +156,9 @@ export default function Asortyment() {
       setAlergenyStan(d || {});
       setSkladnikiOpisForm({ producent: (a as any).producent || "", zrodlo_danych: (a as any).zrodlo_danych || "", skladniki_opis: (a as any).skladniki_opis || "", moze_zawierac: (a as any).moze_zawierac || "" });
     }).catch(() => {});
+    fetch(`/api/asortyment/${a.id}/ceny`).then(r => r.json()).then(d => {
+      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? String(d.cena_sprzedazy) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "" });
+    }).catch(() => {});
   };
 
   const saveOdzywcze = async () => {
@@ -174,6 +181,16 @@ export default function Asortyment() {
       if (!r2.ok) throw new Error((await r2.json().catch(() => ({}))).error || "Błąd zapisu kartoteki");
       showToast("Alergeny zapisane!", "ok");
     } catch (e: any) { showToast(e.message || "Błąd zapisu", "error"); } finally { setAlergenySaving(false); }
+  };
+
+  const saveCeny = async () => {
+    if (!selectedItem) return;
+    setCenySaving(true);
+    try {
+      const r = await fetch(`/api/asortyment/${selectedItem.id}/ceny`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cenyForm) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Błąd zapisu cen");
+      showToast("Ceny zapisane!", "ok");
+    } catch (e: any) { showToast(e.message || "Błąd zapisu", "error"); } finally { setCenySaving(false); }
   };
 
   useEffect(() => {
@@ -355,12 +372,14 @@ export default function Asortyment() {
               <span>{selectedItem.jednostka_miary}</span>
             </div>
           </div>
-          <button
-            onClick={handleDetailSubmit}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 btn-hover-effect"
-          >
-            <Save className="w-4 h-4" /> Zapisz zmiany
-          </button>
+          {detailTab === "ogolne" && (
+            <button
+              onClick={handleDetailSubmit}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 btn-hover-effect"
+            >
+              <Save className="w-4 h-4" /> Zapisz zmiany
+            </button>
+          )}
         </div>
 
         {/* Loading State */}
@@ -392,6 +411,7 @@ export default function Asortyment() {
                 { id: "historia", label: "Dziennik zdarzeń", icon: History },
                 { id: "odzywcze", label: "Wartości odżywcze", icon: null },
                 { id: "alergeny", label: "Alergeny", icon: null },
+                ...(detailData.ogolne.typ_asortymentu === "Wyrob_Gotowy" ? [{ id: "ceny", label: "Ceny", icon: null }] : []),
               ].map((tab, i) => (
                 <button
                   key={tab.id}
@@ -614,6 +634,70 @@ export default function Asortyment() {
                 </div>
               );
             })()}
+
+            {/* Tab: CENY */}
+            {detailTab === "ceny" && (
+              <div className="mes-panel rounded">
+                <div className="px-4 py-3 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Ceny sprzedaży</span>
+                  <button onClick={saveCeny} disabled={cenySaving} className="px-4 py-1.5 rounded text-xs font-semibold text-white btn-hover-effect disabled:opacity-50" style={{ background: 'var(--accent)' }}>
+                    {cenySaving ? "Zapisywanie…" : "Zapisz"}
+                  </button>
+                </div>
+                <div className="p-5 space-y-4 max-w-sm">
+                  <div>
+                    <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Cena sprzedaży netto (PLN)</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" step="0.01" min="0"
+                        value={cenyForm.cena_sprzedazy}
+                        onChange={e => setCenyForm(f => ({ ...f, cena_sprzedazy: e.target.value }))}
+                        className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        placeholder="0.00"
+                      />
+                      <span className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>zł</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Stawka VAT</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" step="0.01" min="0" max="100"
+                        value={cenyForm.stawka_vat}
+                        onChange={e => setCenyForm(f => ({ ...f, stawka_vat: e.target.value }))}
+                        className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        placeholder="np. 5, 8, 23"
+                      />
+                      <span className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>%</span>
+                    </div>
+                  </div>
+                  {cenyForm.cena_sprzedazy && cenyForm.stawka_vat !== "" && (
+                    <div className="rounded p-3 text-sm space-y-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                      <div className="flex justify-between">
+                        <span style={{ color: 'var(--text-muted)' }}>Cena netto:</span>
+                        <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {parseFloat(cenyForm.cena_sprzedazy).toFixed(2)} zł
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span style={{ color: 'var(--text-muted)' }}>VAT ({cenyForm.stawka_vat}%):</span>
+                        <span className="font-mono font-semibold" style={{ color: 'var(--text-muted)' }}>
+                          {(parseFloat(cenyForm.cena_sprzedazy) * parseFloat(cenyForm.stawka_vat) / 100).toFixed(2)} zł
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-t pt-1 mt-1" style={{ borderColor: 'var(--border)' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Cena brutto:</span>
+                        <span className="font-mono font-bold" style={{ color: 'var(--accent)' }}>
+                          {(parseFloat(cenyForm.cena_sprzedazy) * (1 + parseFloat(cenyForm.stawka_vat) / 100)).toFixed(2)} zł
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Tab: OGOLNE */}
             {detailTab === "ogolne" && (
