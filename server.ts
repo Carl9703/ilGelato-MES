@@ -1425,7 +1425,6 @@ async function startServer() {
   app.post("/api/magazyn/wz", async (req, res) => {
     try {
       const { items, referencja_zewnetrzna, id_kontrahenta } = req.body;
-      console.log("[WZ DEBUG] items received:", JSON.stringify(items?.map((i: any) => ({ id_partii: i.id_partii, cena_brutto: i.cena_brutto, cena_netto: i.cena_netto, stawka_vat: i.stawka_vat }))));
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Brak pozycji do wydania" });
       }
@@ -3360,18 +3359,24 @@ async function startServer() {
       const opNazwyMap: Record<string, string> = {};
       opNazwy.forEach(a => opNazwyMap[a.id] = a.nazwa);
 
-      // Wyparsuj faktycznie wydane opakowania z pozycje_json nagłówka WZ
-      // Format: [{id_partii, ilosc, sztuki: {"Nazwa (Xkg)": liczba_szt}}]
+      // Wyparsuj faktycznie wydane opakowania i ceny sprzedaży z pozycje_json nagłówka WZ
+      // Format: [{id_partii, ilosc, sztuki: {"Nazwa (Xkg)": liczba_szt}, cena_netto, cena_brutto, stawka_vat}]
       const sztukiPerDoc = new Map<string, Record<string, Record<string, number>>>();
+      const cenaNettoPerDoc = new Map<string, Record<string, number | null>>();
       for (const h of headers) {
-        const map: Record<string, Record<string, number>> = {};
+        const mapSztuki: Record<string, Record<string, number>> = {};
+        const mapCena: Record<string, number | null> = {};
         if (h.pozycje_json) {
           try {
-            const poz = JSON.parse(h.pozycje_json) as { id_partii: string; sztuki?: Record<string, number> }[];
-            for (const p of poz) { map[p.id_partii] = p.sztuki || {}; }
+            const poz = JSON.parse(h.pozycje_json) as { id_partii: string; sztuki?: Record<string, number>; cena_netto?: number | null }[];
+            for (const p of poz) {
+              mapSztuki[p.id_partii] = p.sztuki || {};
+              mapCena[p.id_partii] = p.cena_netto ?? null;
+            }
           } catch {}
         }
-        sztukiPerDoc.set(h.referencja, map);
+        sztukiPerDoc.set(h.referencja, mapSztuki);
+        cenaNettoPerDoc.set(h.referencja, mapCena);
       }
 
       const ruchyByRef = new Map<string, typeof ruchy>();
@@ -3403,9 +3408,13 @@ async function startServer() {
         const entry = kontrahentMap.get(klucz)!;
         const docRuchy = ruchyByRef.get(header.referencja) || [];
         const sztukiByPartia = sztukiPerDoc.get(header.referencja) || {};
+        const cenaByPartia = cenaNettoPerDoc.get(header.referencja) || {};
         const pozycje: any[] = [];
         for (const r of docRuchy) {
-          const cena = r.cena_jednostkowa ?? 0;
+          // Cena sprzedaży netto z pozycje_json; fallback na cena_sprzedazy z kartoteki; ostatecznie koszt własny
+          const cenaNetto = cenaByPartia[r.id_partii];
+          const cenaKatalogowa = (r.partia.asortyment as any).cena_sprzedazy ?? null;
+          const cena = cenaNetto != null ? cenaNetto : (cenaKatalogowa != null ? cenaKatalogowa : (r.cena_jednostkowa ?? 0));
           // Pobierz faktycznie wydane opakowania z pozycje_json nagłówka WZ
           const sztuki = sztukiByPartia[r.id_partii] || {};
           const hasStored = Object.keys(sztuki).length > 0;
