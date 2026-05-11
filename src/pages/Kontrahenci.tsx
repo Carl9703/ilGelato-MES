@@ -112,17 +112,22 @@ export default function Kontrahenci() {
     <div className="flex flex-col gap-3 h-full">
       {/* Nagłówek */}
       <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <Users className="w-5 h-5" style={{ color: "var(--accent)" }} />
-          <h2 className="text-lg font-bold text-white">Kontrahenci</h2>
-          <span className="text-xs font-mono px-2 py-0.5 rounded" style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-            {kontrahenci.length}
-          </span>
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Kontrahenci</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              Słownik
+            </span>
+          </div>
+          <p className="text-[11px] mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>
+            {kontrahenci.length} kontrahentów
+          </p>
         </div>
         <button
           onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm text-white transition-colors min-h-[40px]"
-          style={{ background: "var(--accent)" }}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all btn-hover-effect"
+          style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
         >
           <Plus className="w-4 h-4" /> Dodaj kontrahenta
         </button>
@@ -154,6 +159,7 @@ export default function Kontrahenci() {
           <table className="mes-table">
             <thead>
               <tr>
+                <th style={{ width: 3, padding: 0 }} />
                 <SortableTh label="Kod"   field="kod"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Nazwa" field="nazwa" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Adres" field="adres" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -163,6 +169,7 @@ export default function Kontrahenci() {
             <tbody>
               {filtered.map(k => (
                 <tr key={k.id}>
+                  <td style={{ padding: 0, width: 0 }}><div style={{ width: 3, height: 36, background: 'var(--accent)', opacity: 0.7 }} /></td>
                   <td className="mono font-bold" style={{ color: "var(--accent)" }}>{k.kod}</td>
                   <td className="font-semibold text-white">{k.nazwa}</td>
                   <td className="text-xs" style={{ color: "var(--text-secondary)" }}>{k.adres || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>

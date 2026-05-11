@@ -216,7 +216,7 @@ body {
   letter-spacing: 0.12em;
   color: var(--text-muted);
   padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 2px solid var(--border);
   white-space: nowrap;
   background: var(--bg-surface);
 }

@@ -198,20 +198,37 @@ export default function Opakowania() {
 
       {/* Header */}
       <div className="flex items-center justify-between mb-4 shrink-0">
-        <div className="flex items-center gap-3">
-          <div style={{ padding: "8px", borderRadius: "10px", background: "rgba(6,182,212,0.15)", border: "1px solid rgba(6,182,212,0.3)" }}>
-            <Archive className="w-5 h-5" style={{ color: "var(--accent)" }} />
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black tracking-tight" style={{ color: "var(--text-primary)" }}>Opakowania zwrotne</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              Cyrkulacja
+            </span>
           </div>
-          <div>
-            <h1 className="text-lg font-bold" style={{ color: "var(--text-primary)", letterSpacing: "-0.02em" }}>Opakowania zwrotne</h1>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>Cyrkulacja pozetti i innych opakowań na podstawie kartotek towarowych</p>
+          <div className="flex items-center gap-3 mt-1.5">
+            {[
+              { key: 'PRZYJECIE', color: '#22c55e', label: 'Przyjęcia' },
+              { key: 'WYDA',      color: '#f97316', label: 'Wydania'   },
+              { key: 'ZWROT',     color: '#a78bfa', label: 'Zwroty'    },
+            ].map(s => {
+              const n = historia.filter(h => h.typ_ruchu === s.key).length;
+              if (!n) return null;
+              return (
+                <span key={s.key} className="flex items-center gap-1 text-[10px] font-semibold"
+                      style={{ color: 'var(--text-muted)' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 2, background: s.color, display: 'inline-block', opacity: 0.8 }} />
+                  <span style={{ color: s.color, fontWeight: 800 }}>{n}</span> {s.label}
+                </span>
+              );
+            })}
           </div>
         </div>
         <button
           onClick={fetchAll}
           disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
-          style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-secondary)", cursor: loading ? "wait" : "pointer" }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+          style={{ background: 'rgba(6,182,212,0.1)', color: 'var(--accent)', border: '1px solid rgba(6,182,212,0.25)', cursor: loading ? "wait" : "pointer" }}
         >
           <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           <span className="hidden sm:inline">Odśwież</span>
@@ -444,34 +461,44 @@ export default function Opakowania() {
             {historia.length === 0 ? (
               <div className="text-center py-20" style={{ color: "var(--text-muted)" }}>Brak historii ruchów</div>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <div className="mes-panel rounded overflow-hidden" style={{ overflowX: "auto" }}>
+                <table className="mes-table">
                   <thead>
-                    <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    <tr style={{ borderBottom: "2px solid var(--border)" }}>
+                      <th style={{ width: 3, padding: 0 }} />
                       {["Data", "Asortyment", "Ruch", "Ilość", "Kontrahent", "Dokument", "Uwagi", ""].map(h => (
-                        <th key={h} style={{ textAlign: "left", padding: "8px 12px", color: "var(--text-muted)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{h}</th>
+                        <th key={h}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {historia.map((h, idx) => (
-                      <tr key={h.id} style={{ borderBottom: "1px solid var(--border)", background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)" }}>
-                        <td style={{ padding: "10px 12px", whiteSpace: "nowrap", color: "var(--text-muted)", fontSize: 12 }}>{formatDate(h.utworzono_dnia)}</td>
-                        <td style={{ padding: "10px 12px", fontWeight: 600 }}>{h.asortyment?.nazwa || "—"}</td>
-                        <td style={{ padding: "10px 12px" }}><RuchBadge typ={h.typ_ruchu} /></td>
-                        <td style={{ padding: "10px 12px", fontWeight: 700, fontSize: 15, textAlign: "center" }}>{h.ilosc}</td>
-                        <td style={{ padding: "10px 12px", color: "var(--text-secondary)" }}>
+                    {historia.map(h => {
+                      const ruchColor: Record<string, string> = {
+                        PRZYJECIE: '#22c55e', WYDA: '#f97316', ZWROT: '#a78bfa', STRATA: '#ef4444',
+                      };
+                      const rc = ruchColor[h.typ_ruchu] || 'var(--border)';
+                      return (
+                      <tr key={h.id}>
+                        <td style={{ width: 3, padding: 0 }}>
+                          <div style={{ width: 3, height: 36, background: rc, opacity: 0.8, borderRadius: '0 2px 2px 0' }} />
+                        </td>
+                        <td className="mono text-xs" style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{formatDate(h.utworzono_dnia)}</td>
+                        <td className="font-semibold text-white">{h.asortyment?.nazwa || "—"}</td>
+                        <td><RuchBadge typ={h.typ_ruchu} /></td>
+                        <td className="mono font-bold text-center" style={{ fontSize: 15 }}>{h.ilosc}</td>
+                        <td style={{ color: "var(--text-secondary)" }}>
                           {h.kontrahent ? <span title={h.kontrahent.nazwa}>{h.kontrahent.kod}</span> : <span style={{ color: "var(--text-muted)" }}>—</span>}
                         </td>
-                        <td style={{ padding: "10px 12px", color: "var(--accent)", fontFamily: "monospace", fontSize: 12, fontWeight: 700 }}>
+                        <td className="mono text-xs font-bold" style={{ color: "var(--accent)" }}>
                           {h.referencja_dokumentu || "—"}
                         </td>
-                        <td style={{ padding: "10px 12px", color: "var(--text-muted)", fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.uwagi || "—"}</td>
-                        <td style={{ padding: "10px 12px" }}>
+                        <td className="text-xs" style={{ color: "var(--text-muted)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.uwagi || "—"}</td>
+                        <td>
                           <button
                             onClick={() => handleDeleteRuch(h.id)}
                             title="Usuń ruch"
-                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 4, borderRadius: 6, transition: "color 0.15s" }}
+                            className="p-1 rounded transition-colors"
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}
                             onMouseEnter={e => (e.currentTarget.style.color = "var(--error)")}
                             onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
                           >
@@ -479,7 +506,8 @@ export default function Opakowania() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

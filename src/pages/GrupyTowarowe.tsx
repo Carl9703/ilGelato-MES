@@ -470,19 +470,22 @@ export default function GrupyTowarowe() {
       {/* ── Header ── */}
       <div className="flex items-center justify-between shrink-0">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Tag className="w-5 h-5" style={{ color: 'var(--accent)' }} />
-            Grupy towarowe
-          </h2>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {loading ? "Ładowanie…" : `${grupy.length} grup · ${totalCount - grupy.length} podgrup · hierarchia dwupoziomowa`}
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Grupy towarowe</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              Słownik
+            </span>
+          </div>
+          <p className="text-[11px] mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>
+            {loading ? "Ładowanie…" : `${grupy.length} grup · ${totalCount - grupy.length} podgrup`}
           </p>
         </div>
         <button
           id="add-group-btn"
           onClick={() => openNew()}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white btn-hover-effect"
-          style={{ background: 'var(--accent)', boxShadow: '0 0 20px rgba(6,182,212,0.25)' }}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+          style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
         >
           <Plus className="w-4 h-4" />
           Nowa grupa

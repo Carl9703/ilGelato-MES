@@ -120,17 +120,22 @@ export default function WyrobyGotowe() {
     <div className="flex flex-col h-full gap-4">
       {/* Nagłówek */}
       <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Package className="w-5 h-5" style={{ color: "var(--accent)" }} />
-          <h1 className="text-lg font-semibold text-white">Wyroby gotowe</h1>
-          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-            Stan magazynowy
-          </span>
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Wyroby gotowe</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              Stan
+            </span>
+          </div>
+          <p className="text-[11px] mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>
+            Magazyn wyrobów gotowych — partie i opakowania
+          </p>
         </div>
         <button
           onClick={fetchStan}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors"
-          style={{ background: "var(--bg-surface)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+          style={{ background: 'rgba(6,182,212,0.1)', color: 'var(--accent)', border: '1px solid rgba(6,182,212,0.25)' }}
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           Odśwież
@@ -185,7 +190,8 @@ export default function WyrobyGotowe() {
         {!loading && !error && filtered.length > 0 && (
           <table className="w-full text-sm border-collapse">
             <thead>
-              <tr style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border)" }}>
+              <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
+                <th style={{ width: 3, padding: 0 }} />
                 <SortableTh label="Kod"       field="kod_towaru"       sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
                 <SortableTh label="Nazwa"     field="nazwa"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
                 <SortableTh label="Opakowanie" field="opakowanie"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-left px-4 py-3 font-medium"  style={{ color: "var(--text-muted)" }} />
@@ -200,6 +206,7 @@ export default function WyrobyGotowe() {
             <tbody>
               {filtered.map((row, idx) => (
                 <tr key={`${row.id_partii}_${row.opakowanie ?? ''}_${idx}`} style={{ borderBottom: "1px solid var(--border)" }}>
+                  <td style={{ padding: 0, width: 0 }}><div style={{ width: 3, height: 36, background: 'var(--ok)', opacity: 0.7 }} /></td>
                   <td className="px-4 py-2.5 font-mono text-xs" style={{ color: "var(--accent)" }}>{row.kod_towaru}</td>
                   <td className="px-4 py-2.5 font-medium" style={{ color: "var(--text-primary)" }}>{row.nazwa}</td>
                   <td className="px-4 py-2.5" style={{ color: "var(--text-secondary)" }}>{row.opakowanie ?? "—"}</td>

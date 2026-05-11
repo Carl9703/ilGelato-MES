@@ -32,10 +32,16 @@ export default function Dashboard() {
   return (
     <div className="h-full flex flex-col gap-3 animate-view">
       {/* Nagłówek */}
-      <div className="flex items-baseline justify-between shrink-0">
+      <div className="flex items-start justify-between shrink-0">
         <div>
-          <h2 className="text-lg font-bold leading-tight" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>Pulpit operacyjny</h2>
-          <p className="text-xs mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Pulpit operacyjny</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              MES
+            </span>
+          </div>
+          <p className="text-[11px] mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>
             {new Date().toLocaleDateString("pl-PL", { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
           </p>
         </div>

@@ -1,7 +1,7 @@
 import React from "react";
 import { FileText, Trash2, X, CheckCircle, Ban, Tag, Clock, Printer, ArrowRightCircle, ArrowDownCircle, Factory } from "lucide-react";
-import { fmtL } from "../utils/fmt";
-import { printDocument } from "../utils/printDoc";
+import { fmtL, fmtDate, fmtFull } from "../utils/fmt";
+import { printDocument, computeVatSummary } from "../utils/printDoc";
 import { Spinner } from "./Spinner";
 
 const statusCfg: Record<string, { bg: string; color: string; border: string; label: string; Icon: React.ElementType }> = {
@@ -24,10 +24,6 @@ const typBadgeCls: Record<string, string> = {
   PZ: 'badge-ok', PW: 'badge-info', RW: 'badge-danger', WZ: 'badge-warn',
 };
 
-const fmtFull = (d: string) =>
-  new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-const fmtDate = (d: string | null) =>
-  d ? new Date(d).toLocaleDateString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 
 type Props = {
   docRef: string;
@@ -48,30 +44,7 @@ export default function DocumentPreviewModal({
   onZatwierdz, onAnuluj, onUsun, onPrintLabels, actionLoading,
 }: Props) {
   const isWZ = docData?.typ === "WZ";
-  const hasVat = isWZ; // always show price columns for WZ
-
-  // Oblicz podsumowanie VAT
-  const vatSummary = React.useMemo(() => {
-    if (!hasVat) return null;
-    let totalNetto = 0, totalVat = 0, totalBrutto = 0;
-    const groups: Record<string, { netto: number; vat: number; brutto: number }> = {};
-    let hasAnyPrices = false;
-    for (const p of (docData?.pozycje || [])) {
-      if (p.wartosc_netto == null || p.wartosc_brutto == null) continue;
-      hasAnyPrices = true;
-      const netto = p.wartosc_netto;
-      const brutto = p.wartosc_brutto;
-      const vatKwota = brutto - netto;
-      totalNetto += netto; totalVat += vatKwota; totalBrutto += brutto;
-      const key = p.stawka_vat != null ? String(p.stawka_vat) : "?";
-      if (!groups[key]) groups[key] = { netto: 0, vat: 0, brutto: 0 };
-      groups[key].netto += netto;
-      groups[key].vat += vatKwota;
-      groups[key].brutto += brutto;
-    }
-    if (!hasAnyPrices) return null; // do not show VAT summary block if all prices are null
-    return { totalNetto, totalVat, totalBrutto, groups };
-  }, [docData, hasVat]);
+  const vatSummary = React.useMemo(() => isWZ ? computeVatSummary(docData) : null, [docData, isWZ]);
 
   return (
     <>
@@ -289,7 +262,7 @@ export default function DocumentPreviewModal({
                       <th>Partia</th>
                       {isWZ && <th style={{ color: 'var(--text-muted)', fontSize: 10 }}>Data prod.</th>}
                       <th className="text-right">Ilość</th>
-                      {isWZ && hasVat && (
+                      {isWZ && (
                         <>
                           <th className="text-right" style={{ color: 'var(--text-muted)', fontSize: 10 }}>Cena netto</th>
                           <th className="text-right" style={{ color: 'var(--text-muted)', fontSize: 10 }}>VAT</th>
@@ -320,7 +293,7 @@ export default function DocumentPreviewModal({
                           <div className="font-mono font-bold text-white">{fmtL(poz.ilosc, poz.jednostka === 'szt.' ? 0 : 3)} <span className="text-xs opacity-50">{poz.jednostka}</span></div>
                           {poz.ilosc_kg != null && <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{fmtL(poz.ilosc_kg, 3)} kg</div>}
                         </td>
-                        {isWZ && hasVat && (
+                        {isWZ && (
                           <>
                             <td className="text-right font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
                               {poz.cena_netto != null ? `${poz.cena_netto.toFixed(4)} zł` : <span style={{ color: 'var(--text-muted)' }}>—</span>}

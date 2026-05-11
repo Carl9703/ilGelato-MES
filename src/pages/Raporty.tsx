@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { BarChart2, ChevronDown, ChevronRight, TrendingUp, FileText, Users, Calendar } from "lucide-react";
+import { BarChart2, ChevronDown, ChevronRight, TrendingUp, FileText, Users, Calendar, Package, DollarSign, Layers, Printer } from "lucide-react";
 import { fmtL, fmtDate } from "../utils/fmt";
 import { Spinner } from "../components/Spinner";
-import { EmptyState } from "../components/EmptyState";
+import { printReport } from "../utils/printReport";
 
 type Pozycja = {
-  asortyment: string;   // nazwa opakowania lub towaru
-  wyrob: string | null; // nazwa wyrobu (jeśli pozycja to opakowanie)
+  asortyment: string;
+  wyrob: string | null;
   kod_towaru: string;
   numer_partii: string;
   jednostka: string;
@@ -38,16 +38,47 @@ type RaportData = {
   liczba_dokumentow: number;
 };
 
+type StanMagazynowy = {
+  id: string;
+  kod_towaru: string;
+  nazwa: string;
+  typ_asortymentu: string;
+  jednostka_miary: string;
+  ilosc: number;
+  rezerwacje: number;
+  cena_srednia: number;
+  cena_sprzedazy: number | null;
+  stawka_vat: number | null;
+};
+
+const typLabels: Record<string, string> = {
+  Surowiec: "Surowiec",
+  Polprodukt: "Półprodukt",
+  Wyrob_Gotowy: "Wyrób gotowy",
+  Opakowanie: "Opakowanie",
+};
+
+const typColors: Record<string, string> = {
+  Surowiec: "#60a5fa",
+  Polprodukt: "#fbbf24",
+  Wyrob_Gotowy: "#4ade80",
+  Opakowanie: "#c084fc",
+};
+
 function fmt(val: number) {
   return val.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+type ActiveReport = "sprzedaz" | "stany_bez_cen" | "stany_ceny_sprzedazy" | "stany_wartosci";
 
 export default function Raporty() {
   const today = new Date();
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
   const todayStr = today.toISOString().slice(0, 10);
 
+  const [activeReport, setActiveReport] = useState<ActiveReport>("sprzedaz");
+
+  // -- Sprzedaż per kontrahent --
   const [od, setOd] = useState(firstOfMonth);
   const [doData, setDoData] = useState(todayStr);
   const [filtKontrahent, setFiltKontrahent] = useState<string>("__all__");
@@ -55,6 +86,13 @@ export default function Raporty() {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [expandedDok, setExpandedDok] = useState<Set<string>>(new Set());
+
+  // -- Stany magazynowe --
+  const [stanyData, setStanyData] = useState<StanMagazynowy[] | null>(null);
+  const [stanyLoading, setStanyLoading] = useState(false);
+  const [stanyTypFilter, setStanyTypFilter] = useState<string>("all");
+  const [stanySearch, setStanySearch] = useState("");
+  const [tylkoZZapasem, setTylkoZZapasem] = useState(true);
 
   const fetchRaport = async () => {
     setLoading(true);
@@ -68,7 +106,20 @@ export default function Raporty() {
     finally { setLoading(false); }
   };
 
+  const fetchStany = async () => {
+    if (stanyData) return;
+    setStanyLoading(true);
+    try {
+      const res = await fetch("/api/asortyment");
+      if (res.ok) setStanyData(await res.json());
+    } catch {} finally { setStanyLoading(false); }
+  };
+
   useEffect(() => { fetchRaport(); }, []);
+
+  useEffect(() => {
+    if (activeReport !== "sprzedaz") fetchStany();
+  }, [activeReport]);
 
   const visibleKontrahenci = data
     ? filtKontrahent === "__all__"
@@ -95,269 +146,655 @@ export default function Raporty() {
     });
   };
 
+  const filteredStany = (stanyData ?? []).filter(a => {
+    if (tylkoZZapasem && a.ilosc <= 0) return false;
+    if (stanyTypFilter !== "all" && a.typ_asortymentu !== stanyTypFilter) return false;
+    if (stanySearch) {
+      const q = stanySearch.toLowerCase();
+      if (!a.nazwa.toLowerCase().includes(q) && !a.kod_towaru.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const exportSprzedaz = () => {
+    if (!visibleKontrahenci.length) return;
+    const rows: (string | number | null)[][] = [];
+    for (const k of visibleKontrahenci) {
+      for (const dok of k.dokumenty) {
+        for (const poz of dok.pozycje) {
+          rows.push([
+            k.nazwa,
+            dok.referencja,
+            fmtDate(dok.data),
+            poz.wyrob ?? poz.asortyment,
+            `${poz.ilosc.toLocaleString('pl-PL', { maximumFractionDigits: 3 })} ${poz.jednostka}`,
+            `${fmt(poz.wartosc)} zł`,
+          ]);
+        }
+      }
+    }
+    printReport({
+      title: "Sprzedaż per kontrahent",
+      subtitle: `Okres: ${od} — ${doData}`,
+      sections: [{
+        columns: [
+          { label: "Kontrahent" },
+          { label: "Dokument WZ" },
+          { label: "Data" },
+          { label: "Towar / wyrób" },
+          { label: "Ilość", align: "right" },
+          { label: "Wartość netto", align: "right", bold: true },
+        ],
+        rows,
+        totalRow: ["RAZEM", `${visibleDok} dok.`, null, null, null, `${fmt(visibleSuma)} zł`],
+      }],
+    });
+  };
+
+  const exportStanyBezCen = () => {
+    printReport({
+      title: "Zestawienie stanów magazynowych — ilościowy",
+      sections: [{
+        columns: [
+          { label: "Kod" },
+          { label: "Nazwa" },
+          { label: "Typ" },
+          { label: "J.M." },
+          { label: "Stan", align: "right" },
+          { label: "Zarezerwowane", align: "right" },
+          { label: "Dostępne", align: "right", bold: true },
+        ],
+        rows: filteredStany.map(a => [
+          a.kod_towaru,
+          a.nazwa,
+          typLabels[a.typ_asortymentu] ?? a.typ_asortymentu,
+          a.jednostka_miary,
+          fmtL(a.ilosc, 3),
+          fmtL(a.rezerwacje, 3),
+          fmtL(a.ilosc - a.rezerwacje, 3),
+        ]),
+        totalRow: [`RAZEM (${filteredStany.length} poz.)`, null, null, null, null,
+          fmtL(filteredStany.reduce((s, a) => s + a.rezerwacje, 0), 3),
+          null,
+        ],
+      }],
+    });
+  };
+
+  const exportStanyCenySprzedazy = () => {
+    printReport({
+      title: "Zestawienie stanów magazynowych — ceny sprzedaży (netto)",
+      sections: [{
+        columns: [
+          { label: "Kod" },
+          { label: "Nazwa" },
+          { label: "Typ" },
+          { label: "J.M." },
+          { label: "Dostępne", align: "right" },
+          { label: "Cena netto sprzedaży", align: "right" },
+          { label: "VAT", align: "right" },
+          { label: "Wartość netto", align: "right", bold: true },
+        ],
+        rows: filteredStany.map(a => {
+          const dostepne = a.ilosc - a.rezerwacje;
+          const wartosc = a.cena_sprzedazy != null ? dostepne * a.cena_sprzedazy : null;
+          return [
+            a.kod_towaru,
+            a.nazwa,
+            typLabels[a.typ_asortymentu] ?? a.typ_asortymentu,
+            a.jednostka_miary,
+            fmtL(dostepne, 3),
+            a.cena_sprzedazy != null ? `${fmt(a.cena_sprzedazy)} zł` : null,
+            a.stawka_vat != null ? `${a.stawka_vat}%` : null,
+            wartosc != null ? `${fmt(wartosc)} zł` : null,
+          ];
+        }),
+        totalRow: [`RAZEM (${filteredStany.length} poz.)`, null, null, null, null, null, null,
+          `${fmt(filteredStany.reduce((s, a) => a.cena_sprzedazy != null ? s + (a.ilosc - a.rezerwacje) * a.cena_sprzedazy : s, 0))} zł`,
+        ],
+      }],
+    });
+  };
+
+  const exportStanyWartosci = () => {
+    printReport({
+      title: "Zestawienie stanów magazynowych — wartości zakupu (netto)",
+      sections: [{
+        columns: [
+          { label: "Kod" },
+          { label: "Nazwa" },
+          { label: "Typ" },
+          { label: "J.M." },
+          { label: "Stan", align: "right" },
+          { label: "Cena śr. zakupu (netto)", align: "right" },
+          { label: "Wartość magazynowa (netto)", align: "right", bold: true },
+        ],
+        rows: filteredStany.map(a => [
+          a.kod_towaru,
+          a.nazwa,
+          typLabels[a.typ_asortymentu] ?? a.typ_asortymentu,
+          a.jednostka_miary,
+          fmtL(a.ilosc, 3),
+          a.cena_srednia > 0 ? `${fmt(a.cena_srednia)} zł` : null,
+          a.cena_srednia > 0 ? `${fmt(a.ilosc * a.cena_srednia)} zł` : null,
+        ]),
+        totalRow: [`RAZEM (${filteredStany.length} poz.)`, null, null, null, null, null,
+          `${fmt(filteredStany.reduce((s, a) => s + a.ilosc * a.cena_srednia, 0))} zł`,
+        ],
+      }],
+    });
+  };
+
+  const tabs: { id: ActiveReport; label: string; icon: React.ReactNode }[] = [
+    { id: "sprzedaz", label: "Sprzedaż per kontrahent", icon: <Users className="w-4 h-4" /> },
+    { id: "stany_bez_cen", label: "Stany mag. — ilościowy", icon: <Package className="w-4 h-4" /> },
+    { id: "stany_ceny_sprzedazy", label: "Stany mag. — ceny sprzedaży", icon: <DollarSign className="w-4 h-4" /> },
+    { id: "stany_wartosci", label: "Stany mag. — wartości zakupu", icon: <Layers className="w-4 h-4" /> },
+  ];
+
+  // -- Filtry dla stanów --
+  const stanyFilterBar = (onExport: () => void) => (
+    <div
+      className="flex flex-wrap items-center gap-3 px-4 py-3 rounded-xl shrink-0"
+      style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+    >
+      <input
+        type="text"
+        placeholder="Szukaj…"
+        value={stanySearch}
+        onChange={e => setStanySearch(e.target.value)}
+        className="rounded-lg px-3 py-1.5 text-sm outline-none"
+        style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)", width: 180 }}
+      />
+      <select
+        value={stanyTypFilter}
+        onChange={e => setStanyTypFilter(e.target.value)}
+        className="rounded-lg px-3 py-1.5 text-sm outline-none cursor-pointer"
+        style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+      >
+        <option value="all">Wszystkie typy</option>
+        <option value="Surowiec">Surowce</option>
+        <option value="Polprodukt">Półprodukty</option>
+        <option value="Wyrob_Gotowy">Wyroby gotowe</option>
+        <option value="Opakowanie">Opakowania</option>
+      </select>
+      <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: "var(--text-secondary)" }}>
+        <input
+          type="checkbox"
+          checked={tylkoZZapasem}
+          onChange={e => setTylkoZZapasem(e.target.checked)}
+          className="rounded"
+        />
+        Tylko z zapasem
+      </label>
+      <span className="ml-auto text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+        {filteredStany.length} poz.
+      </span>
+      <button
+        onClick={() => { setStanyData(null); fetchStany(); }}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+        style={{ background: 'rgba(6,182,212,0.15)', color: 'var(--accent)', border: '1px solid rgba(6,182,212,0.35)' }}
+      >
+        <TrendingUp className="w-3.5 h-3.5" /> Odśwież
+      </button>
+      <button
+        onClick={onExport}
+        disabled={filteredStany.length === 0}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect disabled:opacity-40"
+        style={{ background: 'rgba(168,85,247,0.15)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.35)' }}
+      >
+        <Printer className="w-3.5 h-3.5" /> Eksportuj PDF
+      </button>
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-3 h-full">
       {/* Nagłówek */}
       <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <BarChart2 className="w-5 h-5" style={{ color: "var(--accent)" }} />
-          <h2 className="text-lg font-bold text-white">Raporty</h2>
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Raporty</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              Analiza
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Zakładki raportów */}
-      <div className="flex gap-1 shrink-0">
-        <button
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold"
-          style={{ background: "var(--accent)", color: "#fff" }}
-        >
-          <Users className="w-4 h-4" /> Sprzedaż per kontrahent
-        </button>
-      </div>
-
-      {/* Filtry */}
-      <div
-        className="flex flex-wrap items-center gap-4 px-4 py-3 rounded-xl shrink-0"
-        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-      >
-        <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
-          <span className="text-xs font-bold uppercase" style={{ color: "var(--text-muted)" }}>Okres:</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs" style={{ color: "var(--text-muted)" }}>Od</label>
-          <input
-            type="date"
-            value={od}
-            onChange={e => setOd(e.target.value)}
-            className="rounded-lg px-3 py-1.5 text-sm outline-none"
-            style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs" style={{ color: "var(--text-muted)" }}>Do</label>
-          <input
-            type="date"
-            value={doData}
-            onChange={e => setDoData(e.target.value)}
-            className="rounded-lg px-3 py-1.5 text-sm outline-none"
-            style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
-          <select
-            value={filtKontrahent}
-            onChange={e => setFiltKontrahent(e.target.value)}
-            className="rounded-lg px-3 py-1.5 text-sm outline-none"
-            style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+      <div className="flex gap-1 shrink-0 flex-wrap">
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveReport(tab.id)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+            style={
+              activeReport === tab.id
+                ? { background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }
+                : { background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }
+            }
           >
-            <option value="__all__">Wszyscy kontrahenci</option>
-            {(data?.kontrahenci ?? []).map(k => (
-              <option key={k.id ?? "__brak__"} value={k.id ?? "__brak__"}>{k.nazwa}</option>
-            ))}
-          </select>
-        </div>
-        <button
-          onClick={fetchRaport}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-semibold text-white"
-          style={{ background: "var(--accent)" }}
-        >
-          {loading ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
-          Generuj
-        </button>
+            {tab.icon} {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* Podsumowanie */}
-      {data && (
-        <div className="grid grid-cols-3 gap-3 shrink-0">
-          {[
-            { label: "Kontrahentów", value: visibleKontrahenci.length, mono: true },
-            { label: "Dokumentów WZ", value: visibleDok, mono: true },
-            { label: "Wartość sprzedaży", value: fmt(visibleSuma) + " PLN", mono: false },
-          ].map(({ label, value, mono }) => (
-            <div
-              key={label}
-              className="px-4 py-3 rounded-xl"
-              style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-            >
-              <div className="text-xs uppercase font-bold mb-1" style={{ color: "var(--text-muted)" }}>{label}</div>
-              <div className={`text-xl font-bold ${mono ? "font-mono" : ""}`} style={{ color: "var(--text-primary)" }}>{value}</div>
+      {/* ── SPRZEDAŻ PER KONTRAHENT ── */}
+      {activeReport === "sprzedaz" && (
+        <>
+          {/* Filtry */}
+          <div
+            className="flex flex-wrap items-center gap-4 px-4 py-3 rounded-xl shrink-0"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
+              <span className="text-xs font-bold uppercase" style={{ color: "var(--text-muted)" }}>Okres:</span>
             </div>
-          ))}
-        </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs" style={{ color: "var(--text-muted)" }}>Od</label>
+              <input
+                type="date" value={od} onChange={e => setOd(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs" style={{ color: "var(--text-muted)" }}>Do</label>
+              <input
+                type="date" value={doData} onChange={e => setDoData(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
+              <select
+                value={filtKontrahent}
+                onChange={e => setFiltKontrahent(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              >
+                <option value="__all__">Wszyscy kontrahenci</option>
+                {(data?.kontrahenci ?? []).map(k => (
+                  <option key={k.id ?? "__brak__"} value={k.id ?? "__brak__"}>{k.nazwa}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={fetchRaport} disabled={loading}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+              style={{ background: 'rgba(6,182,212,0.15)', color: 'var(--accent)', border: '1px solid rgba(6,182,212,0.35)' }}
+            >
+              {loading ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
+              Generuj
+            </button>
+            <button
+              onClick={exportSprzedaz}
+              disabled={visibleKontrahenci.length === 0}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect disabled:opacity-40"
+              style={{ background: 'rgba(168,85,247,0.15)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.35)' }}
+            >
+              <Printer className="w-3.5 h-3.5" /> Eksportuj PDF
+            </button>
+          </div>
+
+          {/* Podsumowanie */}
+          {data && (
+            <div className="grid grid-cols-3 gap-3 shrink-0">
+              {[
+                { label: "Kontrahentów", value: visibleKontrahenci.length, mono: true },
+                { label: "Dokumentów WZ", value: visibleDok, mono: true },
+                { label: "Wartość sprzedaży", value: fmt(visibleSuma) + " PLN", mono: false },
+              ].map(({ label, value, mono }) => (
+                <div key={label} className="px-4 py-3 rounded-xl"
+                     style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+                  <div className="text-xs uppercase font-bold mb-1" style={{ color: "var(--text-muted)" }}>{label}</div>
+                  <div className={`text-xl font-bold ${mono ? "font-mono" : ""}`} style={{ color: "var(--text-primary)" }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Tabela */}
+          <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
+            {loading ? (
+              <Spinner.Page />
+            ) : visibleKontrahenci.length === 0 ? (
+              <div className="p-12 text-center" style={{ color: "var(--text-muted)" }}>
+                Brak zatwierdzonych dokumentów WZ w wybranym okresie.
+              </div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
+                    {["", "Kontrahent", "Dokumenty WZ", "Wartość netto (PLN)", "Udział %"].map((h, i) => (
+                      <th key={i} style={{
+                        padding: "8px 12px", textAlign: i >= 2 ? "right" : "left",
+                        fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                        letterSpacing: "0.08em", color: "var(--text-muted)",
+                        width: i === 0 ? 32 : undefined,
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleKontrahenci.map(k => {
+                    const klucz = k.id ?? "__brak__";
+                    const isExp = expanded.has(klucz);
+                    const udzial = visibleSuma > 0 ? (k.wartosc_total / visibleSuma) * 100 : 0;
+                    return (
+                      <React.Fragment key={klucz}>
+                        <tr
+                          onClick={() => toggleKontrahent(klucz)}
+                          style={{ borderBottom: "1px solid var(--border-dim)", cursor: "pointer", transition: "background .1s" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                        >
+                          <td style={{ padding: "8px 12px" }}>
+                            {isExp ? <ChevronDown className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
+                                   : <ChevronRight className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />}
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>
+                            <div className="font-semibold" style={{ color: "var(--text-primary)" }}>{k.nazwa}</div>
+                            {k.id && <div className="font-mono text-xs mt-0.5" style={{ color: "var(--accent)" }}>{k.kod}</div>}
+                          </td>
+                          <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                            <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{k.liczba_dokumentow}</span>
+                          </td>
+                          <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, fontFamily: "JetBrains Mono,monospace" }}>
+                            <span style={{ color: "var(--ok)" }}>{fmt(k.wartosc_total)}</span>
+                          </td>
+                          <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                            <div className="flex items-center justify-end gap-2">
+                              <div className="h-1.5 rounded-full" style={{ width: 60, background: "var(--border)" }}>
+                                <div className="h-full rounded-full" style={{ width: `${udzial}%`, background: "var(--accent)" }} />
+                              </div>
+                              <span className="font-mono text-xs w-10 text-right" style={{ color: "var(--text-secondary)" }}>
+                                {fmtL(udzial, 1)}%
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {isExp && k.dokumenty.map(dok => {
+                          const isDokExp = expandedDok.has(dok.referencja);
+                          return (
+                            <React.Fragment key={dok.referencja}>
+                              <tr
+                                onClick={() => toggleDok(dok.referencja)}
+                                style={{ background: "rgba(59,130,246,0.04)", borderBottom: "1px solid var(--border-dim)", cursor: "pointer" }}
+                                onMouseEnter={e => (e.currentTarget.style.background = "rgba(59,130,246,0.08)")}
+                                onMouseLeave={e => (e.currentTarget.style.background = "rgba(59,130,246,0.04)")}
+                              >
+                                <td style={{ padding: "6px 12px 6px 32px" }}>
+                                  {isDokExp ? <ChevronDown className="w-3 h-3" style={{ color: "var(--text-muted)" }} />
+                                            : <ChevronRight className="w-3 h-3" style={{ color: "var(--text-muted)" }} />}
+                                </td>
+                                <td style={{ padding: "6px 12px" }}>
+                                  <div className="flex items-center gap-2">
+                                    <FileText className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--accent)" }} />
+                                    <span className="font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{dok.referencja}</span>
+                                    <span className="text-xs" style={{ color: "var(--text-muted)" }}>{fmtDate(dok.data)}</span>
+                                  </div>
+                                </td>
+                                <td style={{ padding: "6px 12px", textAlign: "right" }}>
+                                  <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>{dok.pozycje.length} poz.</span>
+                                </td>
+                                <td style={{ padding: "6px 12px", textAlign: "right" }}>
+                                  <span className="font-mono text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(dok.wartosc)}</span>
+                                </td>
+                                <td />
+                              </tr>
+                              {isDokExp && dok.pozycje.map((poz, pi) => (
+                                <tr key={pi} style={{ background: "rgba(59,130,246,0.02)", borderBottom: "1px solid var(--border-dim)" }}>
+                                  <td style={{ padding: "5px 12px 5px 52px" }} />
+                                  <td style={{ padding: "5px 8px 5px 12px", fontSize: 12 }}>
+                                    {poz.wyrob ? (
+                                      <>
+                                        <div style={{ color: "var(--text-muted)", fontSize: 11 }}>{poz.asortyment}</div>
+                                        <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{poz.wyrob}</div>
+                                        <div className="font-mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>{poz.numer_partii}</div>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="font-mono" style={{ color: "var(--text-muted)", marginRight: 6 }}>{poz.kod_towaru}</span>
+                                        <span style={{ color: "var(--text-secondary)" }}>{poz.asortyment}</span>
+                                      </>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: "5px 12px", textAlign: "right", fontSize: 12 }}>
+                                    <span className="font-mono" style={{ color: "var(--text-muted)" }}>
+                                      {poz.ilosc.toLocaleString("pl-PL", { maximumFractionDigits: 3 })} {poz.jednostka}
+                                    </span>
+                                    {poz.ilosc_kg != null && (
+                                      <div className="font-mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                                        {fmtL(poz.ilosc_kg, 3)} kg
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: "5px 12px", textAlign: "right", fontSize: 12 }}>
+                                    <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{fmt(poz.wartosc)}</span>
+                                  </td>
+                                  <td />
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-surface)" }}>
+                    <td />
+                    <td style={{ padding: "10px 12px", fontWeight: 700, color: "var(--text-primary)", fontSize: 13 }}>RAZEM</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--text-primary)" }}>{visibleDok}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700 }}>
+                      <span style={{ color: "var(--ok)" }}>{fmt(visibleSuma)}</span>
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        </>
       )}
 
-      {/* Tabela */}
-      <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
-        {loading ? (
-          <Spinner.Page />
-        ) : visibleKontrahenci.length === 0 ? (
-          <div className="p-12 text-center" style={{ color: "var(--text-muted)" }}>
-            Brak zatwierdzonych dokumentów WZ w wybranym okresie.
-          </div>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border)" }}>
-                {["", "Kontrahent", "Dokumenty WZ", "Wartość (PLN)", "Udział %"].map((h, i) => (
-                  <th
-                    key={i}
-                    style={{
-                      padding: "8px 12px",
-                      textAlign: i >= 2 ? "right" : "left",
-                      fontSize: 10,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                      color: "var(--text-muted)",
-                      width: i === 0 ? 32 : undefined,
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visibleKontrahenci.map(k => {
-                const klucz = k.id ?? "__brak__";
-                const isExp = expanded.has(klucz);
-                const udzial = visibleSuma > 0 ? (k.wartosc_total / visibleSuma) * 100 : 0;
-
-                return (
-                  <React.Fragment key={klucz}>
-                    {/* Wiersz kontrahenta */}
-                    <tr
-                      onClick={() => toggleKontrahent(klucz)}
-                      style={{ borderBottom: "1px solid var(--border-dim)", cursor: "pointer", transition: "background .1s" }}
-                      onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
-                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+      {/* ── STANY MAGAZYNOWE — ILOŚCIOWY ── */}
+      {activeReport === "stany_bez_cen" && (
+        <>
+          {stanyFilterBar(exportStanyBezCen)}
+          <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
+            {stanyLoading ? <Spinner.Page /> : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
+                    {["Kod", "Nazwa", "Typ", "J.M.", "Stan", "Zarezerwowane", "Dostępne"].map((h, i) => (
+                      <th key={h} style={{
+                        padding: "8px 12px", textAlign: i >= 4 ? "right" : "left",
+                        fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                        letterSpacing: "0.08em", color: "var(--text-muted)",
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStany.map(a => (
+                    <tr key={a.id}
+                        style={{ borderBottom: "1px solid var(--border-dim)" }}
+                        onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                     >
-                      <td style={{ padding: "8px 12px" }}>
-                        {isExp
-                          ? <ChevronDown className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
-                          : <ChevronRight className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />}
+                      <td style={{ padding: "7px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--text-code)" }}>{a.kod_towaru}</td>
+                      <td style={{ padding: "7px 12px", fontWeight: 500, color: "var(--text-primary)" }}>{a.nazwa}</td>
+                      <td style={{ padding: "7px 12px" }}>
+                        <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ color: typColors[a.typ_asortymentu] ?? "var(--text-muted)", background: `${typColors[a.typ_asortymentu] ?? "#888"}18` }}>
+                          {typLabels[a.typ_asortymentu] ?? a.typ_asortymentu}
+                        </span>
                       </td>
-                      <td style={{ padding: "8px 12px" }}>
-                        <div className="font-semibold" style={{ color: "var(--text-primary)" }}>{k.nazwa}</div>
-                        {k.id && <div className="font-mono text-xs mt-0.5" style={{ color: "var(--accent)" }}>{k.kod}</div>}
-                      </td>
-                      <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                        <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{k.liczba_dokumentow}</span>
-                      </td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, fontFamily: "JetBrains Mono,monospace" }}>
-                        <span style={{ color: "var(--ok)" }}>{fmt(k.wartosc_total)}</span>
-                      </td>
-                      <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                        <div className="flex items-center justify-end gap-2">
-                          <div
-                            className="h-1.5 rounded-full"
-                            style={{ width: 60, background: "var(--border)" }}
-                          >
-                            <div
-                              className="h-full rounded-full"
-                              style={{ width: `${udzial}%`, background: "var(--accent)" }}
-                            />
-                          </div>
-                          <span className="font-mono text-xs w-10 text-right" style={{ color: "var(--text-secondary)" }}>
-                            {fmtL(udzial, 1)}%
-                          </span>
-                        </div>
-                      </td>
+                      <td style={{ padding: "7px 12px", color: "var(--text-secondary)" }}>{a.jednostka_miary}</td>
+                      <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: "var(--text-primary)" }}>{fmtL(a.ilosc, 3)}</td>
+                      <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", color: a.rezerwacje > 0 ? "#fbbf24" : "var(--text-muted)" }}>{fmtL(a.rezerwacje, 3)}</td>
+                      <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: (a.ilosc - a.rezerwacje) > 0 ? "#4ade80" : "var(--text-muted)" }}>{fmtL(a.ilosc - a.rezerwacje, 3)}</td>
                     </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-surface)" }}>
+                    <td colSpan={4} style={{ padding: "8px 12px", fontWeight: 700, color: "var(--text-muted)", fontSize: 12 }}>
+                      RAZEM ({filteredStany.length} poz.)
+                    </td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--text-primary)" }}>—</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#fbbf24" }}>
+                      {fmtL(filteredStany.reduce((s, a) => s + a.rezerwacje, 0), 3)}
+                    </td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#4ade80" }}>—</td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        </>
+      )}
 
-                    {/* Rozwinięcie — lista dokumentów */}
-                    {isExp && k.dokumenty.map(dok => {
-                      const isDokExp = expandedDok.has(dok.referencja);
-                      return (
-                        <React.Fragment key={dok.referencja}>
-                          <tr
-                            onClick={() => toggleDok(dok.referencja)}
-                            style={{ background: "rgba(59,130,246,0.04)", borderBottom: "1px solid var(--border-dim)", cursor: "pointer" }}
-                            onMouseEnter={e => (e.currentTarget.style.background = "rgba(59,130,246,0.08)")}
-                            onMouseLeave={e => (e.currentTarget.style.background = "rgba(59,130,246,0.04)")}
-                          >
-                            <td style={{ padding: "6px 12px 6px 32px" }}>
-                              {isDokExp
-                                ? <ChevronDown className="w-3 h-3" style={{ color: "var(--text-muted)" }} />
-                                : <ChevronRight className="w-3 h-3" style={{ color: "var(--text-muted)" }} />}
-                            </td>
-                            <td style={{ padding: "6px 12px" }}>
-                              <div className="flex items-center gap-2">
-                                <FileText className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--accent)" }} />
-                                <span className="font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{dok.referencja}</span>
-                                <span className="text-xs" style={{ color: "var(--text-muted)" }}>{fmtDate(dok.data)}</span>
-                              </div>
-                            </td>
-                            <td style={{ padding: "6px 12px", textAlign: "right" }}>
-                              <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>{dok.pozycje.length} poz.</span>
-                            </td>
-                            <td style={{ padding: "6px 12px", textAlign: "right" }}>
-                              <span className="font-mono text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(dok.wartosc)}</span>
-                            </td>
-                            <td />
-                          </tr>
+      {/* ── STANY MAGAZYNOWE — CENY SPRZEDAŻY (NETTO) ── */}
+      {activeReport === "stany_ceny_sprzedazy" && (
+        <>
+          {stanyFilterBar(exportStanyCenySprzedazy)}
+          <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
+            {stanyLoading ? <Spinner.Page /> : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
+                    {["Kod", "Nazwa", "Typ", "J.M.", "Dostępne", "Cena netto sprzedaży", "VAT", "Wartość netto (dostępne × cena)"].map((h, i) => (
+                      <th key={h} style={{
+                        padding: "8px 12px", textAlign: i >= 4 ? "right" : "left",
+                        fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                        letterSpacing: "0.08em", color: "var(--text-muted)",
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStany.map(a => {
+                    const dostepne = a.ilosc - a.rezerwacje;
+                    const wartosc = a.cena_sprzedazy != null ? dostepne * a.cena_sprzedazy : null;
+                    return (
+                      <tr key={a.id}
+                          style={{ borderBottom: "1px solid var(--border-dim)" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <td style={{ padding: "7px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--text-code)" }}>{a.kod_towaru}</td>
+                        <td style={{ padding: "7px 12px", fontWeight: 500, color: "var(--text-primary)" }}>{a.nazwa}</td>
+                        <td style={{ padding: "7px 12px" }}>
+                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ color: typColors[a.typ_asortymentu] ?? "var(--text-muted)", background: `${typColors[a.typ_asortymentu] ?? "#888"}18` }}>
+                            {typLabels[a.typ_asortymentu] ?? a.typ_asortymentu}
+                          </span>
+                        </td>
+                        <td style={{ padding: "7px 12px", color: "var(--text-secondary)" }}>{a.jednostka_miary}</td>
+                        <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: dostepne > 0 ? "#4ade80" : "var(--text-muted)" }}>{fmtL(dostepne, 3)}</td>
+                        <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", color: a.cena_sprzedazy != null ? "var(--accent)" : "var(--text-muted)" }}>
+                          {a.cena_sprzedazy != null ? `${fmt(a.cena_sprzedazy)} zł` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--text-muted)" }}>
+                          {a.stawka_vat != null ? `${a.stawka_vat}%` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: wartosc != null && wartosc > 0 ? "var(--ok)" : "var(--text-muted)" }}>
+                          {wartosc != null ? `${fmt(wartosc)} zł` : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-surface)" }}>
+                    <td colSpan={4} style={{ padding: "8px 12px", fontWeight: 700, color: "var(--text-muted)", fontSize: 12 }}>
+                      RAZEM ({filteredStany.length} poz.)
+                    </td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#4ade80" }}>—</td>
+                    <td colSpan={2} />
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--ok)" }}>
+                      {fmt(filteredStany.reduce((s, a) => {
+                        if (a.cena_sprzedazy == null) return s;
+                        return s + (a.ilosc - a.rezerwacje) * a.cena_sprzedazy;
+                      }, 0))} zł
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        </>
+      )}
 
-                          {/* Pozycje dokumentu */}
-                          {isDokExp && dok.pozycje.map((poz, pi) => (
-                            <tr
-                              key={pi}
-                              style={{ background: "rgba(59,130,246,0.02)", borderBottom: "1px solid var(--border-dim)" }}
-                            >
-                              <td style={{ padding: "5px 12px 5px 52px" }} />
-                              <td style={{ padding: "5px 8px 5px 12px", fontSize: 12 }}>
-                                {poz.wyrob ? (
-                                  <>
-                                    <div style={{ color: "var(--text-muted)", fontSize: 11 }}>{poz.asortyment}</div>
-                                    <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{poz.wyrob}</div>
-                                    <div className="font-mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>{poz.numer_partii}</div>
-                                  </>
-                                ) : (
-                                  <>
-                                    <span className="font-mono" style={{ color: "var(--text-muted)", marginRight: 6 }}>{poz.kod_towaru}</span>
-                                    <span style={{ color: "var(--text-secondary)" }}>{poz.asortyment}</span>
-                                  </>
-                                )}
-                              </td>
-                              <td style={{ padding: "5px 12px", textAlign: "right", fontSize: 12 }}>
-                                <span className="font-mono" style={{ color: "var(--text-muted)" }}>
-                                  {poz.ilosc.toLocaleString("pl-PL", { maximumFractionDigits: 3 })} {poz.jednostka}
-                                </span>
-                                {poz.ilosc_kg != null && (
-                                  <div className="font-mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>
-                                    {fmtL(poz.ilosc_kg, 3)} kg
-                                  </div>
-                                )}
-                              </td>
-                              <td style={{ padding: "5px 12px", textAlign: "right", fontSize: 12 }}>
-                                <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{fmt(poz.wartosc)}</span>
-                              </td>
-                              <td />
-                            </tr>
-                          ))}
-                        </React.Fragment>
-                      );
-                    })}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-surface)" }}>
-                <td />
-                <td style={{ padding: "10px 12px", fontWeight: 700, color: "var(--text-primary)", fontSize: 13 }}>RAZEM</td>
-                <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--text-primary)" }}>{visibleDok}</td>
-                <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700 }}>
-                  <span style={{ color: "var(--ok)" }}>{fmt(visibleSuma)}</span>
-                </td>
-                <td />
-              </tr>
-            </tfoot>
-          </table>
-        )}
-      </div>
+      {/* ── STANY MAGAZYNOWE — WARTOŚCI ZAKUPU (NETTO) ── */}
+      {activeReport === "stany_wartosci" && (
+        <>
+          {stanyFilterBar(exportStanyWartosci)}
+          <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
+            {stanyLoading ? <Spinner.Page /> : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
+                    {["Kod", "Nazwa", "Typ", "J.M.", "Stan", "Cena śr. zakupu (netto)", "Wartość magazynowa (netto)"].map((h, i) => (
+                      <th key={h} style={{
+                        padding: "8px 12px", textAlign: i >= 4 ? "right" : "left",
+                        fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                        letterSpacing: "0.08em", color: "var(--text-muted)",
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStany.map(a => {
+                    const wartosc = a.ilosc * a.cena_srednia;
+                    return (
+                      <tr key={a.id}
+                          style={{ borderBottom: "1px solid var(--border-dim)" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <td style={{ padding: "7px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--text-code)" }}>{a.kod_towaru}</td>
+                        <td style={{ padding: "7px 12px", fontWeight: 500, color: "var(--text-primary)" }}>{a.nazwa}</td>
+                        <td style={{ padding: "7px 12px" }}>
+                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ color: typColors[a.typ_asortymentu] ?? "var(--text-muted)", background: `${typColors[a.typ_asortymentu] ?? "#888"}18` }}>
+                            {typLabels[a.typ_asortymentu] ?? a.typ_asortymentu}
+                          </span>
+                        </td>
+                        <td style={{ padding: "7px 12px", color: "var(--text-secondary)" }}>{a.jednostka_miary}</td>
+                        <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: a.ilosc > 0 ? "var(--text-primary)" : "var(--text-muted)" }}>{fmtL(a.ilosc, 3)}</td>
+                        <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", color: a.cena_srednia > 0 ? "var(--text-secondary)" : "var(--text-muted)" }}>
+                          {a.cena_srednia > 0 ? `${fmt(a.cena_srednia)} zł` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: wartosc > 0 ? "var(--ok)" : "var(--text-muted)" }}>
+                          {wartosc > 0 ? `${fmt(wartosc)} zł` : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-surface)" }}>
+                    <td colSpan={4} style={{ padding: "8px 12px", fontWeight: 700, color: "var(--text-muted)", fontSize: 12 }}>
+                      RAZEM ({filteredStany.length} poz.)
+                    </td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--text-primary)" }}>—</td>
+                    <td />
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--ok)" }}>
+                      {fmt(filteredStany.reduce((s, a) => s + a.ilosc * a.cena_srednia, 0))} zł
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

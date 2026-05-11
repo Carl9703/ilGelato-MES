@@ -8,7 +8,7 @@ import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelekt
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
-import { fmtL } from "../utils/fmt";
+import { fmtL, fmtDate, fmtFull } from "../utils/fmt";
 import { printDocument } from "../utils/printDoc";
 import ConfirmModal from "../components/ConfirmModal";
 import { Spinner } from "../components/Spinner";
@@ -63,7 +63,7 @@ type WzRow = {
   typ_asortymentu: string;
   id_partii: string;
   ilosc: string;
-  cena_brutto: string;
+  cena_netto: string;
   stawka_vat: string;
   sztuki: Record<string, number>; // nazwa_opakowania -> szt
   dostepnePartie: PartiaDostepna[];
@@ -267,9 +267,7 @@ export default function Dokumenty() {
     } catch {} finally { setLoading(false); }
   };
 
-  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
-  const fmtFull = (d: string) =>
-    new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const fmt = fmtDate;
 
   // ─── Otwieranie PZ ─────────────────────────────────────────────────────────
 
@@ -400,7 +398,7 @@ export default function Dokumenty() {
       typ_asortymentu: "",
       id_partii: "",
       ilosc: w.ilosc || "",
-      cena_brutto: "",
+      cena_netto: "",
       stawka_vat: "",
       sztuki: {},
       dostepnePartie: [],
@@ -429,13 +427,7 @@ export default function Dokumenty() {
             r._key === row._key ? {
               ...r,
               typ_asortymentu: og.typ_asortymentu || "",
-              cena_brutto: (() => {
-                const netto = og.cena_sprzedazy != null ? parseFloat(og.cena_sprzedazy) : null;
-                const vat = og.stawka_vat != null ? parseFloat(og.stawka_vat) : null;
-                if (netto == null) return "";
-                const brutto = vat != null ? netto * (1 + vat / 100) : netto;
-                return brutto.toFixed(2);
-              })(),
+              cena_netto: og.cena_sprzedazy != null ? parseFloat(og.cena_sprzedazy).toFixed(2) : "",
               stawka_vat: og.stawka_vat != null ? String(og.stawka_vat) : "",
               dostepnePartie: partie,
               loadingPartie: false,
@@ -475,8 +467,8 @@ export default function Dokumenty() {
     if (!wzKontrahentId) { showToast("Wybierz kontrahenta (odbiorcę).", "error"); return; }
     const missing = wzRows.find(r => !r.id_partii || !r.ilosc);
     if (missing) { showToast(`Pozycja „${missing.nazwa}" wymaga wybrania partii i podania ilości.`, "error"); return; }
-    const missingCena = wzRows.find(r => !r.cena_brutto || parseFloat(r.cena_brutto) <= 0);
-    if (missingCena) { showToast(`Pozycja „${missingCena.nazwa}" wymaga podania ceny brutto.`, "error"); return; }
+    const missingCena = wzRows.find(r => !r.cena_netto || parseFloat(r.cena_netto) <= 0);
+    if (missingCena) { showToast(`Pozycja „${missingCena.nazwa}" wymaga podania ceny netto.`, "error"); return; }
     const missingVat = wzRows.find(r => r.stawka_vat === "");
     if (missingVat) { showToast(`Pozycja „${missingVat.nazwa}" wymaga podania stawki VAT (wpisz 0 jeśli zwolniona).`, "error"); return; }
     setWzSaving(true);
@@ -494,16 +486,16 @@ export default function Dokumenty() {
           const szt = r.sztuki[`${op.id_asortymentu}_${op.waga_kg}`] || 0;
           if (szt > 0) sztukiLabels[`${op.nazwa} (${op.waga_kg} kg)`] = szt;
         });
-        const brutto = parseFloat(r.cena_brutto) || null;
+        const netto = parseFloat(r.cena_netto) || null;
         const vat = r.stawka_vat !== "" ? parseFloat(r.stawka_vat) : null;
-        const netto = brutto != null && vat != null ? brutto / (1 + vat / 100) : null;
+        const brutto = netto != null && vat != null ? netto * (1 + vat / 100) : netto;
         return {
           id_partii: r.id_partii,
           ilosc: parseFloat(r.ilosc),
           sztuki: sztukiLabels,
-          cena_brutto: brutto,
+          cena_netto: netto,
           stawka_vat: vat,
-          cena_netto: netto != null ? Math.round(netto * 10000) / 10000 : null,
+          cena_brutto: brutto != null ? Math.round(brutto * 10000) / 10000 : null,
         };
       });
       const res = await fetch("/api/magazyn/wz", {
@@ -753,31 +745,61 @@ export default function Dokumenty() {
   ];
   const years = Array.from(new Set(dokumenty.map(d => new Date(d.data).getFullYear().toString()))).sort((a, b) => b > a ? 1 : -1);
 
+  const typCfg: Record<string, { color: string; bg: string; border: string; label: string }> = {
+    PZ: { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.35)',  label: 'Przyjęcia zewn.' },
+    PW: { color: '#38bdf8', bg: 'rgba(56,189,248,0.12)', border: 'rgba(56,189,248,0.35)', label: 'Przyjęcia wew.'  },
+    RW: { color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  border: 'rgba(239,68,68,0.35)',  label: 'Rozchody'        },
+    WZ: { color: '#f97316', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.35)', label: 'Wydania zewn.'   },
+  };
+  const typCounts = dokumenty.reduce<Record<string, number>>((acc, d) => {
+    acc[d.typ] = (acc[d.typ] || 0) + 1;
+    return acc;
+  }, {});
+
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
     <div className="h-full flex flex-col gap-3">
 
       {/* Header */}
-      <div className="flex items-center justify-between gap-3 shrink-0">
+      <div className="flex items-start justify-between gap-4 shrink-0">
         <div>
-          <h2 className="text-lg font-bold text-white tracking-wide">Dokumenty</h2>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Rejestr i wystawianie dokumentów magazynowych</p>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Dokumenty</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              Magazyn
+            </span>
+          </div>
+          <div className="flex items-center gap-3 mt-1.5">
+            {["PZ","WZ","RW","PW"].map(t => {
+              const c = typCfg[t];
+              const n = typCounts[t] || 0;
+              if (!n) return null;
+              return (
+                <span key={t} className="flex items-center gap-1 text-[10px] font-semibold"
+                      style={{ color: 'var(--text-muted)' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 2, background: c.color, display: 'inline-block', opacity: 0.8 }} />
+                  <span style={{ color: c.color, fontWeight: 800 }}>{n}</span> {t}
+                </span>
+              );
+            })}
+          </div>
         </div>
         <div className="flex gap-2 items-center">
           <button onClick={openRwModal}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-colors btn-hover-effect"
-            style={{ background: '#991b1b', color: '#fff' }}>
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-all btn-hover-effect"
+            style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>
             <MinusCircle className="w-4 h-4" /> Nowy RW
           </button>
           <button onClick={openWzModal}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-colors btn-hover-effect"
-            style={{ background: '#c2410c', color: '#fff' }}>
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-all btn-hover-effect"
+            style={{ background: 'rgba(249,115,22,0.15)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.3)' }}>
             <ArrowRightCircle className="w-4 h-4" /> Nowy WZ
           </button>
           <button onClick={openPzModal}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-colors btn-hover-effect"
-            style={{ background: '#16a34a', color: '#fff' }}>
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-all btn-hover-effect"
+            style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}>
             <PackageOpen className="w-4 h-4" /> Nowy PZ
           </button>
         </div>
@@ -1097,14 +1119,14 @@ export default function Dokumenty() {
 
                 {/* Rozliczenie VAT — pojawia się gdy są pozycje z ceną */}
                 {(() => {
-                  const wyrobyRows = wzRows.filter(r => r.typ_asortymentu === "Wyrob_Gotowy" && parseFloat(r.cena_brutto) > 0 && r.stawka_vat !== "");
+                  const wyrobyRows = wzRows.filter(r => r.typ_asortymentu === "Wyrob_Gotowy" && parseFloat(r.cena_netto) > 0 && r.stawka_vat !== "");
                   if (wyrobyRows.length === 0) return null;
                   let totalNetto = 0, totalVat = 0, totalBrutto = 0;
                   const vatGroups: Record<string, { netto: number; vat: number; brutto: number }> = {};
                   for (const r of wyrobyRows) {
-                    const brutto = parseFloat(r.cena_brutto) || 0;
+                    const netto = parseFloat(r.cena_netto) || 0;
                     const vat = parseFloat(r.stawka_vat) || 0;
-                    const netto = brutto / (1 + vat / 100);
+                    const brutto = netto * (1 + vat / 100);
                     const ilosc = parseFloat(r.ilosc) || 0;
                     const rNetto = netto * ilosc;
                     const rBrutto = brutto * ilosc;
@@ -1157,7 +1179,9 @@ export default function Dokumenty() {
               {/* Stopka lewego panelu — przyciski */}
               {(() => {
                 const totalBrutto = wzRows.reduce((sum, r) => {
-                  const b = parseFloat(r.cena_brutto) || 0;
+                  const n = parseFloat(r.cena_netto) || 0;
+                  const vat = r.stawka_vat !== "" ? parseFloat(r.stawka_vat) || 0 : 0;
+                  const b = n * (1 + vat / 100);
                   const il = parseFloat(r.ilosc) || 0;
                   return sum + b * il;
                 }, 0);
@@ -1242,10 +1266,10 @@ export default function Dokumenty() {
                         }, {});
                         const typy_opakowan: any[] = Object.values(groupedOpakowania).sort((a: any, b: any) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg);
                         const isWyrob = row.typ_asortymentu === "Wyrob_Gotowy";
-                        const brutto = parseFloat(row.cena_brutto) || 0;
+                        const netto = parseFloat(row.cena_netto) > 0 ? parseFloat(row.cena_netto) : null;
                         const vat = row.stawka_vat !== "" ? parseFloat(row.stawka_vat) : null;
-                        const netto = brutto > 0 && vat != null ? brutto / (1 + vat / 100) : null;
-                        const kwotaVat = netto != null ? brutto - netto : null;
+                        const brutto = netto != null && vat != null ? netto * (1 + vat / 100) : netto ?? 0;
+                        const kwotaVat = netto != null && vat != null ? netto * vat / 100 : null;
                         const ilosc = parseFloat(row.ilosc) || 0;
 
                         return (
@@ -1296,19 +1320,11 @@ export default function Dokumenty() {
                                 {/* Cena netto */}
                                     <div>
                                       <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena netto</label>
-                                      <div className="rounded px-2 py-1 text-[11px] font-mono text-right h-7 flex items-center justify-end" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: netto != null ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                                        {netto != null ? <>{netto.toFixed(2)} <span className="text-[9px] ml-0.5 opacity-60">zł</span></> : <span className="opacity-40">—</span>}
-                                      </div>
-                                    </div>
-
-                                    {/* Cena brutto */}
-                                    <div>
-                                      <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena brutto</label>
                                       <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
                                         <input
                                           type="number" step="0.01" min="0"
-                                          value={row.cena_brutto}
-                                          onChange={e => updateWzRow(row._key, "cena_brutto", e.target.value)}
+                                          value={row.cena_netto}
+                                          onChange={e => updateWzRow(row._key, "cena_netto", e.target.value)}
                                           className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
                                           style={{ color: 'var(--text-primary)' }}
                                           placeholder="0.00"
@@ -1317,20 +1333,29 @@ export default function Dokumenty() {
                                       </div>
                                     </div>
 
+                                    {/* Cena brutto */}
+                                    <div>
+                                      <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena brutto</label>
+                                      <div className="rounded px-2 py-1 text-[11px] font-mono text-right h-7 flex items-center justify-end" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: brutto > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                                        {brutto > 0 ? <>{brutto.toFixed(2)} <span className="text-[9px] ml-0.5 opacity-60">zł</span></> : <span className="opacity-40">—</span>}
+                                      </div>
+                                    </div>
+
                                     {/* VAT */}
                                     <div>
                                       <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>VAT %</label>
-                                      <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
-                                        <input
-                                          type="number" step="0.01" min="0" max="100"
-                                          value={row.stawka_vat}
-                                          onChange={e => updateWzRow(row._key, "stawka_vat", e.target.value)}
-                                          className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
-                                          style={{ color: 'var(--text-primary)' }}
-                                          placeholder="—"
-                                        />
-                                        <span className="px-1 text-[9px] font-semibold border-l shrink-0" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>%</span>
-                                      </div>
+                                      <select
+                                        value={row.stawka_vat}
+                                        onChange={e => updateWzRow(row._key, "stawka_vat", e.target.value)}
+                                        className="w-full rounded px-2 py-1 text-[11px] font-mono outline-none cursor-pointer"
+                                        style={{ border: '1px solid var(--border)', background: 'var(--bg-input)', color: row.stawka_vat === "" ? 'var(--text-muted)' : 'var(--text-primary)' }}
+                                      >
+                                        <option value="">— wybierz —</option>
+                                        <option value="0">0% (zwolniona)</option>
+                                        <option value="5">5%</option>
+                                        <option value="8">8%</option>
+                                        <option value="23">23%</option>
+                                      </select>
                                     </div>
 
                                     {/* Wartość netto */}
@@ -1618,47 +1643,85 @@ export default function Dokumenty() {
         />
       )}
 
-      {/* ═══ PASEK FILTRÓW (jedna linia) ═══════════════════════════════════════ */}
-      <div className="flex items-center gap-2 shrink-0" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px' }}>
-        {/* Typ */}
-        <div className="flex" style={{ background: 'var(--bg-app)', borderRadius: 6, padding: 2 }}>
-          {["PZ","PW","RW","WZ"].map(t => (
+      {/* ═══ PASEK FILTRÓW ══════════════════════════════════════════════════════ */}
+      <div className="flex items-center gap-1.5 shrink-0 rounded-lg overflow-hidden"
+           style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', padding: '4px 6px' }}>
+
+        {/* Typ — kolorowe przyciski */}
+        {(["PZ","WZ","RW","PW"] as const).map(t => {
+          const c = typCfg[t];
+          const isActive = filter === t;
+          const cnt = typCounts[t] || 0;
+          return (
             <button key={t} onClick={() => setFilter(t)}
-              className="px-3 py-1 text-[11px] font-black uppercase tracking-widest transition-all"
-              style={{ borderRadius: 4, background: filter === t ? 'var(--accent)' : 'transparent', color: filter === t ? '#fff' : 'var(--text-muted)' }}>
+              className="flex items-center gap-1.5 transition-all"
+              style={{
+                padding: '5px 11px', borderRadius: 6,
+                background: isActive ? c.bg : 'transparent',
+                color: isActive ? c.color : 'var(--text-muted)',
+                border: `1px solid ${isActive ? c.border : 'transparent'}`,
+                fontWeight: 800, fontSize: 11, letterSpacing: '0.06em',
+                boxShadow: isActive ? `0 0 12px ${c.color}20` : 'none',
+              }}>
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%',
+                background: isActive ? c.color : 'var(--text-muted)',
+                display: 'inline-block', flexShrink: 0,
+                boxShadow: isActive ? `0 0 5px ${c.color}` : 'none',
+                transition: 'all 0.15s',
+              }} />
               {t}
+              {cnt > 0 && (
+                <span style={{
+                  padding: '0 5px', borderRadius: 10, fontSize: 9, fontWeight: 700, lineHeight: '16px',
+                  background: isActive ? `${c.color}20` : 'var(--bg-hover)',
+                  color: isActive ? c.color : 'var(--text-muted)',
+                }}>{cnt}</span>
+              )}
             </button>
-          ))}
-        </div>
-        <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
+          );
+        })}
+
+        <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px', flexShrink: 0 }} />
+
         {/* Rok */}
         <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)}
           className="text-xs font-medium outline-none cursor-pointer"
-          style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 6, padding: '4px 8px' }}>
-          <option value="">Wszystkie lata</option>
+          style={{ background: 'transparent', border: 'none', color: selectedYear ? 'var(--text-primary)' : 'var(--text-muted)', padding: '4px 6px', borderRadius: 4 }}>
+          <option value="">Rok</option>
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
+
         {/* Miesiąc */}
         <select value={selectedMonth} disabled={!selectedYear} onChange={e => setSelectedMonth(e.target.value)}
           className="text-xs font-medium outline-none cursor-pointer disabled:opacity-30"
-          style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 6, padding: '4px 8px' }}>
-          <option value="">Wszystkie miesiące</option>
+          style={{ background: 'transparent', border: 'none', color: selectedMonth ? 'var(--text-primary)' : 'var(--text-muted)', padding: '4px 6px', borderRadius: 4 }}>
+          <option value="">Miesiąc</option>
           {months.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
         </select>
-        <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
+
+        <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px', flexShrink: 0 }} />
+
         {/* Szukaj */}
-        <div className="relative flex-1">
+        <div className="relative flex-1" style={{ minWidth: 0 }}>
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3" style={{ color: 'var(--text-muted)' }} />
           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Nr faktury, partia, towar…"
-            className="w-full text-xs outline-none"
-            style={{ background: 'transparent', color: 'var(--text-primary)', paddingLeft: 22, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }} />
+            placeholder="Numer, partia, towar…"
+            className="w-full text-xs outline-none bg-transparent"
+            style={{ color: 'var(--text-primary)', paddingLeft: 22, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }} />
         </div>
         {search && (
-          <button onClick={() => setSearch("")} style={{ color: 'var(--text-muted)' }}><X className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setSearch("")} className="p-1 rounded transition-colors hover:bg-[var(--bg-hover)]"
+                  style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+            <X className="w-3 h-3" />
+          </button>
         )}
-        <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
-        <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{filteredDocs.length} dok.</span>
+
+        <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px', flexShrink: 0 }} />
+        <span className="text-[10px] font-mono font-semibold px-1"
+              style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {filteredDocs.length}
+        </span>
       </div>
 
       {/* ═══ TABELA DOKUMENTÓW ══════════════════════════════════════════════════ */}
@@ -1670,85 +1733,89 @@ export default function Dokumenty() {
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
-              <tr style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+              <tr style={{ background: 'var(--bg-surface)', borderBottom: '2px solid var(--border)' }}>
+                <th style={{ width: 3, padding: 0 }} />
                 {([
-                  { label: 'Typ',          field: 'typ'        },
-                  { label: 'Status',       field: 'status'     },
-                  { label: 'Nr dokumentu', field: 'referencja' },
-                  { label: 'Data · Operator', field: 'data'    },
-                  { label: 'Kontrahent',   field: 'kontrahent' },
-                  { label: 'ZP',           field: null         },
-                  { label: 'Akcje',        field: null         },
+                  { label: 'Typ',             field: 'typ'        },
+                  { label: 'Status',          field: 'status'     },
+                  { label: 'Nr dokumentu',    field: 'referencja' },
+                  { label: 'Data · Operator', field: 'data'       },
+                  { label: 'Kontrahent',      field: 'kontrahent' },
+                  { label: 'ZP',              field: null         },
+                  { label: 'Akcje',           field: null         },
                 ] as { label: string; field: string | null }[]).map(({ label, field }, i) =>
                   field ? (
                     <SortableTh key={label} label={label} field={field}
                       sortKey={sortKey} sortDir={sortDir} onSort={handleSort}
-                      style={{ padding: '6px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }} />
+                      style={{ padding: '7px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }} />
                   ) : (
-                    <th key={label} style={{ padding: '6px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{label}</th>
+                    <th key={label} style={{ padding: '7px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{label}</th>
                   )
                 )}
               </tr>
             </thead>
             <tbody>
               {filteredDocs.map(doc => {
-                const typColor: Record<string,string> = { PZ:'#22c55e', PW:'#38bdf8', RW:'#ef4444', WZ:'#f97316' };
-                const typBg: Record<string,string>    = { PZ:'rgba(34,197,94,.12)', PW:'rgba(56,189,248,.12)', RW:'rgba(239,68,68,.12)', WZ:'rgba(249,115,22,.12)' };
-                const color = typColor[doc.typ] || 'var(--text-muted)';
-                const bg    = typBg[doc.typ]    || 'transparent';
+                const c = typCfg[doc.typ] || { color: 'var(--text-muted)', bg: 'transparent', border: 'transparent', label: '' };
                 const isLoading = actionLoading === doc.referencja;
                 const canApprove = (doc.typ === "PZ" || doc.typ === "WZ" || doc.typ === "RW") && doc.status === "Bufor";
                 const canDelete  = (doc.typ === "PZ" || doc.typ === "WZ" || doc.typ === "RW") && doc.status === "Bufor";
                 const canCancel  = (doc.typ === "PZ" || doc.typ === "WZ" || doc.typ === "RW") && doc.status === "Zatwierdzony";
                 return (
                   <tr key={doc.referencja} onClick={() => openDocPreview(doc.referencja)}
-                    style={{ borderBottom: '1px solid var(--border-dim)', cursor: 'pointer', transition: 'background .1s', opacity: doc.status === 'Anulowany' ? 0.55 : 1 }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                    style={{ borderBottom: '1px solid var(--border-dim)', cursor: 'pointer', transition: 'background .12s', opacity: doc.status === 'Anulowany' ? 0.45 : 1 }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
 
-                    {/* Typ */}
-                    <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
-                      <span style={{ display:'inline-block', padding:'1px 7px', borderRadius:3, fontSize:10, fontWeight:800, letterSpacing:'0.06em', background: bg, color, border:`1px solid ${color}40` }}>
+                    {/* Typ — kolor jako pionowy pasek */}
+                    <td style={{ padding: '0', width: 0 }}>
+                      <div style={{ width: 3, height: 36, background: c.color, opacity: 0.7 }} />
+                    </td>
+                    <td style={{ padding: '6px 10px 6px 8px', whiteSpace: 'nowrap' }}>
+                      <span style={{ display:'inline-block', padding:'2px 7px', borderRadius:3, fontSize:10, fontWeight:800, letterSpacing:'0.06em', background: c.bg, color: c.color, border:`1px solid ${c.border}` }}>
                         {doc.typ}
                       </span>
                     </td>
 
                     {/* Status */}
-                    <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
                       <StatusBadge status={doc.status || 'Zatwierdzony'} />
                     </td>
 
                     {/* Nr dokumentu */}
-                    <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
-                      <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:700, color:'var(--text-primary)', borderLeft:`2px solid ${color}`, paddingLeft:6 }}>
+                    <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:700, color:'var(--text-primary)' }}>
                         {doc.referencja}
                       </span>
                     </td>
 
                     {/* Data · Operator */}
-                    <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
                       <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, color:'var(--text-secondary)' }}>
                         {fmtFull(doc.data)}
                       </span>
-                      <span style={{ fontSize:11, color:'var(--text-muted)', marginLeft:6 }}>· {doc.uzytkownik}</span>
+                      <span style={{ fontSize:11, color:'var(--text-muted)', marginLeft:5 }}>· {doc.uzytkownik}</span>
                     </td>
 
                     {/* Kontrahent */}
-                    <td style={{ padding: '5px 10px', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
                       {doc.kontrahent
-                        ? <span style={{ fontSize: 11 }}><span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--accent)', fontWeight: 700 }}>{doc.kontrahent.kod}</span> <span style={{ color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span></span>
+                        ? <span style={{ fontSize: 11 }}>
+                            <span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--accent)', fontWeight: 700 }}>{doc.kontrahent.kod}</span>
+                            {' '}<span style={{ color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span>
+                          </span>
                         : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
                     </td>
 
                     {/* ZP */}
-                    <td style={{ padding: '5px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {doc.numer_zlecenia
                         ? <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, color:'var(--text-code)' }}>{doc.numer_zlecenia}</span>
                         : <span style={{ color:'var(--text-muted)', fontSize:11 }}>—</span>}
                     </td>
 
                     {/* Akcje */}
-                    <td style={{ padding: '5px 10px' }}>
+                    <td style={{ padding: '6px 10px' }}>
                       <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
                         {canApprove && (
                           <button onClick={e => handleZatwierdz(doc.referencja, e)} title="Zatwierdź"
@@ -1783,7 +1850,7 @@ export default function Dokumenty() {
                         )}
                         <button onClick={e => { e.stopPropagation(); openDocPreview(doc.referencja); }} title="Podgląd"
                           className="p-1 rounded btn-hover-effect"
-                          style={{ color:'var(--accent)', background:'rgba(59,130,246,0.08)', border:'1px solid rgba(59,130,246,0.2)' }}>
+                          style={{ color:'var(--accent)', background:'var(--accent-dim)', border:'1px solid var(--border-accent)' }}>
                           <Eye className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={e => { e.stopPropagation(); handlePrintDoc(doc); }} title="Drukuj"

@@ -13,7 +13,7 @@ import { EmptyState } from "../components/EmptyState";
 
 
 type GrupaTowarowa = { id: string; kod: string; nazwa: string; id_grupy_nadrzednej: string | null; kolejnosc: number; podgrupy?: GrupaTowarowa[] };
-type AsortymentOgolne = { id: string; kod_towaru: string; nazwa: string; typ_asortymentu: string; jednostka_miary: string; jednostka_pomocnicza: string | null; przelicznik_jednostki: number | null; czy_wymaga_daty_waznosci: boolean; czy_zasob_nieograniczony: boolean; czy_aktywne: boolean; ilosc: number; rezerwacje: number; cena_srednia: number; id_grupy: string | null; };
+type AsortymentOgolne = { id: string; kod_towaru: string; nazwa: string; typ_asortymentu: string; jednostka_miary: string; jednostka_pomocnicza: string | null; przelicznik_jednostki: number | null; czy_wymaga_daty_waznosci: boolean; czy_zasob_nieograniczony: boolean; czy_aktywne: boolean; ilosc: number; rezerwacje: number; cena_srednia: number; id_grupy: string | null; cena_sprzedazy?: number | null; stawka_vat?: number | null; };
 type Podsumowanie = { stan_calkowity: number; zarezerwowane: number; dostepne: number; cena_srednia_wazona: number; wartosc_magazynowa: number };
 type Zasob = { id_partii: string; numer_partii: string; stan: number; zarezerwowane: number; dostepne: number; cena_jednostkowa: number; wartosc: number; data_produkcji: string | null; termin_waznosci: string | null; status_partii: string; dokument_przyjecia: string | null };
 type HistoriaRuch = { id: string; data: string; typ: string; referencja: string; partia: string; ilosc: number; cena_jednostkowa: number | null; saldo_po_operacji: number };
@@ -30,6 +30,15 @@ const UNITS = ["kg", "L", "szt", "ml", "g", "opak"];
 const typy = ["Surowiec", "Polprodukt", "Wyrob_Gotowy", "Opakowanie"];
 const typLabels: Record<string, string> = { Surowiec: "Surowiec", Polprodukt: "Półprodukt", Wyrob_Gotowy: "Wyrób gotowy", Opakowanie: "Opakowanie" };
 const typColors: Record<string, string> = { Surowiec: "bg-blue-500/20 text-blue-300", Polprodukt: "bg-amber-500/20 text-amber-300", Wyrob_Gotowy: "bg-emerald-500/20 text-emerald-300", Opakowanie: "bg-purple-500/20 text-purple-300" };
+
+const typFilterCfg: Record<string, { color: string; bg: string; border: string; label: string }> = {
+  all:          { color: 'var(--text-muted)',  bg: 'var(--bg-hover)',           border: 'transparent',             label: 'Wszystkie'  },
+  Surowiec:     { color: '#60a5fa',            bg: 'rgba(59,130,246,0.12)',     border: 'rgba(59,130,246,0.3)',    label: 'Surowce'    },
+  Polprodukt:   { color: '#fbbf24',            bg: 'rgba(245,158,11,0.12)',     border: 'rgba(245,158,11,0.3)',    label: 'Półprodukty'},
+  Wyrob_Gotowy: { color: '#4ade80',            bg: 'rgba(34,197,94,0.12)',      border: 'rgba(34,197,94,0.3)',     label: 'Wyroby'     },
+  Opakowanie:   { color: '#c084fc',            bg: 'rgba(192,132,252,0.12)',    border: 'rgba(192,132,252,0.3)',   label: 'Opakowania' },
+};
+const typRowColor: Record<string, string> = { Surowiec: '#60a5fa', Polprodukt: '#fbbf24', Wyrob_Gotowy: '#4ade80', Opakowanie: '#c084fc' };
 
 export default function Asortyment() {
   const [items, setItems] = useState<AsortymentOgolne[]>([]);
@@ -157,7 +166,7 @@ export default function Asortyment() {
       setSkladnikiOpisForm({ producent: (a as any).producent || "", zrodlo_danych: (a as any).zrodlo_danych || "", skladniki_opis: (a as any).skladniki_opis || "", moze_zawierac: (a as any).moze_zawierac || "" });
     }).catch(() => {});
     fetch(`/api/asortyment/${a.id}/ceny`).then(r => r.json()).then(d => {
-      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? String(d.cena_sprzedazy) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "" });
+      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? String(d.cena_sprzedazy) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "5" });
     }).catch(() => {});
   };
 
@@ -344,6 +353,12 @@ export default function Asortyment() {
     },
     sortDir
   );
+
+  const typCounts = React.useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const a of items) c[a.typ_asortymentu] = (c[a.typ_asortymentu] || 0) + 1;
+    return c;
+  }, [items]);
 
   // --- DETAIL VIEW ---
   if (selectedItem) {
@@ -661,17 +676,16 @@ export default function Asortyment() {
                   </div>
                   <div>
                     <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Stawka VAT</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number" step="0.01" min="0" max="100"
-                        value={cenyForm.stawka_vat}
-                        onChange={e => setCenyForm(f => ({ ...f, stawka_vat: e.target.value }))}
-                        className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
-                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                        placeholder="np. 5, 8, 23"
-                      />
-                      <span className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>%</span>
-                    </div>
+                    <select
+                      value={cenyForm.stawka_vat !== "" ? cenyForm.stawka_vat : "5"}
+                      onChange={e => setCenyForm(f => ({ ...f, stawka_vat: e.target.value }))}
+                      className="w-full rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1 cursor-pointer"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    >
+                      <option value="5">5%</option>
+                      <option value="8">8%</option>
+                      <option value="23">23%</option>
+                    </select>
                   </div>
                   {cenyForm.cena_sprzedazy && cenyForm.stawka_vat !== "" && (
                     <div className="rounded p-3 text-sm space-y-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
@@ -912,12 +926,15 @@ export default function Asortyment() {
       <div className="h-full flex flex-col gap-3 animate-view">
         <div className="flex items-center justify-between shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-white tracking-wide">Asortyment</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-black tracking-tight text-white">Asortyment</h2>
+              <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>Katalog</span>
+            </div>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Centralna kartoteka i zarządzanie zapasami</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowImport(true)} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-emerald-700 hover:bg-emerald-600 text-white btn-hover-effect"><FileSpreadsheet className="w-4 h-4" />Importuj z Excel</button>
-            <button onClick={openNew} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white btn-hover-effect"><Plus className="w-4 h-4" />Dodaj towar</button>
+            <button onClick={() => setShowImport(true)} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold btn-hover-effect" style={{ background: 'rgba(16,185,129,0.15)', color: '#6ee7b7', border: '1px solid rgba(16,185,129,0.3)' }}><FileSpreadsheet className="w-4 h-4" />Importuj z Excel</button>
+            <button onClick={openNew} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold btn-hover-effect" style={{ background: 'rgba(59,130,246,0.15)', color: '#93c5fd', border: '1px solid rgba(59,130,246,0.3)' }}><Plus className="w-4 h-4" />Dodaj towar</button>
           </div>
         </div>
 
@@ -955,17 +972,24 @@ export default function Asortyment() {
 
         <div className="flex flex-col lg:flex-row gap-2 items-center shrink-0">
           <div className="flex gap-1 shrink-0">
-            {["all", ...typy].map(t => (
-              <button key={t} onClick={() => setFilter(t)}
-                className="px-4 py-2 rounded text-xs font-semibold transition-colors btn-hover-effect"
-                style={{
-                  background: filter === t ? 'var(--accent)' : 'var(--bg-panel)',
-                  color: filter === t ? '#fff' : 'var(--text-secondary)',
-                  border: '1px solid var(--border)',
-                }}>
-                {t === "all" ? "Wszystkie" : typLabels[t]}
-              </button>
-            ))}
+            {["all", ...typy].map(t => {
+              const cfg = typFilterCfg[t];
+              const active = filter === t;
+              return (
+                <button key={t} onClick={() => setFilter(t)}
+                  className="px-3 py-1.5 rounded text-xs font-semibold transition-all btn-hover-effect flex items-center gap-1.5"
+                  style={{
+                    background: active ? cfg.bg : 'var(--bg-panel)',
+                    color: active ? cfg.color : 'var(--text-muted)',
+                    border: `1px solid ${active ? cfg.border : 'var(--border)'}`,
+                    boxShadow: active && t !== 'all' ? `0 0 8px ${cfg.border}` : 'none',
+                  }}>
+                  {t !== 'all' && <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: cfg.color }} />}
+                  {cfg.label}
+                  {typCounts[t] != null && <span className="opacity-60 font-mono text-[10px]">{typCounts[t]}</span>}
+                </button>
+              );
+            })}
           </div>
 
           <button
@@ -1003,7 +1027,8 @@ export default function Asortyment() {
           ) : (
             <table className="mes-table">
               <thead>
-                <tr>
+                <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                  <th style={{ width: 3, padding: 0 }} />
                   <SortableTh label="Kod"          field="kod_towaru"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <SortableTh label="Nazwa"         field="nazwa"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                   <th style={{ color: 'var(--text-muted)', fontSize: 11 }}>Grupa</th>
@@ -1012,11 +1037,13 @@ export default function Asortyment() {
                   <SortableTh label="Ilość"         field="ilosc"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
                   <SortableTh label="Zarezerwowane" field="rezerwacje"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
                   <SortableTh label="Dostępne"      field="dostepne"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
+                  <th style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'right', padding: '6px 12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cena netto</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(a => (
                   <tr key={a.id} onClick={() => openDetail(a)} style={!a.czy_aktywne ? { opacity: 0.5, background: 'repeating-linear-gradient(135deg, transparent, transparent 6px, rgba(0,0,0,0.15) 6px, rgba(0,0,0,0.15) 12px)' } : {}}>
+                    <td style={{ width: 3, padding: 0, background: typRowColor[a.typ_asortymentu] ?? 'transparent' }} />
                     <td className="mono" style={{ color: 'var(--text-code)' }}>{a.kod_towaru}</td>
                     <td className="font-medium" style={{ color: a.czy_aktywne ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                       {a.nazwa}
@@ -1045,11 +1072,15 @@ export default function Asortyment() {
                     <td className={`text-right mono font-medium ${(a.ilosc - a.rezerwacje) > 0 ? 'text-emerald-400' : ''}`} style={(a.ilosc - a.rezerwacje) <= 0 ? { color: 'var(--text-muted)' } : {}}>
                       {fillZero(a.ilosc - a.rezerwacje)}
                     </td>
+                    <td className="text-right mono font-medium" style={{ color: a.cena_sprzedazy ? 'var(--accent)' : 'var(--text-muted)' }}>
+                      {a.cena_sprzedazy != null ? `${fillZero(a.cena_sprzedazy)} zł` : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', borderTop: '2px solid var(--border)' }}>
+                  <td style={{ width: 3, padding: 0 }} />
                   <td colSpan={5} className="text-xs font-semibold" style={{ color: 'var(--text-muted)', padding: '6px 12px' }}>
                     Łącznie ({filtered.length} poz.)
                   </td>
@@ -1077,6 +1108,7 @@ export default function Asortyment() {
                       }, {})
                     ).map(([jm, sum]) => `${fillZero(sum)} ${jm}`).join(' / ')}
                   </td>
+                  <td />
                 </tr>
               </tfoot>
             </table>

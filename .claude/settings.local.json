@@ -140,7 +140,26 @@
       "Bash(echo \"Vite PID: $!\")",
       "Bash(sed -n '155,175p' prisma/schema.prisma)",
       "Bash(sed -n '270,285p' prisma/schema.prisma)",
-      "PowerShell(Stop-Process *)"
+      "PowerShell(Stop-Process *)",
+      "Bash(DATABASE_URL=\"file:./prisma/test.db\" npx prisma db push --skip-generate)",
+      "Bash(echo \"Backend PID: $!\")",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 30)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 40)",
+      "PowerShell(Start-Sleep -Seconds 6; Invoke-WebRequest -Uri \"http://localhost:5173\" -UseBasicParsing -TimeoutSec 5 2>&1 | Select-Object StatusCode; Invoke-WebRequest -Uri \"http://localhost:3001/api/asortyment\" -UseBasicParsing -TimeoutSec 5 2>&1 | Select-Object StatusCode)",
+      "PowerShell(Start-Sleep -Seconds 8; Invoke-WebRequest -Uri \"http://localhost:5173\" -UseBasicParsing -TimeoutSec 5 2>&1 | Select-Object StatusCode, StatusDescription)",
+      "PowerShell(Get-Job *)",
+      "Bash(echo \"PID Vite: $!\")",
+      "PowerShell(npx vite build 2>&1 | Select-Object -First 50)",
+      "PowerShell(Receive-Job *)",
+      "PowerShell(cmd /c \"taskkill /F /IM node.exe 2>nul\"; Write-Host \"Procesy node zatrzymane\")",
+      "Bash(echo \"Backend PID: $!, uruchamianie...\")",
+      "PowerShell($env:DATABASE_URL = \"file:./prisma/test.db\"; npx tsx prisma/seed.ts 2>&1)",
+      "PowerShell($env:DATABASE_URL = \"file:./prisma/test.db\"; npx prisma db push 2>&1)",
+      "PowerShell(npx tsc --noEmit 2>&1)",
+      "Bash(cat .env)",
+      "Bash(cat prisma.config.ts)",
+      "Skill(code-review:code-review)",
+      "PowerShell(cmd /c \"taskkill /F /IM node.exe 2>nul\"; Start-Sleep -Seconds 1; Start-Process -NoNewWindow -FilePath \"npx\" -ArgumentList \"tsx\",\"server.ts\" -PassThru | Select-Object Id)"
     ]
   },
   "hooks": {

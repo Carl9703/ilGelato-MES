@@ -33,19 +33,17 @@ export default function Ustawienia() {
     <div className="h-full flex flex-col gap-0 animate-view">
 
       {/* ── Page header ── */}
-      <div className="shrink-0 flex items-center gap-3 mb-4">
-        <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-          style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}
-        >
-          <Settings className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+      <div className="shrink-0 mb-4">
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-lg font-black text-white tracking-tight">Ustawienia</h2>
+          <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+            System
+          </span>
         </div>
-        <div>
-          <h2 className="text-lg font-bold text-white leading-tight">Ustawienia</h2>
-          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Konfiguracja słowników i parametrów systemu
-          </p>
-        </div>
+        <p className="text-[11px] mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>
+          Konfiguracja słowników i parametrów systemu
+        </p>
       </div>
 
       {/* ── Layout: sidebar tabs + content ── */}

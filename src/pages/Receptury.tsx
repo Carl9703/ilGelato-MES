@@ -221,79 +221,182 @@ export default function Receptury() {
     <div className="h-full flex flex-col gap-3 animate-view">
       <div className="flex items-center justify-between shrink-0">
         <div>
-          <h2 className="text-lg font-bold text-white tracking-wide">Receptury</h2>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Receptury</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              BOM
+            </span>
+          </div>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Technologie i specyfikacje BOM</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={toggleArchived} className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold transition-colors ${showArchived ? 'bg-slate-600 text-white' : 'text-slate-400 hover:bg-[var(--bg-hover)]'}`}>
+          <button onClick={toggleArchived}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+            style={showArchived
+              ? { background: 'rgba(100,116,139,0.2)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.35)' }
+              : { background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
             {showArchived ? 'Ukryj archiwalne' : 'Pokaż archiwalne'}
           </button>
-          <button onClick={openNew} data-testid="btn-dodaj-recepture" className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white btn-hover-effect">
+          <button onClick={openNew} data-testid="btn-dodaj-recepture"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm transition-all btn-hover-effect"
+            style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
             <Plus className="w-4 h-4" />Nowa receptura
           </button>
         </div>
       </div>
 
-      {/* ===== KARTA RECEPTURY (jeden modal, dwa tryby) ===== */}
+      {/* ===== KARTA RECEPTURY ===== */}
       {kartaMode && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4">
-          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] overflow-hidden flex flex-col" style={{ height: '80vh', marginTop: '10vh' }}>
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm pl-16 lg:pl-60 pt-2.5 pb-2.5 pr-2.5"
+          style={{ zIndex: 50 }}
+          onClick={closeKarta}
+        >
+          <div
+            className="flex h-full border-l border-r border-b rounded-b-xl overflow-hidden"
+            style={{ background: 'var(--bg-panel)', borderColor: 'var(--border)' }}
+            onClick={e => e.stopPropagation()}
+          >
 
-            {/* NAGŁÓWEK KARTY */}
-            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
-              <div className="flex items-center gap-3 min-w-0">
-                <BookOpen className="w-4 h-4 shrink-0" style={{ color: 'var(--accent)' }} />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <h3 className="text-base font-bold text-white truncate">
-                      {kartaMode === "new" ? "Nowa receptura" : kartaReceptura?.asortyment_docelowy.nazwa}
-                    </h3>
-                    {kartaMode === "view" && <span className="badge badge-ok">Podgląd</span>}
-                    {kartaMode === "edit" && <span className="badge badge-warn">Edycja</span>}
-                    {kartaMode === "new" && <span className="badge badge-info">Nowy</span>}
+            {/* ── PRAWY PANEL: meta + akcje ── */}
+            <div className="w-72 shrink-0 border-l flex flex-col"
+                 style={{ order: 2, borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+
+              {/* Nagłówek */}
+              <div className="flex items-start justify-between p-5 border-b" style={{ borderColor: 'var(--border)' }}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
+                    {kartaMode === "new" ? "Nowa receptura" : kartaMode === "edit" ? "Edycja receptury" : "Karta receptury"}
                   </div>
-                  {kartaReceptura && (
-                    <div className="flex items-center gap-2 mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-                      <span className="mono" style={{ color: 'var(--text-code)' }}>{kartaReceptura.asortyment_docelowy.kod_towaru}</span>
-                      <span>·</span>
+                  {kartaMode !== "new" && kartaReceptura ? (
+                    <>
+                      <div className="text-xl font-black text-white leading-tight">{kartaReceptura.asortyment_docelowy.nazwa}</div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                        <span className="badge badge-info">v{kartaReceptura.numer_wersji}</span>
+                        {kartaReceptura.czy_aktywne
+                          ? <span className="badge badge-ok">Aktywna</span>
+                          : <span className="badge badge-neutral">Archiwalna</span>}
+                        {kartaMode === "edit" && <span className="badge badge-warn">Edycja</span>}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-base font-bold text-white">Nowa receptura</div>
+                  )}
+                </div>
+                <button onClick={closeKarta}
+                  className="p-1.5 rounded-lg ml-2 shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
+                  style={{ color: 'var(--text-muted)' }}>
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Metadane (view) */}
+              {kartaMode === "view" && kartaReceptura && (
+                <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Kod towaru</div>
+                    <div className="font-mono font-medium" style={{ color: 'var(--text-code)' }}>{kartaReceptura.asortyment_docelowy.kod_towaru}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Wersje receptury</div>
+                    <div className="flex flex-wrap gap-1">
                       {receptury
                         .filter(r => r.asortyment_docelowy.id === kartaReceptura.asortyment_docelowy.id)
                         .sort((a, b) => a.numer_wersji - b.numer_wersji)
                         .map(r => (
-                          <button
-                            key={r.id}
-                            type="button"
-                            onClick={() => kartaMode === "view" && openView(r)}
-                            className="px-2 py-0.5 rounded font-bold transition-colors"
+                          <button key={r.id} onClick={() => openView(r)}
+                            className="px-2.5 py-1 rounded font-bold text-xs transition-colors"
                             style={{
-                              background: r.id === kartaReceptura.id ? 'var(--accent)' : 'transparent',
+                              background: r.id === kartaReceptura.id ? 'var(--accent)' : 'var(--bg-hover)',
                               color: r.id === kartaReceptura.id ? '#fff' : 'var(--text-muted)',
-                              cursor: kartaMode === "view" ? 'pointer' : 'default',
-                              fontSize: 10,
-                            }}
-                          >
+                              border: `1px solid ${r.id === kartaReceptura.id ? 'var(--border-accent)' : 'var(--border)'}`,
+                            }}>
                             v{r.numer_wersji}
                           </button>
-                        ))
-                      }
+                        ))}
                     </div>
-                  )}
+                  </div>
+
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu</div>
+                    <div className="font-mono font-medium text-white">
+                      {kartaReceptura.wielkosc_produkcji ?? 1} {kartaReceptura.asortyment_docelowy.jednostka_miary}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Trwałość</div>
+                    <div className="font-medium text-white">
+                      {kartaReceptura.dni_trwalosci ? `${kartaReceptura.dni_trwalosci} dni` : '—'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Składniki BOM</div>
+                    <div className="font-mono font-medium text-white">{kartaReceptura.skladniki.length} pozycji</div>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
+              )}
+
+              {/* Pola formularza (edit/new) */}
+              {isEditMode && (
+                <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+                  <div>
+                    <label className="text-[9px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: 'var(--text-muted)' }}>Produkt docelowy *</label>
+                    <select value={docelowyId} onChange={e => setDocelowyId(e.target.value)} required
+                      className="w-full text-sm outline-none rounded px-2 py-2"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                      <option value="">Wybierz produkt…</option>
+                      {produkty.map(a => <option key={a.id} value={a.id}>{a.nazwa} ({a.kod_towaru})</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: 'var(--text-muted)' }}>Wersja</label>
+                    <input type="number" value={wersja} onChange={e => setWersja(parseInt(e.target.value) || 1)} min={1}
+                      className="w-full text-sm font-mono outline-none rounded px-2 py-2"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: 'var(--text-muted)' }}>Trwałość (dni)</label>
+                    <input type="text" value={dniTrwalosci} onChange={e => setDniTrwalosci(e.target.value)} placeholder="—"
+                      className="w-full text-sm font-mono outline-none rounded px-2 py-2"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                      Rozmiar wsadu ({selectedAsortyment?.jednostka_miary || 'j.m.'})
+                      <span title="Wyliczane jako suma składników" style={{ color: 'var(--accent)', opacity: 0.7 }}>Σ</span>
+                    </div>
+                    <div className="text-sm font-mono font-bold px-2 py-2 rounded"
+                      style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)', opacity: 0.7 }}>
+                      {parseFloat(wielkoscProdukcji) || 0}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Przyciski akcji */}
+              <div className="p-4 border-t flex flex-col gap-2 shrink-0" style={{ borderColor: 'var(--border)' }}>
                 {kartaMode === "view" && kartaReceptura && (
                   <>
-                    <button onClick={() => openNewVersion(kartaReceptura)} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm transition-colors btn-hover-effect">
+                    <button onClick={() => openNewVersion(kartaReceptura)}
+                      className="btn w-full justify-center font-bold text-sm"
+                      style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>
                       <Plus className="w-4 h-4" /> Nowa wersja
                     </button>
-                    <button onClick={switchToEdit} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition-colors btn-hover-effect">
-                      <Edit2 className="w-4 h-4" /> Edytuj
+                    <button onClick={switchToEdit}
+                      className="btn w-full justify-center text-sm"
+                      style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)' }}>
+                      <Edit2 className="w-4 h-4" /> Edytuj recepturę
                     </button>
-                    <div
-                      onClick={() => handleToggleAktywne(kartaReceptura.id, kartaReceptura.czy_aktywne)}
-                      title={kartaReceptura.czy_aktywne ? "Dezaktywuj wersję" : "Aktywuj wersję"}
-                      className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors hover:bg-[var(--bg-hover)]"
-                    >
+                    <div onClick={() => handleToggleAktywne(kartaReceptura.id, kartaReceptura.czy_aktywne)}
+                      className="flex items-center justify-between px-3 py-2 rounded cursor-pointer select-none transition-colors hover:bg-[var(--bg-hover)]"
+                      style={{ border: '1px solid var(--border)' }}>
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                         {kartaReceptura.czy_aktywne ? "Aktywna" : "Archiwalna"}
                       </span>
@@ -304,179 +407,145 @@ export default function Receptury() {
                   </>
                 )}
                 {isEditMode && (
-                  <button onClick={switchToView} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
-                    {kartaMode === "new" ? "Anuluj" : "Anuluj edycję"}
-                  </button>
+                  <>
+                    <button form="receptura-form" type="submit"
+                      className="btn w-full justify-center font-bold text-sm"
+                      style={{ background: 'rgba(59,130,246,0.2)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.4)' }}>
+                      <Save className="w-4 h-4" /> Zatwierdź i zapisz
+                    </button>
+                    <button type="button" onClick={kartaMode === "new" ? closeKarta : switchToView}
+                      className="btn w-full justify-center text-sm"
+                      style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                      Anuluj
+                    </button>
+                  </>
                 )}
-                <button onClick={closeKarta} className="w-10 h-10 flex items-center justify-center text-slate-500 hover:text-white transition-colors">
-                  <X className="w-6 h-6" />
-                </button>
               </div>
             </div>
 
-            {/* ZAKŁADKI (tylko w trybie podglądu) */}
-            {kartaMode === "view" && (
-              <div className="flex border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
-                {[
-                  { id: "specyfikacja", label: "Specyfikacja technologiczna", icon: BookOpen },
-                  { id: "kalkulator", label: "Kalkulator kosztów", icon: Calculator },
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setKartaTab(tab.id as any)}
-                    className="flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2"
-                    style={{
-                      borderColor: kartaTab === tab.id ? 'var(--accent)' : 'transparent',
-                      color: kartaTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
-                    }}
-                  >
-                    <tab.icon className="w-3.5 h-3.5" />
-                    {tab.label}
+            {/* ── GŁÓWNA TREŚĆ: tabela BOM / kalkulator ── */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+
+              {/* Zakładki (view) */}
+              {kartaMode === "view" && (
+                <div className="flex border-b shrink-0" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+                  {[
+                    { id: "specyfikacja", label: "Specyfikacja BOM", icon: BookOpen },
+                    { id: "kalkulator", label: "Kalkulator kosztów", icon: Calculator },
+                  ].map(tab => (
+                    <button key={tab.id} onClick={() => setKartaTab(tab.id as any)}
+                      className="flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2"
+                      style={{
+                        borderColor: kartaTab === tab.id ? 'var(--accent)' : 'transparent',
+                        color: kartaTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
+                      }}>
+                      <tab.icon className="w-3.5 h-3.5" />
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Pasek nagłówkowy dla trybu edycji */}
+              {isEditMode && (
+                <div className="px-5 py-3 border-b shrink-0 flex items-center gap-2 text-xs font-bold uppercase tracking-widest"
+                     style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                  <BookOpen className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                  Lista składników BOM
+                  <span className="ml-1 px-2 py-0.5 rounded font-mono font-bold text-[10px]"
+                        style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+                    {skladniki.length}
+                  </span>
+                  <button type="button" data-testid="btn-dodaj-skladnik"
+                    onClick={() => setSkladniki(prev => [...prev, { id_asortymentu_skladnika: "", ilosc_wymagana: "", czy_pomocnicza: false }])}
+                    className="ml-auto flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest btn-hover-effect px-2 py-1 rounded"
+                    style={{ color: 'var(--accent)', background: 'rgba(59,130,246,.1)', border: '1px solid rgba(59,130,246,.2)' }}>
+                    <Plus className="w-3 h-3" /> Dodaj surowiec
                   </button>
-                ))}
-              </div>
-            )}
+                </div>
+              )}
 
-            {/* CIAŁO KARTY */}
-            <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
-              <form id="receptura-form" onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-                {/* SEKCJA: Specyfikacja + BOM */}
-                {(isEditMode || kartaTab === "specyfikacja") && (
-                  <div className="flex flex-col flex-1 min-h-0 p-4 gap-3">
+              {/* Pasek nagłówkowy dla view — BOM */}
+              {kartaMode === "view" && kartaTab === "specyfikacja" && (
+                <div className="px-5 py-3 border-b shrink-0 flex items-center gap-2 text-xs font-bold uppercase tracking-widest"
+                     style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                  <BookOpen className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                  Skład receptury
+                  <span className="ml-1 px-2 py-0.5 rounded font-mono font-bold text-[10px]"
+                        style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+                    {kartaReceptura?.skladniki.length}
+                  </span>
+                  <span className="ml-2 font-normal normal-case" style={{ color: 'var(--text-muted)', letterSpacing: 0 }}>
+                    — wsad {kartaReceptura?.wielkosc_produkcji ?? 1} {kartaReceptura?.asortyment_docelowy.jednostka_miary}
+                  </span>
+                </div>
+              )}
 
-                    {/* Meta — kompaktowy pasek */}
-                    <div className="flex items-center gap-3 shrink-0 flex-wrap" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }}>
-                      {isEditMode ? (
-                        <>
-                          <div className="flex flex-col gap-0.5 flex-1 min-w-[200px]">
-                            <label className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Produkt docelowy *</label>
-                            <select value={docelowyId} onChange={e => setDocelowyId(e.target.value)} required
-                              className="text-sm font-bold outline-none"
-                              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)' }}>
-                              <option value="">Wybierz produkt…</option>
-                              {produkty.map(a => <option key={a.id} value={a.id}>{a.nazwa} ({a.kod_towaru})</option>)}
-                            </select>
-                          </div>
-                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
-                          <div className="flex flex-col gap-0.5">
-                            <label className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Wersja</label>
-                            <input type="number" value={wersja} onChange={e => setWersja(parseInt(e.target.value) || 1)} min={1}
-                              className="w-16 text-sm font-mono font-bold outline-none text-center"
-                              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', padding: '2px 6px' }} />
-                          </div>
-                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
-                          <div className="flex flex-col gap-0.5">
-                            <label className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Trwałość (dni)</label>
-                            <input type="text" value={dniTrwalosci} onChange={e => setDniTrwalosci(e.target.value)} placeholder="—"
-                              className="w-20 text-sm font-mono font-bold outline-none text-center"
-                              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', padding: '2px 6px' }} />
-                          </div>
-                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
-                          <div className="flex flex-col gap-0.5">
-                            <label className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu ({selectedAsortyment?.jednostka_miary || 'j.m.'}) <span title="Wyliczane jako suma składników" style={{ color: 'var(--accent)', opacity: 0.7 }}>Σ</span></label>
-                            <div className="w-20 text-sm font-mono font-bold text-center"
-                              style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', padding: '2px 6px', opacity: 0.7 }}>
-                              {parseFloat(wielkoscProdukcji) || 0}
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex flex-col gap-0.5 flex-1">
-                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Produkt</span>
-                            <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{kartaReceptura?.asortyment_docelowy.nazwa}</span>
-                          </div>
-                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Wersja</span>
-                            <span className="text-sm font-mono font-bold" style={{ color: 'var(--text-code)' }}>v{kartaReceptura?.numer_wersji}</span>
-                          </div>
-                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Trwałość</span>
-                            <span className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{kartaReceptura?.dni_trwalosci ? `${kartaReceptura.dni_trwalosci} dni` : '—'}</span>
-                          </div>
-                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu</span>
-                            <span className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{kartaReceptura?.wielkosc_produkcji ?? 1} {kartaReceptura?.asortyment_docelowy.jednostka_miary}</span>
-                          </div>
-                          <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Składniki</span>
-                            <span className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{kartaReceptura?.skladniki.length} poz.</span>
-                          </div>
-                        </>
-                      )}
-                    </div>
+              {/* Treść */}
+              <div className="flex-1 overflow-y-auto">
+                <form id="receptura-form" onSubmit={handleSubmit}>
 
-                    {/* BOM — tabela składników */}
-                    <div className="flex-1 min-h-0 flex flex-col rounded overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-                      {/* Nagłówek tabeli */}
-                      <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-                        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                          BOM — na {isEditMode ? (parseFloat(wielkoscProdukcji) || 1) : (kartaReceptura?.wielkosc_produkcji ?? 1)} {isEditMode ? (selectedAsortyment?.jednostka_miary || 'j.m.') : kartaReceptura?.asortyment_docelowy.jednostka_miary}
-                        </span>
-                        {isEditMode && (
-                          <button type="button" data-testid="btn-dodaj-skladnik"
-                            onClick={() => setSkladniki(prev => [...prev, { id_asortymentu_skladnika: "", ilosc_wymagana: "", czy_pomocnicza: false }])}
-                            className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest btn-hover-effect px-2 py-1 rounded"
-                            style={{ color: 'var(--accent)', background: 'rgba(59,130,246,.1)', border: '1px solid rgba(59,130,246,.2)' }}>
-                            <Plus className="w-3 h-3" /> Dodaj surowiec
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Nagłówki kolumn */}
-                      <div className="grid shrink-0 text-[10px] font-bold uppercase tracking-widest px-2 py-1.5"
-                        style={{ gridTemplateColumns: isEditMode ? '24px 1fr 90px 100px 28px' : '24px 1fr 100px 90px 80px', background: 'var(--bg-app)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', gap: 6 }}>
-                        <div>#</div>
-                        <div>Surowiec</div>
-                        <div className="text-right">Ilość / 1 JM</div>
-                        <div>{isEditMode ? 'Jednostka' : 'Jednostka'}</div>
-                        {!isEditMode && <div style={{ color: 'var(--text-muted)' }}>Typ</div>}
-                        {isEditMode && <div />}
-                      </div>
-
-                      {/* Wiersze */}
-                      <div className="overflow-y-auto flex-1">
+                  {/* TABELA BOM (view + edit) */}
+                  {(isEditMode || kartaTab === "specyfikacja") && (
+                    <table className="mes-table">
+                      <thead>
+                        <tr>
+                          <th className="text-center w-8">Lp.</th>
+                          <th>Surowiec</th>
+                          <th className="text-right">Ilość / wsad</th>
+                          <th>Jednostka</th>
+                          {!isEditMode && <th>Typ</th>}
+                          {isEditMode && <th style={{ width: 28 }} />}
+                        </tr>
+                      </thead>
+                      <tbody>
                         {isEditMode ? (
                           skladniki.length === 0 ? (
-                            <div className="text-center py-8 text-xs cursor-pointer" style={{ color: 'var(--text-muted)' }}
-                              onClick={() => setSkladniki(prev => [...prev, { id_asortymentu_skladnika: "", ilosc_wymagana: "", czy_pomocnicza: false }])}>
-                              Brak składników — kliknij aby dodać
-                            </div>
+                            <tr>
+                              <td colSpan={5} className="text-center py-10 text-xs cursor-pointer"
+                                style={{ color: 'var(--text-muted)' }}
+                                onClick={() => setSkladniki(prev => [...prev, { id_asortymentu_skladnika: "", ilosc_wymagana: "", czy_pomocnicza: false }])}>
+                                Brak składników — kliknij aby dodać
+                              </td>
+                            </tr>
                           ) : (
                             skladniki.map((s, idx) => {
                               const asort = surowce.find(a => a.id === s.id_asortymentu_skladnika);
                               return (
-                                <div key={idx} className="grid items-center px-2 py-1.5 border-b hover:bg-[var(--bg-hover)] transition-colors"
-                                  style={{ gridTemplateColumns: '24px 1fr 90px 100px 28px', borderColor: 'var(--border-dim)', gap: 6 }}>
-                                  <span className="text-[11px] font-mono font-bold text-center" style={{ color: 'var(--text-muted)' }}>{idx + 1}</span>
-                                  <select value={s.id_asortymentu_skladnika}
-                                    onChange={e => { const v = e.target.value; setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], id_asortymentu_skladnika:v, czy_pomocnicza:false}; return n; }); }}
-                                    className="text-xs font-semibold outline-none w-full"
-                                    style={{ background:'var(--bg-input)', border:'1px solid var(--border)', borderRadius:4, color:'var(--text-primary)', padding:'4px 6px' }}>
-                                    <option value="">Wybierz surowiec…</option>
-                                    {surowce.map(a => <option key={a.id} value={a.id}>{a.nazwa} ({a.kod_towaru})</option>)}
-                                  </select>
-                                  <input type="text" value={s.ilosc_wymagana} placeholder="0"
-                                    onChange={e => { const v=e.target.value.replace(",","."); setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], ilosc_wymagana:v}; return n; }); }}
-                                    className="text-xs font-mono font-bold text-right outline-none w-full"
-                                    style={{ background:'var(--bg-input)', border:'1px solid var(--border)', borderRadius:4, color:'#4ade80', padding:'4px 6px' }} />
-                                  <select value={s.czy_pomocnicza ? "pomocnicza" : "podstawowa"}
-                                    onChange={e => { const isPom=e.target.value==="pomocnicza"; setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], czy_pomocnicza:isPom}; return n; }); }}
-                                    className="text-[11px] font-bold outline-none w-full"
-                                    style={{ background:'var(--bg-input)', border:'1px solid var(--border)', borderRadius:4, color:'var(--text-secondary)', padding:'4px 6px' }}>
-                                    <option value="podstawowa">{asort?.jednostka_miary || 'j.m.'}</option>
-                                    {asort?.jednostka_pomocnicza && <option value="pomocnicza">{asort.jednostka_pomocnicza}</option>}
-                                  </select>
-                                  <button type="button" onClick={() => setSkladniki(prev => prev.filter((_, i) => i !== idx))}
-                                    className="flex items-center justify-center w-5 h-5 rounded transition-colors"
-                                    style={{ color: 'var(--danger)' }}>
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
+                                <tr key={idx}>
+                                  <td className="text-center mono text-xs" style={{ color: 'var(--text-muted)' }}>{idx + 1}</td>
+                                  <td>
+                                    <select value={s.id_asortymentu_skladnika}
+                                      onChange={e => { const v = e.target.value; setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], id_asortymentu_skladnika:v, czy_pomocnicza:false}; return n; }); }}
+                                      className="text-xs font-semibold outline-none w-full"
+                                      style={{ background:'var(--bg-input)', border:'1px solid var(--border)', borderRadius:4, color:'var(--text-primary)', padding:'4px 6px' }}>
+                                      <option value="">Wybierz surowiec…</option>
+                                      {surowce.map(a => <option key={a.id} value={a.id}>{a.nazwa} ({a.kod_towaru})</option>)}
+                                    </select>
+                                  </td>
+                                  <td>
+                                    <input type="text" value={s.ilosc_wymagana} placeholder="0"
+                                      onChange={e => { const v=e.target.value.replace(",","."); setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], ilosc_wymagana:v}; return n; }); }}
+                                      className="text-xs font-mono font-bold text-right outline-none w-full"
+                                      style={{ background:'var(--bg-input)', border:'1px solid var(--border)', borderRadius:4, color:'#4ade80', padding:'4px 6px' }} />
+                                  </td>
+                                  <td>
+                                    <select value={s.czy_pomocnicza ? "pomocnicza" : "podstawowa"}
+                                      onChange={e => { const isPom=e.target.value==="pomocnicza"; setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], czy_pomocnicza:isPom}; return n; }); }}
+                                      className="text-[11px] font-bold outline-none w-full"
+                                      style={{ background:'var(--bg-input)', border:'1px solid var(--border)', borderRadius:4, color:'var(--text-secondary)', padding:'4px 6px' }}>
+                                      <option value="podstawowa">{asort?.jednostka_miary || 'j.m.'}</option>
+                                      {asort?.jednostka_pomocnicza && <option value="pomocnicza">{asort.jednostka_pomocnicza}</option>}
+                                    </select>
+                                  </td>
+                                  <td>
+                                    <button type="button" onClick={() => setSkladniki(prev => prev.filter((_, i) => i !== idx))}
+                                      className="flex items-center justify-center w-5 h-5 rounded transition-colors mx-auto"
+                                      style={{ color: 'var(--danger)' }}>
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
                               );
                             })
                           )
@@ -485,69 +554,60 @@ export default function Receptury() {
                             const typColors: Record<string,string> = { Surowiec:'rgba(59,130,246,.15)', Polprodukt:'rgba(245,158,11,.15)', Wyrob_Gotowy:'rgba(34,197,94,.15)' };
                             const typLabels: Record<string,string> = { Surowiec:'Sur.', Polprodukt:'Pół.', Wyrob_Gotowy:'WG' };
                             return (
-                              <div key={i} className="grid items-center px-2 py-2 border-b hover:bg-[var(--bg-hover)] transition-colors"
-                                style={{ gridTemplateColumns: '24px 1fr 100px 90px 80px', borderColor: 'var(--border-dim)', gap: 6 }}>
-                                <span className="text-[11px] font-mono font-bold text-center" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
-                                <div className="min-w-0">
-                                  <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{s.asortyment_skladnika.nazwa}</div>
-                                  <div className="text-[10px] font-mono" style={{ color: 'var(--text-code)' }}>{s.asortyment_skladnika.kod_towaru}</div>
-                                </div>
-                                <div className="text-right font-mono font-bold text-sm" style={{ color: '#4ade80' }}>
-                                  {fmtL(s.ilosc_wymagana * (kartaReceptura?.wielkosc_produkcji ?? 1), 3)}
-                                </div>
-                                <div className="text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>
+                              <tr key={i}>
+                                <td className="text-center mono text-xs" style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
+                                <td>
+                                  <div className="font-medium text-white">{s.asortyment_skladnika.nazwa}</div>
+                                  <div className="text-xs mono" style={{ color: 'var(--text-code)' }}>{s.asortyment_skladnika.kod_towaru}</div>
+                                </td>
+                                <td className="text-right">
+                                  <div className="font-mono font-bold text-white">
+                                    {fmtL(s.ilosc_wymagana * (kartaReceptura?.wielkosc_produkcji ?? 1), 3)}
+                                  </div>
+                                </td>
+                                <td className="text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>
                                   {s.czy_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary}
-                                </div>
-                                <div>
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: typColors[s.asortyment_skladnika.typ_asortymentu] || 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
+                                </td>
+                                <td>
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                    style={{ background: typColors[s.asortyment_skladnika.typ_asortymentu] || 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
                                     {typLabels[s.asortyment_skladnika.typ_asortymentu] || s.asortyment_skladnika.typ_asortymentu}
                                   </span>
-                                </div>
-                              </div>
+                                </td>
+                              </tr>
                             );
                           })
                         )}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                      </tbody>
+                    </table>
+                  )}
 
-                {/* SEKCJA: Kalkulator kosztów */}
-                {kartaTab === "kalkulator" && kartaReceptura && (
-                  <div className="space-y-4">
-                    <h4 className="text-slate-400 text-xs font-bold uppercase tracking-widest flex items-center gap-2">
-                      <Calculator className="w-3.5 h-3.5" />
-                      Kalkulator kosztów
-                    </h4>
-
-                    {/* Parametry wsadu */}
-                    <div className="flex items-end gap-4 flex-wrap">
-                      <div>
-                        <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Wielkość produkcji (JM)</label>
-                        <input type="number" step="any" min="0.001" value={kalcWielkosc}
-                          onChange={e => setKalcWielkosc(e.target.value)}
-                          className="w-28 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
-                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                        />
+                  {/* KALKULATOR KOSZTÓW */}
+                  {kartaTab === "kalkulator" && kartaReceptura && (
+                    <div className="p-5 space-y-5">
+                      <div className="flex items-end gap-4 flex-wrap">
+                        <div>
+                          <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Wielkość produkcji (JM)</label>
+                          <input type="number" step="any" min="0.001" value={kalcWielkosc}
+                            onChange={e => setKalcWielkosc(e.target.value)}
+                            className="w-28 rounded px-3 py-2 text-sm font-mono outline-none"
+                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <div>
+                          <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Narzut (%)</label>
+                          <input type="number" step="0.1" min="0" value={kalcNarzut}
+                            onChange={e => setKalcNarzut(e.target.value)}
+                            className="w-24 rounded px-3 py-2 text-sm font-mono outline-none"
+                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <button type="button" onClick={saveKalcParametry} disabled={kalcLoading}
+                          className="px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect disabled:opacity-50"
+                          style={{ background: 'var(--accent)' }}>
+                          {kalcLoading ? "Liczę…" : "Przelicz"}
+                        </button>
                       </div>
-                      <div>
-                        <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Narzut (%)</label>
-                        <input type="number" step="0.1" min="0" value={kalcNarzut}
-                          onChange={e => setKalcNarzut(e.target.value)}
-                          className="w-24 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
-                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                        />
-                      </div>
-                      <button type="button" onClick={saveKalcParametry} disabled={kalcLoading}
-                        className="px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect disabled:opacity-50"
-                        style={{ background: 'var(--accent)' }}>
-                        {kalcLoading ? "Liczę…" : "Przelicz"}
-                      </button>
-                    </div>
 
-                    {/* Tabela składników z kosztami */}
-                    {kalkulacja && (
-                      <div className="mes-panel rounded overflow-hidden">
+                      {kalkulacja && (
                         <table className="mes-table">
                           <thead>
                             <tr>
@@ -573,32 +633,18 @@ export default function Receptury() {
                             ))}
                           </tbody>
                         </table>
-                      </div>
-                    )}
-                    {kalcLoading && <Spinner.Page />}
-                  </div>
-                )}
-              </form>
+                      )}
+                      {kalcLoading && <Spinner.Page />}
+                    </div>
+                  )}
+
+                </form>
+              </div>
             </div>
 
-            {/* STOPKA z przyciskami zapisu */}
-            {isEditMode && (
-              <div className="p-4 border-t border-[var(--border)] bg-[var(--bg-app)]/50 flex justify-between items-center shrink-0">
-                <button type="button" onClick={kartaMode === "new" ? closeKarta : switchToView} className="px-5 py-2.5 text-slate-400 hover:bg-[var(--bg-hover)] rounded-xl font-semibold transition-colors">
-                  Anuluj
-                </button>
-                <button
-                  form="receptura-form"
-                  type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 min-h-[44px] transition-colors btn-hover-effect"
-                >
-                  <Save className="w-5 h-5" /> Zatwierdź i zapisz
-                </button>
-              </div>
-            )}
-            </div>
           </div>
-        )}
+        </div>
+      )}
 
       {/* LISTA RECEPTUR */}
       <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
@@ -608,6 +654,7 @@ export default function Receptury() {
           <table className="mes-table">
             <thead>
               <tr>
+                <th style={{ width: 3, padding: 0 }} />
                 <SortableTh label="Produkt"    field="produkt"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Kod"        field="kod"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <SortableTh label="Wersja"     field="wersja"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -641,6 +688,9 @@ export default function Receptury() {
                 const sorted = [...receptury.filter(r => r.asortyment_docelowy.id === v.asortyment_docelowy.id)].sort((a, b) => b.numer_wersji - a.numer_wersji);
                 return (
                   <tr key={v.id} onClick={() => openView(v)} className={`cursor-pointer ${v.czy_aktywne ? '' : 'opacity-40'}`}>
+                    <td style={{ padding: 0, width: 3 }}>
+                      <div style={{ width: 3, height: 36, background: v.czy_aktywne ? 'var(--accent)' : '#64748b', opacity: 0.7 }} />
+                    </td>
                     <td className="font-medium text-white">{v.asortyment_docelowy.nazwa}</td>
                     <td className="mono" style={{ color: 'var(--text-code)' }}>{v.asortyment_docelowy.kod_towaru}</td>
                     <td>

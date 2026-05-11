@@ -39,8 +39,14 @@ export default function Traceability() {
   return (
     <div className="h-full flex flex-col gap-3 animate-view">
       <div>
-        <h2 className="text-lg font-bold text-white tracking-wide">Traceability</h2>
-        <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Genealogia partii Lot-to-Lot</p>
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-lg font-black text-white tracking-tight">Traceability</h2>
+          <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+            Genealogia
+          </span>
+        </div>
+        <p className="text-[11px] mt-0.5 font-medium" style={{ color: 'var(--text-muted)' }}>Śledzenie partii Lot-to-Lot</p>
       </div>
 
       {/* Wyszukiwarka */}
@@ -65,8 +71,8 @@ export default function Traceability() {
         <button
           onClick={() => handleSearch()}
           disabled={loading}
-          className="px-5 py-2.5 rounded text-sm font-semibold btn-hover-effect disabled:opacity-50 text-white"
-          style={{ background: 'var(--accent)' }}
+          className="px-5 py-2.5 rounded-xl text-sm font-semibold btn-hover-effect disabled:opacity-50 transition-all"
+          style={{ background: 'rgba(6,182,212,0.15)', color: 'var(--accent)', border: '1px solid rgba(6,182,212,0.3)' }}
         >
           {loading ? "Szukanie…" : "Analizuj"}
         </button>

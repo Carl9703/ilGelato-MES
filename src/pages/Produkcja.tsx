@@ -8,6 +8,7 @@ import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
+import { printSesja, printZP } from "../utils/printDoc";
 
 type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null; typ_asortymentu?: string; id_grupy?: string | null; grupa?: { kod: string } | null };
 type SkladnikReceptury = { 
@@ -346,145 +347,6 @@ export default function Produkcja() {
       if (!res.ok) { const d = await res.json().catch(() => ({})); showToast(d.error || "Błąd usuwania zlecenia", "error"); return; }
       fetchData();
     } catch { showToast("Błąd połączenia", "error"); }
-  };
-
-  const handlePrintZP = (z: Zlecenie) => {
-    const win = window.open("", "_blank", "width=900,height=700");
-    if (!win) return;
-    const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("pl-PL") : "—";
-    const statusLabel: Record<string, string> = { Planowane: "Planowane", W_toku: "W toku", Zrealizowane: "Zrealizowane", Anulowane: "Anulowane" };
-    const nazwaWyrobu = z.receptura?.asortyment_docelowy?.nazwa || "—";
-    const nrPartii = z.numer_partii_wyrobu || "—";
-
-    // ── Pozycje per opakowanie ──
-    const opakowania = z.opakowania || [];
-    const dataProd = fmt(z.utworzono_dnia);
-    const dniTrwalosci = (z.receptura as any)?.dni_trwalosci;
-    const terminWaznosci = dniTrwalosci
-      ? fmt(new Date(new Date(z.utworzono_dnia).getTime() + dniTrwalosci * 86400000).toISOString())
-      : "—";
-
-    const pozycjeHTML = opakowania.length > 0
-      ? opakowania.map((op, i) => `<tr>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${i + 1}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb">
-            <div style="font-weight:700">${nazwaWyrobu}</div>
-            <div style="font-size:11px;color:#64748b;margin-top:1px">${op.nazwa}</div>
-          </td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:12px">${nrPartii}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${dataProd}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b;font-size:12px">${terminWaznosci}</td>
-          <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">
-            1&nbsp;szt.
-            <span style="display:block;font-size:10px;color:#64748b;font-family:monospace">${fmtL(op.waga_kg, 3)}&nbsp;kg</span>
-          </td>
-        </tr>`).join("")
-      : `<tr><td colspan="6" style="padding:12px 8px;color:#94a3b8;text-align:center;font-style:italic">Brak danych o opakowaniach</td></tr>`;
-
-    // ── Podsumowanie wg towaru ──
-    const totalKg = opakowania.reduce((s, o) => s + o.waga_kg, 0);
-    const podsumowanieHTML = opakowania.length > 0
-      ? `<tr>
-          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${nazwaWyrobu}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${opakowania.length}&nbsp;szt.</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(totalKg, 3)}&nbsp;kg</td>
-        </tr>
-        <tr style="background:#f8fafc;border-top:2px solid #1e293b">
-          <td style="padding:8px;font-weight:900">ŁĄCZNIE</td>
-          <td style="padding:8px;text-align:right;font-family:monospace;font-weight:700">${opakowania.length}&nbsp;szt.</td>
-          <td style="padding:8px;text-align:right;font-weight:900;font-size:15px;font-family:monospace">${fmtL(totalKg, 3)}&nbsp;kg</td>
-        </tr>`
-      : "";
-
-    // ── Surowce ──
-    let skladnikiHTML = "";
-    if (z.status === "Planowane") {
-      skladnikiHTML = (z.receptura?.skladniki || []).map(s => {
-        const qty = fmtL(s.ilosc_wymagana * z.planowana_ilosc_wyrobu * (1 + (s.procent_strat || 0) / 100), 3);
-        const partia = s.sugerowane_partie?.[0]?.numer_partii || "—";
-        return `<tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${s.asortyment_skladnika?.nazwa}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px;color:#3b82f6">${partia}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${qty} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
-      }).join("");
-    } else if (z.status === "W_toku") {
-      skladnikiHTML = (z.receptura?.skladniki || []).map(s => {
-        const rezerwacje = (z.rezerwacje || []).filter((r: any) =>
-          (r.id_partii && r.partia?.id_asortymentu === s.asortyment_skladnika?.id) || (r.id_asortymentu === s.asortyment_skladnika?.id)
-        );
-        const suma = rezerwacje.reduce((acc: number, r: any) => acc + (r.ilosc_zarezerwowana || 0), 0);
-        const partia = rezerwacje[0]?.partia?.numer_partii || "Rez. ilościowa";
-        return `<tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${s.asortyment_skladnika?.nazwa}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px;color:#3b82f6">${partia}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">${fmtL(suma, 3)} ${s.asortyment_skladnika?.jednostka_miary}</td></tr>`;
-      }).join("");
-    } else {
-      skladnikiHTML = (z.ruchy_magazynowe || []).filter(r => r.typ_ruchu === "Zuzycie").map(r =>
-        `<tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${r.partia?.asortyment?.nazwa}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px;color:#3b82f6">${r.partia?.numer_partii}</td><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;color:#16a34a">${fmtL(Math.abs(r.ilosc), 3)} ${r.partia?.asortyment?.jednostka_miary}</td></tr>`
-      ).join("");
-    }
-
-    win.document.write(`<!DOCTYPE html><html><head><title>${z.numer_zlecenia || "ZP"}</title><style>
-      *{box-sizing:border-box}
-      body{font-family:Inter,system-ui,sans-serif;padding:36px 44px;color:#1e293b;max-width:860px;margin:0 auto;font-size:13px}
-      h1{font-size:20px;font-weight:900;margin:0 0 2px;letter-spacing:-.3px}
-      .sub{font-size:11px;color:#64748b;margin-bottom:16px}
-      .header-bar{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 0;border-top:2px solid #0f172a;border-bottom:1px solid #e2e8f0;margin-bottom:16px}
-      .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;background:#e0e7ff;color:#4338ca;margin-left:6px}
-      .meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 20px;padding:12px 16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0}
-      .metric .label{font-size:10px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em}
-      .metric .val{font-size:16px;font-weight:900;margin-top:2px;font-family:monospace}
-      .section{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:20px 0 6px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
-      table{width:100%;border-collapse:collapse}
-      th{text-align:left;padding:7px 8px;border-bottom:2px solid #1e293b;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;white-space:nowrap}
-      th.r{text-align:right} td.r{text-align:right}
-      .sigs{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px;padding-top:16px;border-top:1px solid #e2e8f0}
-      .sig-line{border-bottom:1px solid #94a3b8;height:30px;margin-top:6px}
-      .sig-label{font-size:11px;color:#64748b}
-      .footer{margin-top:20px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px;text-align:right}
-      @media print{body{padding:16px 20px}@page{size:A4;margin:12mm}}
-    </style></head><body>
-    <h1>KARTA PRODUKCYJNA <span class="badge">${statusLabel[z.status] || z.status}</span></h1>
-    <div class="sub">ilGelato MES &middot; ${z.receptura?.asortyment_docelowy?.kod_towaru || ""}</div>
-    <div class="header-bar">
-      <div>
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Numer zlecenia</div>
-        <div style="font-size:22px;font-weight:900;font-family:monospace;margin-top:2px">${z.numer_zlecenia || "ZP-TEMP"}</div>
-        <div style="font-size:12px;color:#475569;margin-top:4px">Wyrób: <strong>${nazwaWyrobu}</strong></div>
-        <div style="font-size:12px;color:#475569">Wystawiono: <strong>${fmt(z.utworzono_dnia)}</strong></div>
-      </div>
-    </div>
-    <div class="meta-grid">
-      <div class="metric"><div class="label">Plan</div><div class="val">${fmtL(z.planowana_ilosc_wyrobu, 3)} ${z.receptura?.asortyment_docelowy?.jednostka_miary || "kg"}</div></div>
-      ${z.rzeczywista_ilosc_wyrobu != null ? `<div class="metric"><div class="label">Wykonano</div><div class="val" style="color:#15803d">${fmtL(z.rzeczywista_ilosc_wyrobu, 3)} ${z.receptura?.asortyment_docelowy?.jednostka_miary || "kg"}</div></div>` : ""}
-      ${nrPartii !== "—" ? `<div class="metric"><div class="label">Nr partii (PW)</div><div class="val" style="color:#1d4ed8;font-size:13px">${nrPartii}</div></div>` : ""}
-    </div>
-    ${opakowania.length > 0 ? `
-    <div class="section">Pozycje — opakowania</div>
-    <table>
-      <thead><tr>
-        <th style="width:36px;text-align:center">Lp.</th>
-        <th>Wyrób / Opakowanie</th>
-        <th>Nr partii / LOT</th>
-        <th style="text-align:center">Data prod.</th>
-        <th style="text-align:center">Ważność</th>
-        <th class="r">Ilość</th>
-      </tr></thead>
-      <tbody>${pozycjeHTML}</tbody>
-    </table>
-    <div class="section">Podsumowanie wg towaru</div>
-    <table>
-      <thead><tr><th>Towar</th><th class="r">Ilość (szt.)</th><th class="r">Masa (kg)</th></tr></thead>
-      <tbody>${podsumowanieHTML}</tbody>
-    </table>` : ""}
-    <div class="section">Zużycie surowców</div>
-    <table>
-      <thead><tr><th>Surowiec</th><th>Nr Partii</th><th class="r">Ilość</th></tr></thead>
-      <tbody>${skladnikiHTML}</tbody>
-    </table>
-    <div class="sigs">
-      <div><div class="sig-label">Sporządził</div><div class="sig-line"></div></div>
-      <div><div class="sig-label">Zatwierdził</div><div class="sig-line"></div></div>
-    </div>
-    <div class="footer">Wydrukowano z systemu ilGelato MES &middot; ${new Date().toLocaleString("pl-PL")}</div>
-    </body></html>`);
-    win.document.close();
-    win.print();
   };
 
   // ── Wizard helpers ───────────────────────────────────────────────────────────
@@ -840,38 +702,66 @@ export default function Produkcja() {
   return (
     <div className="h-full flex flex-col gap-3 animate-view">
 
-      <div className="flex items-center justify-between shrink-0">
+      <div className="flex items-start justify-between gap-4 shrink-0">
         <div>
-          <h2 className="text-lg font-bold text-white tracking-wide">Produkcja</h2>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Zlecenia i realizacja produkcji</p>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-black text-white tracking-tight">Produkcja</h2>
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded"
+                  style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              MES
+            </span>
+          </div>
+          <div className="flex items-center gap-3 mt-1.5">
+            {[
+              { key: 'Planowane',    color: '#94a3b8', label: 'Planowane'    },
+              { key: 'W_toku',       color: '#f59e0b', label: 'W toku'       },
+              { key: 'Zrealizowane', color: '#22c55e', label: 'Zrealizowane' },
+            ].map(s => {
+              const n = zlecenia.filter(z => z.status === s.key).length;
+              if (!n) return null;
+              return (
+                <span key={s.key} className="flex items-center gap-1 text-[10px] font-semibold"
+                      style={{ color: 'var(--text-muted)' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 2, background: s.color, display: 'inline-block', opacity: 0.8 }} />
+                  <span style={{ color: s.color, fontWeight: 800 }}>{n}</span> {s.label}
+                </span>
+              );
+            })}
+          </div>
         </div>
-        {pageTab === "sesje" && (
-          <button onClick={openWizardWithDraftCheck} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect" style={{ background: 'var(--accent)' }}>
-            <Zap className="w-4 h-4" /> Nowa sesja
-            {hasDraft && <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" title="Zapisany szkic" />}
-          </button>
-        )}
-        {pageTab === "rozliczenie" && (
-          <button onClick={handleRozlicz} disabled={rozliczLoading} className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white btn-hover-effect disabled:opacity-50" style={{ background: 'var(--accent)' }}>
-            <Calculator className="w-4 h-4" /> {rozliczLoading ? "Liczę…" : "Rozlicz"}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {pageTab === "sesje" && (
+            <button onClick={openWizardWithDraftCheck}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+              style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              <Zap className="w-4 h-4" /> Nowa sesja
+              {hasDraft && <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" title="Zapisany szkic" />}
+            </button>
+          )}
+          {pageTab === "rozliczenie" && (
+            <button onClick={handleRozlicz} disabled={rozliczLoading}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all btn-hover-effect disabled:opacity-50"
+              style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+              <Calculator className="w-4 h-4" /> {rozliczLoading ? "Liczę…" : "Rozlicz"}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Page Tab Bar */}
-      <div className="flex gap-0 rounded overflow-hidden w-fit shrink-0" style={{ border: '1px solid var(--border)' }}>
+      <div className="flex gap-1 rounded-xl w-fit shrink-0" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', padding: '4px' }}>
         {[
-          { id: "sesje",        label: "Sesje produkcyjne", icon: Layers },
-          { id: "zlecenia",     label: "Zlecenia produkcyjne", icon: Factory },
-          { id: "rozliczenie",  label: "Rozliczenie produkcji", icon: BarChart2 },
-          { id: "koszty",       label: "Koszty produkcji", icon: Calculator },
-        ].map((tab, i) => (
+          { id: "sesje",        label: "Sesje produkcyjne",  icon: Layers    },
+          { id: "zlecenia",     label: "Zlecenia",           icon: Factory   },
+          { id: "rozliczenie",  label: "Rozliczenie",        icon: BarChart2 },
+          { id: "koszty",       label: "Koszty",             icon: Calculator},
+        ].map(tab => (
           <button key={tab.id} onClick={() => setPageTab(tab.id as any)}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-semibold transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all"
             style={{
-              background: pageTab === tab.id ? 'var(--accent)' : 'var(--bg-surface)',
-              color: pageTab === tab.id ? '#fff' : 'var(--text-secondary)',
-              borderLeft: i > 0 ? '1px solid var(--border)' : 'none',
+              background: pageTab === tab.id ? 'var(--accent-dim)' : 'transparent',
+              color:      pageTab === tab.id ? 'var(--accent)'     : 'var(--text-secondary)',
+              border:     pageTab === tab.id ? '1px solid var(--border-accent)' : '1px solid transparent',
             }}>
             <tab.icon className="w-3.5 h-3.5" />{tab.label}
           </button>
@@ -1163,16 +1053,32 @@ export default function Produkcja() {
       {pageTab === "zlecenia" && <>
 
       {/* Filter Bar */}
-      <div className="flex gap-1 bg-[var(--bg-surface)] p-1 rounded-xl w-fit border border-[var(--border)]">
-        {[{ id: "all", label: "Wszystkie" }, { id: "Planowane", label: "Planowane" }, { id: "W_toku", label: "W toku" }, { id: "Zrealizowane", label: "Zrealizowane" }].map(f => (
-          <button
-            key={f.id}
-            onClick={() => setFilter(f.id)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${filter === f.id ? "bg-blue-600 text-white" : "text-[var(--text-secondary)] hover:text-white"}`}
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="flex items-center gap-1 shrink-0 rounded-lg"
+           style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', padding: '4px 6px' }}>
+        {([
+          { id: "all",           label: "Wszystkie",    color: 'var(--text-secondary)', bg: 'var(--bg-input)',           border: 'var(--border)' },
+          { id: "Planowane",     label: "Planowane",    color: '#94a3b8',               bg: 'rgba(148,163,184,0.12)',    border: 'rgba(148,163,184,0.35)' },
+          { id: "W_toku",        label: "W toku",       color: '#f59e0b',               bg: 'rgba(245,158,11,0.12)',     border: 'rgba(245,158,11,0.35)'  },
+          { id: "Zrealizowane",  label: "Zrealizowane", color: '#22c55e',               bg: 'rgba(34,197,94,0.12)',      border: 'rgba(34,197,94,0.35)'   },
+          { id: "Anulowane",     label: "Anulowane",    color: '#ef4444',               bg: 'rgba(239,68,68,0.12)',      border: 'rgba(239,68,68,0.35)'   },
+        ] as const).map(f => {
+          const isActive = filter === f.id;
+          const cnt = f.id === 'all' ? zlecenia.length : zlecenia.filter(z => z.status === f.id).length;
+          return (
+            <button key={f.id} onClick={() => setFilter(f.id)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap"
+              style={{
+                background: isActive ? f.bg : 'transparent',
+                color: isActive ? f.color : 'var(--text-muted)',
+                border: isActive ? `1px solid ${f.border}` : '1px solid transparent',
+                boxShadow: isActive && f.id !== 'all' ? `0 0 10px ${f.bg}` : 'none',
+              }}>
+              {f.id !== 'all' && isActive && <span style={{ width: 6, height: 6, borderRadius: '50%', background: f.color, display: 'inline-block', flexShrink: 0 }} />}
+              {f.label}
+              <span className="text-[10px] font-bold opacity-60">{cnt}</span>
+            </button>
+          );
+        })}
       </div>
 
 
@@ -1186,7 +1092,8 @@ export default function Produkcja() {
         ) : (
           <table className="mes-table">
             <thead>
-              <tr>
+              <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                <th style={{ width: 3, padding: 0 }} />
                 <SortableTh label="Nr zlecenia" field="numer_zlecenia" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 <th>Sesja</th>
                 <SortableTh label="Produkt"     field="produkt"         sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -1198,8 +1105,16 @@ export default function Produkcja() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(z => (
+              {filtered.map(z => {
+                const statusColor: Record<string, string> = {
+                  Planowane: '#94a3b8', W_toku: '#f59e0b', Zrealizowane: '#22c55e', Anulowane: '#ef4444',
+                };
+                const sc = statusColor[z.status] || 'var(--border)';
+                return (
                 <tr key={z.id} className="cursor-pointer" onClick={() => { setViewZlecenie(z); setEditIlosc(z.planowana_ilosc_wyrobu.toString()); }} style={z.status === "Anulowane" ? { opacity: 0.45 } : undefined}>
+                  <td style={{ width: 3, padding: 0 }}>
+                    <div style={{ width: 3, height: 36, background: sc, opacity: 0.8, borderRadius: '0 2px 2px 0' }} />
+                  </td>
                   <td className="mono font-medium" style={{ color: 'var(--text-code)' }}>
                     {z.numer_zlecenia || z.id.substring(0, 8)}
                   </td>
@@ -1228,13 +1143,17 @@ export default function Produkcja() {
                   <td onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
                       {z.status === "Planowane" && (
-                        <button onClick={() => handleStartProduction(z)} className="px-3 py-1.5 rounded text-xs font-medium btn-hover-effect text-white" style={{ background: '#d97706' }}>
-                          <Clock className="w-3.5 h-3.5 inline mr-1" />Rozpocznij
+                        <button onClick={() => handleStartProduction(z)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-semibold btn-hover-effect"
+                          style={{ background: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)' }}>
+                          <Clock className="w-3.5 h-3.5" />Rozpocznij
                         </button>
                       )}
                       {z.status === "W_toku" && (
-                        <button onClick={() => handleRealizuj(z)} className="px-3 py-1.5 rounded text-xs font-medium btn-hover-effect text-white" style={{ background: '#16a34a' }}>
-                          <Play className="w-3.5 h-3.5 inline mr-1" />Realizuj
+                        <button onClick={() => handleRealizuj(z)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-semibold btn-hover-effect"
+                          style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}>
+                          <Play className="w-3.5 h-3.5" />Realizuj
                         </button>
                       )}
                       {z.status !== "Zrealizowane" && z.status !== "Anulowane" && (
@@ -1245,7 +1164,8 @@ export default function Produkcja() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -1254,142 +1174,22 @@ export default function Produkcja() {
       </>}
       </div>
       
-      {/* View Zlecenie Detail Modal / Karta ERP */}
+      {/* View Zlecenie Detail Modal / Karta ZP */}
       {viewZlecenie && (
-        <div className="fixed inset-0 z-[1050] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4 animate-view">
-          <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] overflow-hidden flex flex-col" style={{ height: '80vh', marginTop: '10vh' }}>
+        <div className="fixed inset-0 z-[1050] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pt-2.5 pb-2.5 pr-2.5 animate-view">
+          <div className="bg-[var(--bg-panel)] flex h-full border border-[var(--border)] rounded-xl overflow-hidden">
 
-            <div className="flex items-center justify-between p-5 border-b border-[var(--border)] shrink-0" style={{ background: viewZlecenie.status === "W_toku" ? 'rgba(217,119,6,0.15)' : viewZlecenie.status === "Zrealizowane" ? 'rgba(16,185,129,0.1)' : 'rgba(37,99,235,0.1)' }}>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center border" style={{ background: viewZlecenie.status === "W_toku" ? 'rgba(217,119,6,0.2)' : viewZlecenie.status === "Zrealizowane" ? 'rgba(16,185,129,0.15)' : 'rgba(37,99,235,0.15)', borderColor: viewZlecenie.status === "W_toku" ? 'rgba(217,119,6,0.3)' : viewZlecenie.status === "Zrealizowane" ? 'rgba(16,185,129,0.3)' : 'rgba(37,99,235,0.3)' }}>
-                  <Factory className="w-5 h-5" style={{ color: viewZlecenie.status === "W_toku" ? '#f59e0b' : viewZlecenie.status === "Zrealizowane" ? '#10b981' : '#3b82f6' }} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white">{viewZlecenie.numer_zlecenia || "ZP-TEMP"}</h3>
-                    <span className={`badge ${getStatusStyle(viewZlecenie.status)}`}>{viewZlecenie.status?.replace("_", " ") || "Planowane"}</span>
-                  </div>
-                  <p className="text-[var(--text-secondary)] text-xs">
-                    {viewZlecenie.receptura?.asortyment_docelowy?.nazwa}
-                    <span className="ml-1.5 font-mono" style={{ color: 'var(--text-muted)' }}>· v{viewZlecenie.receptura?.numer_wersji}</span>
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => handlePrintZP(viewZlecenie)} className="text-[var(--text-muted)] hover:text-white p-2 rounded-lg hover:bg-[var(--bg-input)] transition-colors" title="Drukuj">
-                  <Printer className="w-5 h-5" />
-                </button>
-                <button onClick={() => setViewZlecenie(null)} className="text-[var(--text-muted)] hover:text-white p-2 rounded-lg hover:bg-[var(--bg-input)] transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-y-auto flex-1 p-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
-              {/* Left Column */}
-              <div className="lg:col-span-4 space-y-4">
-                <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
-                  <h4 className="text-[var(--text-secondary)] text-xs font-bold uppercase tracking-widest mb-3">Parametry produkcji</h4>
-                  <div className="space-y-2.5">
-                    <div className="flex justify-between items-center gap-2">
-                      <span className="text-[var(--text-muted)] text-xs shrink-0">Plan</span>
-                      {viewZlecenie.status === "Planowane" ? (
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min="0.001"
-                            step="any"
-                            value={editIlosc}
-                            onChange={e => setEditIlosc(e.target.value)}
-                            onKeyDown={e => { if (e.key === "Enter") handleSaveEdit(); }}
-                            className="w-24 bg-[var(--bg-panel)] border border-[var(--border)] focus:border-blue-500 rounded-lg px-2 py-1 text-white font-mono text-sm text-right focus:outline-none"
-                          />
-                          <span className="text-[var(--text-muted)] text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
-                        </div>
-                      ) : (
-                        <span className="text-white font-mono font-bold">
-                          {viewZlecenie.planowana_ilosc_wyrobu} <span className="text-[var(--text-muted)] text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
-                        </span>
-                      )}
-                    </div>
-                    {viewZlecenie.rzeczywista_ilosc_wyrobu && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-emerald-400 text-xs">Wykonano</span>
-                        <span className="text-emerald-400 font-mono font-bold">
-                          {viewZlecenie.rzeczywista_ilosc_wyrobu} <span className="text-[var(--text-muted)] text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <span className="text-[var(--text-muted)] text-xs">Receptura</span>
-                      <span className="text-[var(--text-primary)] font-mono text-xs">v{viewZlecenie.receptura?.numer_wersji}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[var(--text-muted)] text-xs">Kod towaru</span>
-                      <span className="text-[var(--text-primary)] font-mono text-xs">{viewZlecenie.receptura?.asortyment_docelowy?.kod_towaru}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[var(--text-muted)] text-xs">Data</span>
-                      <span className="text-[var(--text-primary)] text-xs">{new Date(viewZlecenie.utworzono_dnia).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {viewZlecenie.opakowania && viewZlecenie.opakowania.length > 0 && (
-                  <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
-                    <h4 className="text-[var(--text-secondary)] text-xs font-bold uppercase tracking-widest mb-3">Pakowanie</h4>
-                    <div className="space-y-1.5">
-                      {(Object.values(viewZlecenie.opakowania.reduce((acc: any, op: any) => {
-                        const k = `${op.id_asortymentu}_${op.waga_kg}`;
-                        if (!acc[k]) acc[k] = { ...op, count: 0 };
-                        acc[k].count++;
-                        return acc;
-                      }, {})) as any[]).sort((a, b) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg).map((op: any, i: number) => (
-                        <div key={i} className="flex justify-between items-center text-sm">
-                          <span className="text-[var(--text-primary)]">
-                            {op.count > 1 ? <><span className="text-[var(--text-muted)] font-bold">{op.count} x</span> </> : ""}
-                            {op.nazwa}
-                            <span className="text-xs text-[var(--text-muted)] ml-1">({fmtL(op.waga_kg, 3)} kg)</span>
-                          </span>
-                          <span className="font-mono font-bold text-white">{fmtL(op.waga_kg * op.count, 3)} kg</span>
-                        </div>
-                      ))}
-                      <div className="flex justify-between items-center text-sm pt-1 border-t border-[var(--border)]">
-                        <span className="text-[var(--text-muted)]">Razem</span>
-                        <span className="font-mono font-bold" style={{ color: 'var(--ok)' }}>
-                          {fmtL(viewZlecenie.opakowania.reduce((s, o) => s + o.waga_kg, 0), 3)} kg
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+            {/* ── Main content ─────────────────────────────────────────── */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex items-center gap-3 px-5 py-3.5 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
+                <Factory className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+                <span className="text-white font-semibold text-sm">Zlecenie produkcyjne</span>
+                {viewZlecenie.id_sesji && viewZlecenie.sesja?.numer_sesji && (
+                  <span className="text-xs font-mono ml-1" style={{ color: 'var(--text-muted)' }}>· {viewZlecenie.sesja.numer_sesji}</span>
                 )}
-
-                <div className="space-y-2">
-                  {viewZlecenie.status === "Planowane" && (
-                    <>
-                      <button onClick={handleSaveEdit}
-                        className="w-full text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 min-h-[44px] transition-colors"
-                        style={{ background: 'var(--accent)' }}>
-                        <Save className="w-4 h-4" /> Zapisz zmiany
-                      </button>
-                      <button onClick={() => { handleStartProduction(viewZlecenie); setViewZlecenie(null); }}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 min-h-[44px] transition-colors">
-                        <Clock className="w-4 h-4" /> Rozpocznij produkcję
-                      </button>
-                    </>
-                  )}
-                  {viewZlecenie.status === "W_toku" && (
-                    <button onClick={() => { handleRealizuj(viewZlecenie); setViewZlecenie(null); }}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 min-h-[44px] transition-colors">
-                      <Play className="w-4 h-4" /> Realizuj / Zakończ
-                    </button>
-                  )}
-                </div>
               </div>
 
-              {/* Right Column: Tables */}
-              <div className="lg:col-span-8 space-y-4">
-
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 {/* Panel sesji produkcyjnej */}
                 {viewZlecenie.id_sesji && (() => {
                   const sesjaZlecenia = zlecenia
@@ -1443,6 +1243,7 @@ export default function Produkcja() {
                   );
                 })()}
 
+                {/* Zapotrzebowanie i zużycie */}
                 <div className="mes-panel rounded overflow-hidden">
                   <div className="px-4 py-2.5 border-b border-[var(--border)] flex items-center gap-2" style={{ background: 'var(--bg-surface)' }}>
                     <Database className="w-4 h-4" style={{ color: 'var(--accent)' }} />
@@ -1510,6 +1311,7 @@ export default function Produkcja() {
                   )}
                 </div>
 
+                {/* Dokumentacja systemowa */}
                 {viewZlecenie.ruchy_magazynowe?.length > 0 && (
                   <div className="mes-panel rounded overflow-hidden">
                     <div className="px-4 py-2.5 border-b border-[var(--border)] flex items-center gap-2" style={{ background: 'var(--bg-surface)' }}>
@@ -1546,6 +1348,140 @@ export default function Produkcja() {
                 )}
               </div>
             </div>
+
+            {/* ── Right sidebar ────────────────────────────────────────── */}
+            <div className="w-72 shrink-0 border-l border-[var(--border)] flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Szczegóły</span>
+                <button onClick={() => setViewZlecenie(null)} className="text-[var(--text-muted)] hover:text-white p-1 rounded transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* ZP number + status */}
+              <div className="px-5 py-4 border-b border-[var(--border)]">
+                <div className="text-2xl font-black font-mono text-white leading-none">{viewZlecenie.numer_zlecenia || "ZP-TEMP"}</div>
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <span className={`badge ${getStatusStyle(viewZlecenie.status)}`}>{viewZlecenie.status?.replace("_", " ") || "Planowane"}</span>
+                  {viewZlecenie.etap && <span className="badge badge-info">Etap {viewZlecenie.etap}</span>}
+                </div>
+              </div>
+
+              {/* Scrollable meta */}
+              <div className="flex-1 overflow-y-auto">
+                <div className="px-5 py-4 border-b border-[var(--border)] space-y-3">
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Wyrób</div>
+                    <div className="text-white font-semibold text-sm leading-tight">{viewZlecenie.receptura?.asortyment_docelowy?.nazwa}</div>
+                    <div className="text-xs font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      {viewZlecenie.receptura?.asortyment_docelowy?.kod_towaru} · v{viewZlecenie.receptura?.numer_wersji}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>Plan</span>
+                      {viewZlecenie.status === "Planowane" ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="0.001"
+                            step="any"
+                            value={editIlosc}
+                            onChange={e => setEditIlosc(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") handleSaveEdit(); }}
+                            className="w-20 bg-[var(--bg-panel)] border border-[var(--border)] focus:border-blue-500 rounded-lg px-2 py-1 text-white font-mono text-sm text-right focus:outline-none"
+                          />
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
+                        </div>
+                      ) : (
+                        <span className="text-white font-mono font-bold text-sm">
+                          {viewZlecenie.planowana_ilosc_wyrobu} <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
+                        </span>
+                      )}
+                    </div>
+                    {viewZlecenie.rzeczywista_ilosc_wyrobu != null && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-emerald-400">Wykonano</span>
+                        <span className="text-emerald-400 font-mono font-bold text-sm">
+                          {viewZlecenie.rzeczywista_ilosc_wyrobu} <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span>
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Data</span>
+                      <span className="text-xs text-white">{new Date(viewZlecenie.utworzono_dnia).toLocaleDateString("pl-PL")}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Opakowania */}
+                {viewZlecenie.opakowania && viewZlecenie.opakowania.length > 0 && (
+                  <div className="px-5 py-4 border-b border-[var(--border)]">
+                    <div className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--text-muted)' }}>Pakowanie</div>
+                    <div className="space-y-1.5">
+                      {(Object.values(viewZlecenie.opakowania.reduce((acc: any, op: any) => {
+                        const k = `${op.id_asortymentu}_${op.waga_kg}`;
+                        if (!acc[k]) acc[k] = { ...op, count: 0 };
+                        acc[k].count++;
+                        return acc;
+                      }, {})) as any[]).sort((a, b) => a.nazwa.localeCompare(b.nazwa) || b.waga_kg - a.waga_kg).map((op: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center text-xs">
+                          <span style={{ color: 'var(--text-primary)' }}>
+                            {op.count > 1 ? <><span className="font-bold" style={{ color: 'var(--text-muted)' }}>{op.count}×</span> </> : ""}
+                            {op.nazwa}
+                            <span className="ml-1" style={{ color: 'var(--text-muted)' }}>({fmtL(op.waga_kg, 3)} kg)</span>
+                          </span>
+                          <span className="font-mono font-bold text-white">{fmtL(op.waga_kg * op.count, 3)} kg</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between items-center text-xs pt-1 border-t border-[var(--border)]">
+                        <span style={{ color: 'var(--text-muted)' }}>Razem</span>
+                        <span className="font-mono font-bold" style={{ color: 'var(--ok)' }}>
+                          {fmtL(viewZlecenie.opakowania.reduce((s, o) => s + o.waga_kg, 0), 3)} kg
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Akcje */}
+              <div className="p-4 border-t border-[var(--border)] space-y-2 shrink-0">
+                {viewZlecenie.status === "Planowane" && (
+                  <>
+                    <button onClick={handleSaveEdit}
+                      className="btn w-full justify-center text-sm font-bold"
+                      style={{ background: 'var(--accent)', color: 'white', border: 'none' }}>
+                      <Save className="w-4 h-4" /> Zapisz zmiany
+                    </button>
+                    <button onClick={() => { handleStartProduction(viewZlecenie); setViewZlecenie(null); }}
+                      className="btn w-full justify-center text-sm font-bold"
+                      style={{ background: 'rgba(37,99,235,0.15)', color: '#60a5fa', border: '1px solid rgba(37,99,235,0.3)' }}>
+                      <Clock className="w-4 h-4" /> Rozpocznij produkcję
+                    </button>
+                  </>
+                )}
+                {viewZlecenie.status === "W_toku" && (
+                  <button onClick={() => { handleRealizuj(viewZlecenie); setViewZlecenie(null); }}
+                    className="btn w-full justify-center text-sm font-bold"
+                    style={{ background: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)' }}>
+                    <Play className="w-4 h-4" /> Realizuj / Zakończ
+                  </button>
+                )}
+                <button onClick={() => printZP(viewZlecenie)}
+                  className="btn w-full justify-center text-sm"
+                  style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)' }}>
+                  <Printer className="w-4 h-4" /> Drukuj kartę ZP
+                </button>
+                <button onClick={() => setViewZlecenie(null)}
+                  className="btn w-full justify-center text-sm"
+                  style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                  Zamknij
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
       )}
@@ -1644,76 +1580,6 @@ export default function Produkcja() {
         </div>
       )}
 
-      {/* ═══ PRINT AREA (HIDDEN) ══════════════════════════════════════════════ */}
-      {viewZlecenie && (
-        <div className="hidden print:block print-section font-sans text-slate-900 bg-white p-12">
-          <div className="flex justify-between items-start border-b-8 border-indigo-600 pb-10 mb-10">
-            <div>
-              <div className="text-indigo-600 text-[10px] font-black uppercase tracking-[0.4em] mb-4">Karta Produkcyjna ilGelato</div>
-              <h1 className="text-6xl font-black uppercase tracking-tighter leading-none">{viewZlecenie.numer_zlecenia}</h1>
-              <p className="text-2xl font-bold mt-4 text-[var(--text-muted)] italic">{viewZlecenie.receptura?.asortyment_docelowy?.nazwa}</p>
-            </div>
-            <div className="text-right">
-              <div className="bg-slate-100 p-6 rounded-[2rem] border-2 border-slate-200">
-                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] mb-2">Data Wydruku</p>
-                <p className="text-xl font-black font-mono">{new Date().toLocaleString()}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-10 mb-12">
-            <div className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-200">
-               <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] mb-2">Planowana Ilość</p>
-               <p className="text-4xl font-black font-mono">{viewZlecenie.planowana_ilosc_wyrobu} <span className="text-lg font-sans text-[var(--text-secondary)]">{viewZlecenie.receptura?.asortyment_docelowy?.jednostka_miary}</span></p>
-            </div>
-            <div className="col-span-2 bg-slate-50 p-8 rounded-[2.5rem] border border-slate-200 border-dashed">
-               <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] mb-2">Uwagi i Wytyczne Operatora</p>
-               <div className="h-16 border-b border-slate-300" />
-            </div>
-          </div>
-
-          <h3 className="text-2xl font-black uppercase tracking-tighter border-l-8 border-indigo-600 pl-6 mb-8">Zapotrzebowanie Materiałowe (BOM)</h3>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b-2 border-slate-900 text-[11px] font-black uppercase tracking-widest">
-                <th className="py-4">Surowiec / Składnik</th>
-                <th className="py-4">Partia / LOT</th>
-                <th className="py-4 text-right">Ilość do wydania</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {viewZlecenie.status === "Planowane" ? (
-                viewZlecenie.receptura.skladniki.map(s => (
-                  <tr key={s.id_asortymentu_skladnika}>
-                    <td className="py-6 font-bold text-xl uppercase tracking-tight">{s.asortyment_skladnika.nazwa}</td>
-                    <td className="py-6 font-mono text-[var(--text-secondary)] italic">Sugestia: {s.sugerowane_partie?.[0]?.numer_partii || "---"}</td>
-                    <td className="py-6 text-right font-black text-2xl font-mono">{fmtL(s.ilosc_wymagana * viewZlecenie.planowana_ilosc_wyrobu, 3)} <span className="text-xs font-sans text-[var(--text-secondary)] uppercase">{s.asortyment_skladnika.jednostka_miary}</span></td>
-                  </tr>
-                ))
-              ) : (
-                viewZlecenie.rezerwacje?.map((r: any) => (
-                  <tr key={r.id}>
-                    <td className="py-6 font-bold text-xl uppercase tracking-tight">{r.partia?.asortyment?.nazwa || r.asortyment?.nazwa}</td>
-                    <td className="py-6 font-mono text-[var(--text-secondary)] italic font-bold">{r.partia?.numer_partii || "---"}</td>
-                    <td className="py-6 text-right font-black text-2xl font-mono">{fmtL(r.ilosc_zarezerwowana, 3)} <span className="text-xs font-sans text-[var(--text-secondary)] uppercase">{r.partia?.asortyment?.jednostka_miary || r.asortyment?.jednostka_miary}</span></td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-
-          <div className="mt-32 grid grid-cols-2 gap-32">
-            <div className="border-t-4 border-slate-900 pt-8 text-center">
-              <p className="text-[11px] font-black uppercase tracking-[0.4em] text-[var(--text-secondary)] mb-2">Potwierdzenie Pobrania</p>
-              <p className="text-sm font-bold">(Podpis Operatora)</p>
-            </div>
-            <div className="border-t-4 border-slate-900 pt-8 text-center">
-              <p className="text-[11px] font-black uppercase tracking-[0.4em] text-[var(--text-secondary)] mb-2">Zakończenie Mieszania</p>
-              <p className="text-sm font-bold">(Data i Godzina)</p>
-            </div>
-          </div>
-        </div>
-      )}
       {/* Modal: przywróć zapisany szkic sesji */}
       {wizDraftInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -1882,44 +1748,181 @@ export default function Produkcja() {
         );
 
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-4xl border border-[var(--border)] overflow-hidden flex flex-col" style={{ maxHeight: '92vh' }}>
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm pl-16 lg:pl-60 pt-2.5 pb-2.5 pr-2.5">
+            <div className="flex h-full border-l border-r border-b rounded-b-xl overflow-hidden"
+                 style={{ background: 'var(--bg-panel)', borderColor: 'var(--border)' }}>
 
-              {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] shrink-0" style={{ background: 'rgba(99,102,241,0.1)' }}>
-                <div className="flex items-center gap-3">
-                  <Zap className="w-5 h-5 text-indigo-400" />
-                  <div>
-                    <h3 className="text-base font-bold text-white">
-                      {wizTyp === "" ? "Nowa sesja produkcyjna" : wizTyp === "lody" ? "Sesja — Lody" : "Sesja — Sorbety"}
-                    </h3>
-                    <p className="text-[var(--text-muted)] text-xs">
-                      {wizTyp === "" ? "Wybierz typ produkcji" :
-                       wizTyp === "lody" ? (wizStep === 1 ? "Krok 1/3 — Półprodukt (Baza)" : wizStep === 2 ? "Krok 2/3 — Wyroby gotowe i surowce" : "Krok 3/3 — Ilości rzeczywiste i pakowanie") :
-                       wizStep === 2 ? "Krok 1/2 — Wyroby gotowe i surowce" : "Krok 2/2 — Ilości rzeczywiste i pakowanie"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {wizTyp !== "" && (
-                    <div className="flex gap-1.5">
-                      {wizTyp === "lody" ? [1,2,3].map(n => (
-                        <div key={n} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
-                          style={{ background: n <= wizStep ? 'var(--accent)' : 'var(--bg-surface)', color: n <= wizStep ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                          {n < wizStep ? <Check className="w-3 h-3" /> : n}
-                        </div>
-                      )) : [2,3].map((s, i) => (
-                        <div key={s} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
-                          style={{ background: s <= wizStep ? 'var(--accent)' : 'var(--bg-surface)', color: s <= wizStep ? '#fff' : 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                          {s < wizStep ? <Check className="w-3 h-3" /> : i + 1}
-                        </div>
-                      ))}
+              {/* ── PRAWY PANEL: kroki + kontekst + nawigacja ── */}
+              <div className="w-72 shrink-0 border-l flex flex-col"
+                   style={{ order: 2, borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+
+                {/* Nagłówek */}
+                <div className="flex items-start justify-between p-5 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
+                      Sesja produkcyjna
                     </div>
+                    <div className="text-xl font-black text-white leading-tight">
+                      {wizTyp === "" ? "Nowa sesja" : wizTyp === "lody" ? "Sesja — Lody" : "Sesja — Sorbety"}
+                    </div>
+                    {wizTyp !== "" && (
+                      <div className="flex items-center gap-1.5 mt-3">
+                        {wizTyp === "lody" ? [1,2,3].map(n => (
+                          <div key={n} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+                            style={{ background: n <= wizStep ? 'var(--accent)' : 'var(--bg-app)', color: n <= wizStep ? '#fff' : 'var(--text-muted)', border: `1px solid ${n <= wizStep ? 'var(--border-accent)' : 'var(--border)'}` }}>
+                            {n < wizStep ? <Check className="w-3 h-3" /> : n}
+                          </div>
+                        )) : [2,3].map((s, i) => (
+                          <div key={s} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+                            style={{ background: s <= wizStep ? 'var(--accent)' : 'var(--bg-app)', color: s <= wizStep ? '#fff' : 'var(--text-muted)', border: `1px solid ${s <= wizStep ? 'var(--border-accent)' : 'var(--border)'}` }}>
+                            {s < wizStep ? <Check className="w-3 h-3" /> : i + 1}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => setShowWizard(false)}
+                    className="p-1.5 rounded-lg ml-2 shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Kontekst kroku */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+                  {wizTyp === "" && (
+                    <div style={{ color: 'var(--text-muted)' }}>Wybierz typ produkcji aby kontynuować.</div>
                   )}
-                  <button onClick={() => setShowWizard(false)} className="text-[var(--text-muted)] hover:text-white p-1.5 rounded-lg hover:bg-[var(--bg-input)]"><X className="w-5 h-5" /></button>
+                  {wizTyp === "lody" && wizStep === 1 && (
+                    <>
+                      <div>
+                        <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Krok</div>
+                        <div className="font-medium text-white">1 / 3 — Półprodukt (Baza)</div>
+                      </div>
+                      {bazaRec && (
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Receptura</div>
+                          <div className="font-medium text-white">{bazaRec.asortyment_docelowy.nazwa}</div>
+                          <div className="font-mono text-xs mt-0.5" style={{ color: 'var(--text-code)' }}>v{bazaRec.numer_wersji}</div>
+                        </div>
+                      )}
+                      {wizBazaIlosc && (
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Ilość planowana</div>
+                          <div className="font-mono font-bold text-white">{wizBazaIlosc} {bazaRec?.asortyment_docelowy.jednostka_miary}</div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {wizStep === 2 && (
+                    <>
+                      <div>
+                        <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Krok</div>
+                        <div className="font-medium text-white">{wizTyp === "lody" ? "2 / 3 — Wyroby gotowe" : "1 / 2 — Wyroby gotowe"}</div>
+                      </div>
+                      {wizTyp === "lody" && (
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Bilans bazy</div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between"><span style={{ color: 'var(--text-muted)' }}>Dostępne</span><span className="font-mono font-bold text-white">{fmtL(wizBazaAvail, 3)}</span></div>
+                            <div className="flex justify-between"><span style={{ color: 'var(--text-muted)' }}>Użyte</span><span className={`font-mono font-bold ${wizBazaOk ? 'text-emerald-400' : 'text-red-400'}`}>{fmtL(wizTotalBazaUsed, 3)}</span></div>
+                            <div className="flex justify-between"><span style={{ color: 'var(--text-muted)' }}>Pozostaje</span><span className="font-mono font-bold text-white">{fmtL(Math.max(0, wizBazaAvail - wizTotalBazaUsed), 3)}</span></div>
+                          </div>
+                        </div>
+                      )}
+                      {wizWyroby.length > 0 && (
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Wyroby ({wizWyroby.length})</div>
+                          <div className="space-y-1">
+                            {wizWyroby.map(w => {
+                              const rec = receptury.find(r => r.id === w.id_receptury);
+                              return (
+                                <div key={w._key} className="flex justify-between items-center gap-2">
+                                  <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{rec?.asortyment_docelowy.nazwa}</span>
+                                  <span className="font-mono font-bold shrink-0" style={{ color: 'var(--accent)' }}>{w.liczba_porcji || 0} szt.</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {wizStep === 3 && (
+                    <>
+                      <div>
+                        <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Krok</div>
+                        <div className="font-medium text-white">{wizTyp === "lody" ? "3 / 3 — Pakowanie" : "2 / 2 — Pakowanie"}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Wyroby do spakowania</div>
+                        <div className="space-y-1">
+                          {wizWyroby.map(w => {
+                            const rec = receptury.find(r => r.id === w.id_receptury);
+                            const real = wizRealizacja[w._key];
+                            const kg = real?.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0) || 0;
+                            return (
+                              <div key={w._key} className="flex justify-between items-center gap-2">
+                                <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{rec?.asortyment_docelowy.nazwa}</span>
+                                <span className={`font-mono font-bold shrink-0 ${kg > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>{fmtL(kg, 2)} kg</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Nawigacja */}
+                <div className="p-4 border-t flex flex-col gap-2 shrink-0" style={{ borderColor: 'var(--border)' }}>
+                  {wizTyp !== "" && wizStep < 3 && (
+                    <button onClick={handleWizNext}
+                      className="btn w-full justify-center font-bold text-sm"
+                      style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
+                      {wizStep === 1 ? "Dalej — Wyroby →" : "Dalej — Realizacja →"}
+                    </button>
+                  )}
+                  {wizTyp !== "" && wizStep === 3 && (
+                    <button onClick={handleSubmitWizard} disabled={wizLoading}
+                      className="btn w-full justify-center font-bold text-sm disabled:opacity-50"
+                      style={{ background: 'rgba(22,163,74,0.2)', color: '#4ade80', border: '1px solid rgba(22,163,74,0.4)' }}>
+                      {wizLoading ? <><RotateCcw className="w-4 h-4 animate-spin" />Tworzę…</> : <><CheckCircle2 className="w-4 h-4" />Utwórz sesję</>}
+                    </button>
+                  )}
+                  {wizTyp !== "" && (
+                    <button onClick={saveDraft}
+                      className="btn w-full justify-center text-sm"
+                      style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.25)' }}>
+                      <Save className="w-3.5 h-3.5" /> Zapisz i wyjdź
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      if (wizTyp === "") { setShowWizard(false); return; }
+                      if (wizTyp === "lody" && wizStep === 1) { setShowWizard(false); return; }
+                      if (wizTyp === "sorbety" && wizStep === 2) { setWizTyp(""); return; }
+                      setWizStep(prev => (prev - 1) as 1|2|3);
+                    }}
+                    className="btn w-full justify-center text-sm"
+                    style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                    {(wizTyp === "" || (wizTyp === "lody" && wizStep === 1)) ? "Anuluj" : "← Wstecz"}
+                  </button>
                 </div>
               </div>
 
+              {/* ── GŁÓWNA TREŚĆ: zawartość kroku ── */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+
+                {/* Pasek nagłówka kroku */}
+                <div className="px-5 py-3 border-b shrink-0 flex items-center gap-2 text-xs font-bold uppercase tracking-widest"
+                     style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                  <Zap className="w-3.5 h-3.5 text-indigo-400" />
+                  {wizTyp === "" && "Wybierz typ produkcji"}
+                  {wizTyp === "lody" && wizStep === 1 && "Krok 1 — Półprodukt (Baza mleczna)"}
+                  {wizStep === 2 && (wizTyp === "lody" ? "Krok 2 — Wyroby gotowe i surowce" : "Krok 1 — Wyroby gotowe i surowce")}
+                  {wizStep === 3 && (wizTyp === "lody" ? "Krok 3 — Ilości rzeczywiste i pakowanie" : "Krok 2 — Ilości rzeczywiste i pakowanie")}
+                </div>
 
               <div className="flex-1 overflow-y-auto">
 
@@ -2246,43 +2249,6 @@ export default function Produkcja() {
                 )}
               </div>
 
-              {/* Footer */}
-              <div className="px-5 py-3 border-t border-[var(--border)] bg-[var(--bg-surface)]/50 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      if (wizTyp === "") { setShowWizard(false); return; }
-                      if (wizTyp === "lody" && wizStep === 1) { setShowWizard(false); return; }
-                      if (wizTyp === "sorbety" && wizStep === 2) { setWizTyp(""); return; }
-                      setWizStep(prev => (prev - 1) as 1|2|3);
-                    }}
-                    className="px-4 py-2 text-[var(--text-secondary)] hover:bg-[var(--bg-input)] rounded-lg font-semibold transition-colors text-sm">
-                    {(wizTyp === "" || (wizTyp === "lody" && wizStep === 1)) ? "Anuluj" : "← Wstecz"}
-                  </button>
-                  {wizTyp !== "" && (
-                    <button onClick={saveDraft}
-                      className="px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5"
-                      style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}
-                      title="Zapisz postęp i wyjdź — możesz wrócić później">
-                      <Save className="w-3.5 h-3.5" /> Zapisz i wyjdź
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  {wizTyp !== "" && wizStep < 3 ? (
-                    <button onClick={handleWizNext}
-                      className="px-5 py-2 rounded-lg font-bold text-white text-sm flex items-center gap-2 transition-colors"
-                      style={{ background: 'var(--accent)' }}>
-                      {wizStep === 1 ? "Dalej — Wyroby →" : "Dalej — Realizacja →"}
-                    </button>
-                  ) : wizTyp !== "" ? (
-                    <button onClick={handleSubmitWizard} disabled={wizLoading}
-                      className="px-5 py-2 rounded-lg font-bold text-white text-sm flex items-center gap-2 transition-colors disabled:opacity-50"
-                      style={{ background: '#16a34a' }}>
-                      {wizLoading ? <><RotateCcw className="w-4 h-4 animate-spin" />Tworzę…</> : <><CheckCircle2 className="w-4 h-4" />Utwórz sesję</>}
-                    </button>
-                  ) : null}
-                </div>
               </div>
             </div>
           </div>
@@ -2592,172 +2558,79 @@ export default function Produkcja() {
             : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border)]"
         }`;
         return (
-          <div className="fixed inset-0 z-[1060] bg-black/60 backdrop-blur-sm pl-16 lg:pl-60 pr-4" onClick={() => setViewSesjaId(null)}>
-            <div className="bg-[var(--bg-panel)] shadow-2xl border border-[var(--border)] flex flex-col" style={{ height: '80vh', marginTop: '10vh' }} onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-[1060] bg-black/70 backdrop-blur-sm pl-16 lg:pl-60 pt-2.5 pb-2.5 pr-2.5" onClick={() => setViewSesjaId(null)}>
+            <div className="flex h-full border-l border-r border-b rounded-b-xl overflow-hidden"
+                 style={{ background: 'var(--bg-panel)', borderColor: 'var(--border)' }}
+                 onClick={e => e.stopPropagation()}>
 
-              {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] shrink-0" style={{ background: 'var(--bg-surface)' }}>
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-blue-600/15 border border-blue-500/30">
-                    <LayoutDashboard className="w-5 h-5 text-blue-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-black text-white flex items-center gap-2">
-                      Sesja: <span className="text-blue-400 mono">{viewSesjaData.numer_sesji}</span>
-                    </h3>
-                    <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] font-medium">
-                      <span>{new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</span>
-                      <span>·</span>
-                      <span className={`px-2 py-0.5 rounded-full font-bold ${viewSesjaData.status === "Zrealizowane" ? "bg-emerald-500/10 text-emerald-400" : "bg-blue-500/10 text-blue-400"}`}>
+              {/* ── PRAWY PANEL: meta + akcje ── */}
+              <div className="w-72 shrink-0 border-l flex flex-col"
+                   style={{ order: 2, borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
+
+                <div className="flex items-start justify-between p-5 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
+                      Raport sesji produkcyjnej
+                    </div>
+                    <div className="text-xl font-black font-mono text-white leading-tight">{viewSesjaData.numer_sesji}</div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      <span className={`badge ${viewSesjaData.status === "Zrealizowane" ? "badge-ok" : "badge-info"}`}>
                         {viewSesjaData.status}
                       </span>
                     </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      const win = window.open("", "_blank", "width=860,height=700");
-                      if (!win) return;
-                      const allZp = viewSesjaData.zlecenia;
-                      const wyroby = viewSesjaData.wyroby;
-                      const totalWykPrint = wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0);
-
-                      // Aggregate surowce
-                      const surowceMapPrint = new Map<string, { nazwa: string; ilosc: number; jm: string }>();
-                      allZp.forEach(z => {
-                        z.ruchy_magazynowe.filter(r => r.typ_ruchu === "Zuzycie").forEach(r => {
-                          const k = r.partia?.asortyment?.nazwa || "?";
-                          const jm = r.partia?.asortyment?.jednostka_miary || "kg";
-                          if (!surowceMapPrint.has(k)) surowceMapPrint.set(k, { nazwa: k, ilosc: 0, jm });
-                          surowceMapPrint.get(k)!.ilosc += Math.abs(r.ilosc);
-                        });
-                      });
-                      const surowcePrint = [...surowceMapPrint.values()].sort((a, b) => b.ilosc - a.ilosc);
-
-                      // Pozycje — jak WZ: każde opakowanie jako wiersz
-                      let lpPrint = 0;
-                      const pozycjeRowsHTML = wyroby.map(w => {
-                        const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
-                        const nrP = (przyjecie as any)?.partia?.numer_partii || w.numer_partii_wyrobu || "—";
-                        const nazwaWyrobu = w.receptura.asortyment_docelowy.nazwa;
-                        const ops = w.opakowania || [];
-                        if (ops.length === 0) {
-                          lpPrint++;
-                          return `<tr>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${lpPrint}</td>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb"><div style="font-weight:700">${nazwaWyrobu}</div></td>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px">${nrP}</td>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;color:#94a3b8" colspan="2">—</td>
-                          </tr>`;
-                        }
-                        return ops.map(op => {
-                          lpPrint++;
-                          return `<tr>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#64748b">${lpPrint}</td>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb">
-                              <div style="font-weight:700">${nazwaWyrobu}</div>
-                              <div style="font-size:11px;color:#64748b;margin-top:1px">${op.nazwa}</div>
-                            </td>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px">${nrP}</td>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">1&nbsp;szt.</td>
-                            <td style="padding:7px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(op.waga_kg, 3)}&nbsp;kg</td>
-                          </tr>`;
-                        }).join("");
-                      }).join("");
-
-                      // Podsumowanie per towar — jak WZ
-                      const sumaWyrob = new Map<string, { szt: number; kg: number }>();
-                      wyroby.forEach(w => {
-                        const key = w.receptura.asortyment_docelowy.nazwa;
-                        if (!sumaWyrob.has(key)) sumaWyrob.set(key, { szt: 0, kg: 0 });
-                        const e = sumaWyrob.get(key)!;
-                        const ops = w.opakowania || [];
-                        e.szt += ops.length;
-                        e.kg += ops.reduce((s, o) => s + o.waga_kg, 0);
-                      });
-                      const totalSztPrint = [...sumaWyrob.values()].reduce((s, e) => s + e.szt, 0);
-                      const totalKgPrint = [...sumaWyrob.values()].reduce((s, e) => s + e.kg, 0);
-                      const podsumowanieRowsHTML = [...sumaWyrob.entries()].map(([nazwa, e]) =>
-                        `<tr>
-                          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:600">${nazwa}</td>
-                          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${e.szt > 0 ? `${e.szt} szt.` : "—"}</td>
-                          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;font-family:monospace">${fmtL(e.kg, 3)} kg</td>
-                        </tr>`
-                      ).join("") + `<tr style="background:#f8fafc;border-top:2px solid #1e293b">
-                        <td style="padding:8px;font-weight:900">ŁĄCZNIE</td>
-                        <td style="padding:8px;text-align:right;font-family:monospace;font-weight:700">${totalSztPrint > 0 ? `${totalSztPrint} szt.` : "—"}</td>
-                        <td style="padding:8px;text-align:right;font-weight:900;font-size:15px;font-family:monospace">${fmtL(totalKgPrint > 0 ? totalKgPrint : totalWykPrint, 3)}&nbsp;kg</td>
-                      </tr>`;
-
-                      const surowceRowsHTML = surowcePrint.map(s =>
-                        `<tr><td>${s.nazwa}</td><td style="text-align:right;font-family:monospace">${fmtL(s.ilosc, 3)}</td><td>${s.jm}</td></tr>`
-                      ).join("");
-
-                      win.document.write(`<!DOCTYPE html><html><head><title>Raport Sesji ${viewSesjaData.numer_sesji}</title>
-<style>
-  *{box-sizing:border-box}
-  html,body{height:100%}
-  body{font-family:Inter,system-ui,sans-serif;padding:36px 44px;color:#1e293b;max-width:860px;margin:0 auto;font-size:13px;display:flex;flex-direction:column;min-height:100vh}
-  h1{font-size:22px;font-weight:800;margin:0 0 2px;letter-spacing:-.3px}
-  .sub{font-size:12px;color:#64748b;margin-bottom:20px}
-  .header-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:16px 0;border-top:2px solid #0f172a;border-bottom:1px solid #e2e8f0;margin-bottom:20px}
-  table{width:100%;border-collapse:collapse}
-  th{text-align:left;padding:8px;border-bottom:2px solid #1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;white-space:nowrap}
-  th.r{text-align:right}
-  .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:24px 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
-  .signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;padding-top:20px;border-top:1px solid #e2e8f0}
-  .sig-box{font-size:12px;color:#64748b}
-  .sig-line{border-bottom:1px solid #94a3b8;height:32px;margin-top:8px}
-  .bottom{margin-top:auto;padding-top:32px}
-  .footer{margin-top:16px;padding-top:8px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;text-align:right}
-  @media print{html,body{height:auto}body{padding:16px 20px;min-height:unset}.bottom{position:fixed;bottom:12mm;left:12mm;right:12mm}@page{size:A4;margin:12mm}}
-</style>
-</head><body>
-<h1>RAPORT SESJI PRODUKCYJNEJ</h1>
-<div class="sub">ilGelato MES &middot; Magazyn główny</div>
-<div class="header-grid">
-  <div>
-    <div style="margin-bottom:10px">
-      <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;letter-spacing:.05em">Numer sesji</span>
-      <div style="font-size:18px;font-weight:900;font-family:monospace;margin-top:2px">${viewSesjaData.numer_sesji}</div>
-    </div>
-    <div style="font-size:12px;color:#475569"><strong>Data:</strong> ${new Date(viewSesjaData.utworzono_dnia).toLocaleString("pl-PL")}</div>
-    <div style="font-size:12px;color:#475569"><strong>Status:</strong> ${viewSesjaData.status}</div>
-    <div style="font-size:12px;color:#475569;margin-top:6px"><strong>Masa wyrobów:</strong> ${fmtL(totalKgPrint > 0 ? totalKgPrint : totalWykPrint, 3)} kg &nbsp;·&nbsp; <strong>Pozycji:</strong> ${wyroby.length}</div>
-  </div>
-</div>
-<div class="section-title">Pozycje dokumentu</div>
-<table><thead><tr>
-  <th style="width:32px;text-align:center">Lp.</th>
-  <th>Wyrób / Opakowanie</th>
-  <th>Nr partii (PW)</th>
-  <th class="r">Ilość</th>
-  <th class="r">Masa [kg]</th>
-</tr></thead><tbody>${pozycjeRowsHTML}</tbody></table>
-<div class="section-title">Podsumowanie wg towaru</div>
-<table><thead><tr><th>Towar</th><th class="r">Ilość (szt.)</th><th class="r">Masa (kg)</th></tr></thead><tbody>${podsumowanieRowsHTML}</tbody></table>
-${surowcePrint.length > 0 ? `<div class="section-title">Zużyte surowce (cała sesja)</div><table><thead><tr><th>Surowiec</th><th class="r">Ilość</th><th>J.M.</th></tr></thead><tbody>${surowceRowsHTML}</tbody></table>` : ""}
-<div class="bottom">
-  <div class="signatures">
-    <div class="sig-box"><div>Sporządził</div><div class="sig-line"></div></div>
-    <div class="sig-box"><div>Zatwierdził</div><div class="sig-line"></div></div>
-  </div>
-  <div class="footer">Wydrukowano z systemu ilGelato MES &middot; ${new Date().toLocaleString("pl-PL")}</div>
-</div>
-</body></html>`);
-                      win.document.close();
-                      win.print();
-                    }}
-                    className="p-2.5 bg-slate-700 text-slate-300 hover:text-white hover:bg-slate-600 rounded-xl transition-all border border-slate-600 flex items-center gap-2 text-sm font-bold"
-                  >
-                    <Printer className="w-4 h-4" /> Drukuj
+                  <button onClick={() => setViewSesjaId(null)}
+                    className="p-1.5 rounded-lg ml-2 shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <X className="w-5 h-5" />
                   </button>
-                  <button onClick={() => setViewSesjaId(null)} className="text-[var(--text-muted)] hover:text-white p-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors">
-                    <X className="w-6 h-6" />
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Data</div>
+                    <div className="font-medium text-white">{new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Wyroby</div>
+                    <div className="font-mono font-medium text-white">{viewSesjaData.wyroby.length} pozycji</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Masa całkowita</div>
+                    <div className="font-mono font-bold text-white">
+                      {fmtL(viewSesjaData.wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0), 2)} kg
+                    </div>
+                  </div>
+                  {viewSesjaData.baza && (
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Baza (E1)</div>
+                      <div className="font-medium text-white">{viewSesjaData.baza.receptura?.asortyment_docelowy?.nazwa}</div>
+                      <div className="font-mono text-xs mt-0.5" style={{ color: 'var(--text-code)' }}>
+                        {fmtL(viewSesjaData.baza.rzeczywista_ilosc_wyrobu || 0, 3)} {viewSesjaData.baza.receptura?.asortyment_docelowy?.jednostka_miary}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 border-t flex flex-col gap-2 shrink-0" style={{ borderColor: 'var(--border)' }}>
+                  <div className="flex items-center gap-2" style={{ display: 'none' }}>{/* print handler przeniesiony poniżej */}</div>
+                  <button
+                    onClick={() => { printSesja(viewSesjaData); }}
+                    className="btn w-full justify-center text-sm font-bold"
+                    style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)' }}
+                  >
+                    <Printer className="w-4 h-4" /> Drukuj raport
+                  </button>
+                  <button onClick={() => setViewSesjaId(null)}
+                    className="btn w-full justify-center text-sm"
+                    style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                    Zamknij
                   </button>
                 </div>
               </div>
+
+              {/* ── GŁÓWNA TREŚĆ: zakładki + zawartość ── */}
+              <div className="flex-1 flex flex-col overflow-hidden">
 
               {/* Tab bar */}
               <div className="flex items-stretch shrink-0 border-b border-[var(--border)]" style={{ background: 'var(--bg-surface)' }}>
@@ -3333,6 +3206,7 @@ ${surowcePrint.length > 0 ? `<div class="section-title">Zużyte surowce (cała s
               </div>
             </div>
           </div>
+        </div>
         );
       })()}
 
