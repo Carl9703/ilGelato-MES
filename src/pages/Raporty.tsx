@@ -235,9 +235,9 @@ export default function Raporty() {
           ],
           rows: [[
             "Lody gelato",
-            fmtL(fsSumaKg, 3),
+            fmtL(fsSumaKg, 2),
             "kg",
-            `${fsSredniaCena.toFixed(4)} zł`,
+            `${fsSredniaCena.toFixed(2)} zł`,
             `${fsVatRate}%`,
             `${fmt(fsWartoscNetto)} zł`,
             `${fmt(fsKwotaVat)} zł`,
@@ -1017,7 +1017,7 @@ export default function Raporty() {
               ) : (
                 <>
                   <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.2)", color: "var(--accent)" }}>
-                    <span className="font-bold font-mono">{selectedWz.size}</span> dok. WZ · <span className="font-bold font-mono">{fmtL(fsSumaKg, 3)} kg</span>
+                    <span className="font-bold font-mono">{selectedWz.size}</span> dok. WZ · <span className="font-bold font-mono">{fmtL(fsSumaKg, 2)} kg</span>
                   </div>
 
                   <div className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Lody gelato</div>
@@ -1026,8 +1026,8 @@ export default function Raporty() {
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <tbody>
                         {[
-                          { label: "Ilość", value: `${fmtL(fsSumaKg, 3)} kg`, color: "var(--text-primary)", bold: true },
-                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(4)} zł`, color: "var(--text-secondary)", bold: false },
+                          { label: "Ilość", value: `${fmtL(fsSumaKg, 2)} kg`, color: "var(--text-primary)", bold: true },
+                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(2)} zł`, color: "var(--text-secondary)", bold: false },
                           { label: "Wartość netto", value: `${fmt(fsWartoscNetto)} zł`, color: "var(--ok)", bold: true },
                           { label: `VAT ${fsVatRate}%`, value: `${fmt(fsKwotaVat)} zł`, color: "var(--warn)", bold: false },
                         ].map(row => (
