@@ -237,7 +237,7 @@ export default function Raporty() {
             "Lody gelato",
             fmtL(fsSumaKg, 2),
             "kg",
-            `${fsSredniaCena.toFixed(2)} zł`,
+            `${fsSredniaCena.toFixed(4)} zł`,
             `${fsVatRate}%`,
             `${fmt(fsWartoscNetto)} zł`,
             `${fmt(fsKwotaVat)} zł`,
@@ -1027,7 +1027,7 @@ export default function Raporty() {
                       <tbody>
                         {[
                           { label: "Ilość", value: `${fmtL(fsSumaKg, 2)} kg`, color: "var(--text-primary)", bold: true },
-                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(2)} zł`, color: "var(--text-secondary)", bold: false },
+                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(4)} zł`, color: "var(--text-secondary)", bold: false },
                           { label: "Wartość netto", value: `${fmt(fsWartoscNetto)} zł`, color: "var(--ok)", bold: true },
                           { label: `VAT ${fsVatRate}%`, value: `${fmt(fsKwotaVat)} zł`, color: "var(--warn)", bold: false },
                         ].map(row => (
