@@ -112,7 +112,7 @@ const genKey = () => String(++_keyCounter);
 export default function Dokumenty() {
   const [dokumenty, setDokumenty] = useState<Dokument[]>([]);
   const [filter, setFilter] = useState("PZ");
-  const [selectedMonth, setSelectedMonth] = useState<string>(String(new Date().getMonth() + 1));
+  const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<string>(String(new Date().getFullYear()));
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);

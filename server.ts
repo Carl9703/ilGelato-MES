@@ -1645,6 +1645,10 @@ async function startServer() {
 
         const hasOp = Object.keys(sztuki).length > 0;
 
+        // Fallback do kartoteki gdy pozycje_json nie ma cen (stare dokumenty)
+        const katCenaNetto: number | null = (r.partia.asortyment as any).cena_sprzedazy ?? null;
+        const katVat: number | null = (r.partia.asortyment as any).stawka_vat ?? null;
+
         if (hasOp) {
           // Rozwiń każde opakowanie jako osobną pozycję
           for (const [label, szt] of Object.entries(sztuki) as [string, number][]) {
@@ -1657,8 +1661,12 @@ async function startServer() {
             const wartosc = iloscKg * cena;
             wartosc_calkowita += wartosc;
             const ceny = cenyByPartia[r.id_partii];
-            const wartosc_netto = ceny?.cena_netto != null && iloscKg > 0 ? Math.round(ceny.cena_netto * iloscKg * 100) / 100 : null;
-            const wartosc_brutto = ceny?.cena_brutto != null && iloscKg > 0 ? Math.round(ceny.cena_brutto * iloscKg * 100) / 100 : null;
+            const cenaNetto = ceny?.cena_netto ?? katCenaNetto;
+            const stawkaVat = ceny?.stawka_vat ?? katVat;
+            const cenaBrutto = ceny?.cena_brutto ?? (cenaNetto != null && stawkaVat != null ? Math.round(cenaNetto * (1 + stawkaVat / 100) * 10000) / 10000 : null);
+            const cenaZKartoteki = ceny?.cena_netto == null && cenaNetto != null;
+            const wartosc_netto = cenaNetto != null && iloscKg > 0 ? Math.round(cenaNetto * iloscKg * 100) / 100 : null;
+            const wartosc_brutto = cenaBrutto != null && iloscKg > 0 ? Math.round(cenaBrutto * iloscKg * 100) / 100 : null;
             pozycje.push({
               asortyment: nazwaOp,
               wyrob: r.partia.asortyment.nazwa,
@@ -1671,19 +1679,24 @@ async function startServer() {
               termin_waznosci: r.partia.termin_waznosci,
               cena_jednostkowa: cena > 0 ? cena : null,
               wartosc,
-              cena_netto: ceny?.cena_netto ?? null,
-              cena_brutto: ceny?.cena_brutto ?? null,
-              stawka_vat: ceny?.stawka_vat ?? null,
+              cena_netto: cenaNetto,
+              cena_brutto: cenaBrutto,
+              stawka_vat: stawkaVat,
               wartosc_netto,
               wartosc_brutto,
+              cena_z_kartoteki: cenaZKartoteki,
             });
           }
         } else {
           const wartosc = ilosc * cena;
           wartosc_calkowita += wartosc;
           const ceny2 = cenyByPartia[r.id_partii];
-          const wartosc_netto2 = ceny2?.cena_netto != null ? Math.round(ceny2.cena_netto * ilosc * 100) / 100 : null;
-          const wartosc_brutto2 = ceny2?.cena_brutto != null ? Math.round(ceny2.cena_brutto * ilosc * 100) / 100 : null;
+          const cenaNetto2 = ceny2?.cena_netto ?? katCenaNetto;
+          const stawkaVat2 = ceny2?.stawka_vat ?? katVat;
+          const cenaBrutto2 = ceny2?.cena_brutto ?? (cenaNetto2 != null && stawkaVat2 != null ? Math.round(cenaNetto2 * (1 + stawkaVat2 / 100) * 10000) / 10000 : null);
+          const cenaZKartoteki2 = ceny2?.cena_netto == null && cenaNetto2 != null;
+          const wartosc_netto2 = cenaNetto2 != null ? Math.round(cenaNetto2 * ilosc * 100) / 100 : null;
+          const wartosc_brutto2 = cenaBrutto2 != null ? Math.round(cenaBrutto2 * ilosc * 100) / 100 : null;
           pozycje.push({
             asortyment: r.partia.asortyment.nazwa,
             wyrob: null,
@@ -1696,11 +1709,12 @@ async function startServer() {
             termin_waznosci: r.partia.termin_waznosci,
             cena_jednostkowa: r.cena_jednostkowa,
             wartosc,
-            cena_netto: ceny2?.cena_netto ?? null,
-            cena_brutto: ceny2?.cena_brutto ?? null,
-            stawka_vat: ceny2?.stawka_vat ?? null,
+            cena_netto: cenaNetto2,
+            cena_brutto: cenaBrutto2,
+            stawka_vat: stawkaVat2,
             wartosc_netto: wartosc_netto2,
             wartosc_brutto: wartosc_brutto2,
+            cena_z_kartoteki: cenaZKartoteki2,
           });
         }
       }

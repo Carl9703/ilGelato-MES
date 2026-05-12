@@ -296,7 +296,12 @@ export default function DocumentPreviewModal({
                         {isWZ && (
                           <>
                             <td className="text-right font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
-                              {poz.cena_netto != null ? `${poz.cena_netto.toFixed(4)} zł` : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                              {poz.cena_netto != null ? (
+                                <span>
+                                  {poz.cena_netto.toFixed(4)} zł
+                                  {poz.cena_z_kartoteki && <span className="ml-1 text-[9px] font-sans" style={{ color: 'var(--text-muted)' }}>(katalog)</span>}
+                                </span>
+                              ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                             </td>
                             <td className="text-right font-mono text-xs" style={{ color: 'var(--warn)' }}>
                               {poz.stawka_vat != null ? `${poz.stawka_vat}%` : <span style={{ color: 'var(--text-muted)' }}>—</span>}
