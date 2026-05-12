@@ -3439,7 +3439,7 @@ async function startServer() {
               const nazwaOp = match ? match[1] : label;
               const wagaKg = match ? parseFloat(match[2]) : 0;
               const iloscKg = Math.round(szt * wagaKg * 1000) / 1000;
-              const wartosc = iloscKg * cena;
+              const wartosc = Math.round(cena * iloscKg * 100) / 100;
               pozycje.push({
                 asortyment: nazwaOp,
                 wyrob: r.partia.asortyment.nazwa,
@@ -3469,7 +3469,7 @@ async function startServer() {
                   asortyment: g.nazwa, wyrob: r.partia.asortyment.nazwa,
                   kod_towaru: r.partia.asortyment.kod_towaru, numer_partii: r.partia.numer_partii,
                   ilosc: g.szt, jednostka: "szt.", ilosc_kg: iloscKg,
-                  cena_jednostkowa: cena > 0 ? cena : null, wartosc: iloscKg * cena,
+                  cena_jednostkowa: cena > 0 ? cena : null, wartosc: Math.round(cena * iloscKg * 100) / 100,
                 });
               }
             } catch {
@@ -3478,7 +3478,7 @@ async function startServer() {
                 asortyment: r.partia.asortyment.nazwa, wyrob: null,
                 kod_towaru: r.partia.asortyment.kod_towaru, numer_partii: r.partia.numer_partii,
                 ilosc, jednostka: r.partia.asortyment.jednostka_miary, ilosc_kg: null,
-                cena_jednostkowa: cena > 0 ? cena : null, wartosc: ilosc * cena,
+                cena_jednostkowa: cena > 0 ? cena : null, wartosc: Math.round(cena * ilosc * 100) / 100,
               });
             }
           } else {
@@ -3487,7 +3487,7 @@ async function startServer() {
               asortyment: r.partia.asortyment.nazwa, wyrob: null,
               kod_towaru: r.partia.asortyment.kod_towaru, numer_partii: r.partia.numer_partii,
               ilosc, jednostka: r.partia.asortyment.jednostka_miary, ilosc_kg: null,
-              cena_jednostkowa: cena > 0 ? cena : null, wartosc: ilosc * cena,
+              cena_jednostkowa: cena > 0 ? cena : null, wartosc: Math.round(cena * ilosc * 100) / 100,
             });
           }
         }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { BarChart2, ChevronDown, ChevronRight, TrendingUp, FileText, Users, Calendar, Package, DollarSign, Layers, Printer } from "lucide-react";
+import { BarChart2, ChevronDown, ChevronRight, TrendingUp, FileText, Users, Calendar, Package, DollarSign, Layers, Printer, Receipt } from "lucide-react";
 import { fmtL, fmtDate } from "../utils/fmt";
 import { Spinner } from "../components/Spinner";
 import { printReport } from "../utils/printReport";
@@ -69,17 +69,17 @@ function fmt(val: number) {
   return val.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-type ActiveReport = "sprzedaz" | "stany_bez_cen" | "stany_ceny_sprzedazy" | "stany_wartosci";
+type ActiveReport = "sprzedaz" | "stany_bez_cen" | "stany_ceny_sprzedazy" | "stany_wartosci" | "kalkulator_fs";
 
 export default function Raporty() {
   const today = new Date();
-  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const firstOfYear = new Date(today.getFullYear(), 0, 1).toISOString().slice(0, 10);
   const todayStr = today.toISOString().slice(0, 10);
 
   const [activeReport, setActiveReport] = useState<ActiveReport>("sprzedaz");
 
   // -- Sprzedaż per kontrahent --
-  const [od, setOd] = useState(firstOfMonth);
+  const [od, setOd] = useState(firstOfYear);
   const [doData, setDoData] = useState(todayStr);
   const [filtKontrahent, setFiltKontrahent] = useState<string>("__all__");
   const [data, setData] = useState<RaportData | null>(null);
@@ -88,11 +88,21 @@ export default function Raporty() {
   const [expandedDok, setExpandedDok] = useState<Set<string>>(new Set());
 
   // -- Stany magazynowe --
+  // -- Stany magazynowe --
   const [stanyData, setStanyData] = useState<StanMagazynowy[] | null>(null);
   const [stanyLoading, setStanyLoading] = useState(false);
   const [stanyTypFilter, setStanyTypFilter] = useState<string>("all");
   const [stanySearch, setStanySearch] = useState("");
   const [tylkoZZapasem, setTylkoZZapasem] = useState(true);
+
+  // -- Kalkulator FS --
+  const [fsOd, setFsOd] = useState(firstOfYear);
+  const [fsDo, setFsDo] = useState(todayStr);
+  const [fsKontrahent, setFsKontrahent] = useState<string>("__all__");
+  const [fsRaportData, setFsRaportData] = useState<RaportData | null>(null);
+  const [fsLoading, setFsLoading] = useState(false);
+  const [selectedWz, setSelectedWz] = useState<Set<string>>(new Set());
+  const [fsVatRate, setFsVatRate] = useState<string>("5");
 
   const fetchRaport = async () => {
     setLoading(true);
@@ -115,10 +125,23 @@ export default function Raporty() {
     } catch {} finally { setStanyLoading(false); }
   };
 
+  const fetchFsRaport = async () => {
+    setFsLoading(true);
+    setSelectedWz(new Set());
+    try {
+      const params = new URLSearchParams();
+      if (fsOd) params.set("od", fsOd);
+      if (fsDo) params.set("do", fsDo);
+      const res = await fetch(`/api/raporty/sprzedaz-per-kontrahent?${params}`);
+      if (res.ok) setFsRaportData(await res.json());
+    } catch {} finally { setFsLoading(false); }
+  };
+
   useEffect(() => { fetchRaport(); }, []);
 
   useEffect(() => {
-    if (activeReport !== "sprzedaz") fetchStany();
+    if (activeReport === "stany_bez_cen" || activeReport === "stany_ceny_sprzedazy" || activeReport === "stany_wartosci") fetchStany();
+    if (activeReport === "kalkulator_fs" && !fsRaportData) fetchFsRaport();
   }, [activeReport]);
 
   const visibleKontrahenci = data
@@ -155,6 +178,92 @@ export default function Raporty() {
     }
     return true;
   });
+
+  const fsDokumenty = React.useMemo(() => {
+    if (!fsRaportData) return [];
+    return fsRaportData.kontrahenci
+      .filter(k => fsKontrahent === "__all__" || (k.id ?? "__brak__") === fsKontrahent)
+      .flatMap(k => k.dokumenty.map(d => ({ ...d, kontrahent: k.nazwa })))
+      .sort((a, b) => (b.data ?? "").localeCompare(a.data ?? ""));
+  }, [fsRaportData, fsKontrahent]);
+
+  const fsSumaKg = React.useMemo(
+    () => fsDokumenty.filter(d => selectedWz.has(d.referencja))
+      .reduce((s, d) => s + d.pozycje.reduce((ps, p) => ps + (p.ilosc_kg ?? 0), 0), 0),
+    [fsDokumenty, selectedWz],
+  );
+
+  const fsWartoscNetto = React.useMemo(
+    () => fsDokumenty.filter(d => selectedWz.has(d.referencja)).reduce((s, d) => s + d.wartosc, 0),
+    [fsDokumenty, selectedWz],
+  );
+
+  const fsSredniaCena = fsSumaKg > 0 ? fsWartoscNetto / fsSumaKg : 0;
+  const fsVatRateNum = parseFloat(fsVatRate) || 0;
+  const fsKwotaVat = Math.round(fsWartoscNetto * fsVatRateNum / 100 * 100) / 100;
+  const fsWartoscBrutto = Math.round((fsWartoscNetto + fsKwotaVat) * 100) / 100;
+
+  const toggleWz = (ref: string) => setSelectedWz(prev => {
+    const next = new Set(prev);
+    next.has(ref) ? next.delete(ref) : next.add(ref);
+    return next;
+  });
+
+  const toggleAllWz = () => {
+    setSelectedWz(selectedWz.size === fsDokumenty.length && fsDokumenty.length > 0
+      ? new Set()
+      : new Set(fsDokumenty.map(d => d.referencja)));
+  };
+
+  const exportKalkulatorFS = () => {
+    if (selectedWz.size === 0 || fsWartoscNetto === 0) return;
+    const refs = fsDokumenty.filter(d => selectedWz.has(d.referencja)).map(d => d.referencja).join(', ');
+    printReport({
+      title: "Kalkulator FS — Lody gelato",
+      subtitle: `Dokumenty WZ: ${refs}`,
+      sections: [
+        {
+          columns: [
+            { label: "Nazwa towaru/usługi" },
+            { label: "Ilość", align: "right" },
+            { label: "Jdn." },
+            { label: "Cena jdn. (netto)", align: "right" },
+            { label: "VAT", align: "right" },
+            { label: "Wartość netto", align: "right", bold: true },
+            { label: "Kwota VAT", align: "right" },
+            { label: "Wartość brutto", align: "right", bold: true },
+          ],
+          rows: [[
+            "Lody gelato",
+            fmtL(fsSumaKg, 3),
+            "kg",
+            `${fsSredniaCena.toFixed(4)} zł`,
+            `${fsVatRate}%`,
+            `${fmt(fsWartoscNetto)} zł`,
+            `${fmt(fsKwotaVat)} zł`,
+            `${fmt(fsWartoscBrutto)} zł`,
+          ]],
+          totalRow: ["RAZEM", null, null, null, null, `${fmt(fsWartoscNetto)} zł`, `${fmt(fsKwotaVat)} zł`, `${fmt(fsWartoscBrutto)} zł`],
+        },
+        {
+          heading: "Rozliczenie VAT",
+          columns: [
+            { label: "Stawka VAT", align: "right" },
+            { label: "Wartość netto", align: "right", bold: true },
+            { label: "Kwota VAT", align: "right" },
+            { label: "Wartość brutto", align: "right", bold: true },
+          ],
+          rows: [[
+            `${fsVatRate}%`,
+            `${fmt(fsWartoscNetto)} zł`,
+            `${fmt(fsKwotaVat)} zł`,
+            `${fmt(fsWartoscBrutto)} zł`,
+          ]],
+          totalRow: ["RAZEM", `${fmt(fsWartoscNetto)} zł`, `${fmt(fsKwotaVat)} zł`, `${fmt(fsWartoscBrutto)} zł`],
+        },
+      ],
+    });
+  };
 
   const exportSprzedaz = () => {
     if (!visibleKontrahenci.length) return;
@@ -290,6 +399,7 @@ export default function Raporty() {
     { id: "stany_bez_cen", label: "Stany mag. — ilościowy", icon: <Package className="w-4 h-4" /> },
     { id: "stany_ceny_sprzedazy", label: "Stany mag. — ceny sprzedaży", icon: <DollarSign className="w-4 h-4" /> },
     { id: "stany_wartosci", label: "Stany mag. — wartości zakupu", icon: <Layers className="w-4 h-4" /> },
+    { id: "kalkulator_fs", label: "Kalkulator FS", icon: <Receipt className="w-4 h-4" /> },
   ];
 
   // -- Filtry dla stanów --
@@ -728,6 +838,223 @@ export default function Raporty() {
                 </tfoot>
               </table>
             )}
+          </div>
+        </>
+      )}
+
+      {/* ── KALKULATOR FS ── */}
+      {activeReport === "kalkulator_fs" && (
+        <>
+          {/* Filtry */}
+          <div
+            className="flex flex-wrap items-center gap-4 px-4 py-3 rounded-xl shrink-0"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
+              <span className="text-xs font-bold uppercase" style={{ color: "var(--text-muted)" }}>Okres:</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs" style={{ color: "var(--text-muted)" }}>Od</label>
+              <input
+                type="date" value={fsOd} onChange={e => setFsOd(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs" style={{ color: "var(--text-muted)" }}>Do</label>
+              <input
+                type="date" value={fsDo} onChange={e => setFsDo(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+            {fsRaportData && (
+              <select
+                value={fsKontrahent}
+                onChange={e => setFsKontrahent(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              >
+                <option value="__all__">Wszyscy kontrahenci</option>
+                {fsRaportData.kontrahenci.map(k => (
+                  <option key={k.id ?? "__brak__"} value={k.id ?? "__brak__"}>{k.nazwa}</option>
+                ))}
+              </select>
+            )}
+            <button
+              onClick={fetchFsRaport} disabled={fsLoading}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+              style={{ background: 'rgba(6,182,212,0.15)', color: 'var(--accent)', border: '1px solid rgba(6,182,212,0.35)' }}
+            >
+              {fsLoading ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
+              Generuj
+            </button>
+            <div className="flex items-center gap-2 ml-auto">
+              <label className="text-xs font-bold uppercase" style={{ color: "var(--text-muted)" }}>VAT</label>
+              <select
+                value={fsVatRate}
+                onChange={e => setFsVatRate(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none font-mono"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)", width: 80 }}
+              >
+                <option value="0">0%</option>
+                <option value="5">5%</option>
+                <option value="8">8%</option>
+                <option value="23">23%</option>
+              </select>
+            </div>
+            <button
+              onClick={exportKalkulatorFS}
+              disabled={selectedWz.size === 0 || fsWartoscNetto === 0}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect disabled:opacity-40"
+              style={{ background: 'rgba(168,85,247,0.15)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.35)' }}
+            >
+              <Printer className="w-3.5 h-3.5" /> Eksportuj PDF
+            </button>
+          </div>
+
+          {/* Treść */}
+          <div className="flex gap-3 flex-1 min-h-0">
+            {/* Lista WZ */}
+            <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
+              {fsLoading ? (
+                <Spinner.Page />
+              ) : !fsRaportData ? (
+                <div className="p-12 text-center" style={{ color: "var(--text-muted)" }}>
+                  Wybierz okres i kliknij „Generuj".
+                </div>
+              ) : fsDokumenty.length === 0 ? (
+                <div className="p-12 text-center" style={{ color: "var(--text-muted)" }}>
+                  Brak zatwierdzonych dokumentów WZ w wybranym okresie.
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
+                      <th style={{ padding: "8px 12px", width: 36 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedWz.size === fsDokumenty.length && fsDokumenty.length > 0}
+                          onChange={toggleAllWz}
+                          style={{ cursor: "pointer" }}
+                        />
+                      </th>
+                      {["Dokument WZ", "Data", "Kontrahent", "Wartość netto"].map((h, i) => (
+                        <th key={h} style={{
+                          padding: "8px 12px", textAlign: i === 3 ? "right" : "left",
+                          fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                          letterSpacing: "0.08em", color: "var(--text-muted)",
+                        }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fsDokumenty.map(d => {
+                      const sel = selectedWz.has(d.referencja);
+                      return (
+                        <tr
+                          key={d.referencja}
+                          onClick={() => toggleWz(d.referencja)}
+                          style={{
+                            borderBottom: "1px solid var(--border-dim)", cursor: "pointer",
+                            background: sel ? "rgba(6,182,212,0.07)" : "transparent",
+                            transition: "background .1s",
+                          }}
+                          onMouseEnter={e => { if (!sel) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = sel ? "rgba(6,182,212,0.07)" : "transparent"; }}
+                        >
+                          <td style={{ padding: "8px 12px" }}>
+                            <input type="checkbox" checked={sel} onChange={() => {}} style={{ cursor: "pointer", pointerEvents: "none" }} />
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-3.5 h-3.5 shrink-0" style={{ color: sel ? "var(--accent)" : "var(--text-muted)" }} />
+                              <span className="font-mono text-xs font-bold" style={{ color: sel ? "var(--accent)" : "var(--text-secondary)" }}>
+                                {d.referencja}
+                              </span>
+                            </div>
+                          </td>
+                          <td style={{ padding: "8px 12px", color: "var(--text-muted)", fontSize: 12 }}>{fmtDate(d.data)}</td>
+                          <td style={{ padding: "8px 12px", color: "var(--text-secondary)", fontSize: 12 }}>{d.kontrahent}</td>
+                          <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: sel ? 700 : 400, color: sel ? "var(--ok)" : "var(--text-secondary)" }}>
+                            {fmt(d.wartosc)} zł
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-surface)" }}>
+                      <td />
+                      <td colSpan={2} style={{ padding: "8px 12px", fontWeight: 700, color: "var(--text-muted)", fontSize: 12 }}>
+                        Zaznaczono {selectedWz.size} z {fsDokumenty.length} dok.
+                      </td>
+                      <td />
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--ok)" }}>
+                        {selectedWz.size > 0 ? `${fmt(fsWartoscNetto)} zł` : "—"}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+
+            {/* Panel podsumowania */}
+            <div
+              className="rounded-xl shrink-0 flex flex-col gap-4"
+              style={{ width: 290, background: "var(--bg-surface)", border: "1px solid var(--border)", padding: "16px", alignSelf: "flex-start", position: "sticky", top: 0 }}
+            >
+              <div className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                Pozycja FS
+              </div>
+
+              {selectedWz.size === 0 ? (
+                <div className="text-sm py-4 text-center" style={{ color: "var(--text-muted)" }}>
+                  Zaznacz dokumenty WZ z listy
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.2)", color: "var(--accent)" }}>
+                    <span className="font-bold font-mono">{selectedWz.size}</span> dok. WZ · <span className="font-bold font-mono">{fmtL(fsSumaKg, 3)} kg</span>
+                  </div>
+
+                  <div className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Lody gelato</div>
+
+                  <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <tbody>
+                        {[
+                          { label: "Ilość", value: `${fmtL(fsSumaKg, 3)} kg`, color: "var(--text-primary)", bold: true },
+                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(4)} zł`, color: "var(--text-secondary)", bold: false },
+                          { label: "Wartość netto", value: `${fmt(fsWartoscNetto)} zł`, color: "var(--ok)", bold: true },
+                          { label: `VAT ${fsVatRate}%`, value: `${fmt(fsKwotaVat)} zł`, color: "var(--warn)", bold: false },
+                        ].map(row => (
+                          <tr key={row.label} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                            <td style={{ padding: "7px 10px", color: "var(--text-muted)" }}>{row.label}</td>
+                            <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: row.bold ? 700 : 400, color: row.color }}>
+                              {row.value}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr style={{ background: "rgba(251,146,60,0.08)", borderTop: "2px solid rgba(251,146,60,0.3)" }}>
+                          <td style={{ padding: "9px 10px", fontWeight: 700, color: "var(--text-primary)" }}>Wartość brutto</td>
+                          <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#fb923c", fontSize: 14 }}>
+                            {fmt(fsWartoscBrutto)} zł
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="text-[10px] leading-4" style={{ color: "var(--text-muted)" }}>
+                    Wartość netto = dokładna suma z WZ.<br />
+                    Cena śr./kg tylko informacyjnie — wartość jest nadrzędna.
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </>
       )}
