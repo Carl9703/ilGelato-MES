@@ -63,6 +63,8 @@ export default function Produkcja() {
   const [viewZlecenie, setViewZlecenie] = useState<Zlecenie | null>(null);
   const [viewSesjaId, setViewSesjaId] = useState<string | null>(null);
   const [sesjaTab, setSesjaTab] = useState<string>("baza");
+  const [sesjaKoszty, setSesjaKoszty] = useState<any>(null);
+  const [sesjaKosztyLoading, setSesjaKosztyLoading] = useState(false);
 
 
   const viewSesjaData = React.useMemo(() => {
@@ -222,8 +224,19 @@ export default function Produkcja() {
       if (data?.baza) setSesjaTab("baza");
       else if (data?.wyroby[0]) setSesjaTab(data.wyroby[0].id);
       else setSesjaTab("podsumowanie");
+      setSesjaKoszty(null);
     }
   }, [viewSesjaId]);
+
+  useEffect(() => {
+    if (sesjaTab !== "koszty" || !viewSesjaId || viewSesjaId.startsWith("indiv-") || sesjaKoszty) return;
+    setSesjaKosztyLoading(true);
+    fetch(`/api/produkcja/sesje/${viewSesjaId}/koszty`)
+      .then(r => r.json())
+      .then(d => setSesjaKoszty(d))
+      .catch(() => {})
+      .finally(() => setSesjaKosztyLoading(false));
+  }, [sesjaTab, viewSesjaId]);
 
 
   useEffect(() => {
@@ -2665,6 +2678,11 @@ export default function Produkcja() {
                 <button onClick={() => setSesjaTab("podsumowanie")} className={tabCls("podsumowanie") + " shrink-0"}>
                   Podsumowanie
                 </button>
+                {!viewSesjaId?.startsWith("indiv-") && (
+                  <button onClick={() => setSesjaTab("koszty")} className={tabCls("koszty") + " shrink-0 flex items-center gap-1.5"}>
+                    <Calculator className="w-3.5 h-3.5" />Koszty
+                  </button>
+                )}
               </div>
 
               {/* Tab content */}
@@ -3202,6 +3220,121 @@ export default function Produkcja() {
                     </div>
                   );
                 })()}
+
+                {/* ── KOSZTY TAB ── */}
+                {sesjaTab === "koszty" && (
+                  <div className="space-y-6">
+                    {sesjaKosztyLoading ? (
+                      <div className="flex justify-center py-12"><Spinner /></div>
+                    ) : !sesjaKoszty ? (
+                      <div className="mes-panel rounded p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Brak danych kosztowych dla tej sesji.</div>
+                    ) : (
+                      <>
+                        {/* KPI */}
+                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                          <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                            <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Łączny koszt produkcji</div>
+                            <div className="text-2xl font-black" style={{ color: 'var(--accent)' }}>{fmtL(sesjaKoszty.koszt_wyrobow_total, 2)} <span className="text-xs">zł</span></div>
+                          </div>
+                          <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                            <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Śr. koszt / kg wyrobów</div>
+                            <div className="text-2xl font-black text-amber-400">{fmtL(sesjaKoszty.koszt_wyrobow_avg_per_kg, 2)} <span className="text-xs">zł/kg</span></div>
+                          </div>
+                          <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
+                            <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Masa wyrobów</div>
+                            <div className="text-2xl font-black text-emerald-400">{fmtL(sesjaKoszty.masa_wyrobow_total, 2)} <span className="text-xs">kg</span></div>
+                          </div>
+                        </div>
+
+                        {/* Baza */}
+                        {sesjaKoszty.baza && (
+                          <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                            <div className="px-4 py-3 bg-[var(--bg-surface)] flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="badge badge-info text-[10px]">E1</span>
+                                <span className="font-bold text-white text-sm">{sesjaKoszty.baza.nazwa}</span>
+                              </div>
+                              <div className="flex items-center gap-4 text-sm">
+                                <span className="text-[var(--text-muted)]">{fmtL(sesjaKoszty.baza.ilosc_kg, 3)} kg</span>
+                                <span className="mono font-bold text-amber-400">{fmtL(sesjaKoszty.baza.koszt_per_kg, 2)} zł/kg</span>
+                                <span className="mono font-black" style={{ color: 'var(--accent)' }}>{fmtL(sesjaKoszty.baza.koszt_surowcow, 2)} zł</span>
+                              </div>
+                            </div>
+                            {sesjaKoszty.baza.surowce.length > 0 && (
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="bg-[var(--bg-surface)]/60">
+                                    <th className="text-left px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Surowiec</th>
+                                    <th className="text-right px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Ilość</th>
+                                    <th className="text-right px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Cena jm</th>
+                                    <th className="text-right px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Wartość</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[var(--border)]/40">
+                                  {sesjaKoszty.baza.surowce.map((s: any, i: number) => (
+                                    <tr key={i} className="hover:bg-[var(--bg-surface)]/40">
+                                      <td className="px-4 py-2.5 font-medium text-[var(--text-primary)]">{s.nazwa}<span className="mono text-xs text-[var(--text-muted)] ml-2">{s.kod}</span></td>
+                                      <td className="px-4 py-2.5 text-right mono text-white">{fmtL(s.ilosc, 3)} <span className="text-[var(--text-muted)] text-xs">{s.jednostka}</span></td>
+                                      <td className="px-4 py-2.5 text-right mono text-[var(--text-muted)]">{s.cena_jm > 0 ? `${fmtL(s.cena_jm, 2)} zł` : '—'}</td>
+                                      <td className="px-4 py-2.5 text-right mono font-bold text-amber-400">{s.wartosc > 0 ? `${fmtL(s.wartosc, 2)} zł` : '—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Wyroby */}
+                        <div className="space-y-3">
+                          {sesjaKoszty.wyroby.map((w: any) => (
+                            <div key={w.id} className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                              <div className="px-4 py-3 bg-[var(--bg-surface)] flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="badge badge-ok text-[10px]">E2</span>
+                                  <span className="font-bold text-white text-sm">{w.nazwa}</span>
+                                </div>
+                                <div className="flex items-center gap-4 text-sm">
+                                  <span className="text-[var(--text-muted)]">{fmtL(w.ilosc_kg, 3)} kg</span>
+                                  <span className="mono font-bold text-amber-400">{fmtL(w.koszt_per_kg, 2)} zł/kg</span>
+                                  <span className="mono font-black" style={{ color: 'var(--accent)' }}>{fmtL(w.koszt_total, 2)} zł</span>
+                                </div>
+                              </div>
+                              {w.surowce.length > 0 && (
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="bg-[var(--bg-surface)]/60">
+                                      <th className="text-left px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Surowiec / składnik</th>
+                                      <th className="text-right px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Ilość</th>
+                                      <th className="text-right px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Cena jm</th>
+                                      <th className="text-right px-4 py-2 text-[11px] font-black uppercase text-[var(--text-muted)]">Wartość</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-[var(--border)]/40">
+                                    {w.surowce.map((s: any, i: number) => (
+                                      <tr key={i} className="hover:bg-[var(--bg-surface)]/40">
+                                        <td className="px-4 py-2.5 font-medium text-[var(--text-primary)]">{s.nazwa}<span className="mono text-xs text-[var(--text-muted)] ml-2">{s.kod}</span></td>
+                                        <td className="px-4 py-2.5 text-right mono text-white">{fmtL(s.ilosc, 3)} <span className="text-[var(--text-muted)] text-xs">{s.jednostka}</span></td>
+                                        <td className="px-4 py-2.5 text-right mono text-[var(--text-muted)]">{s.cena_jm > 0 ? `${fmtL(s.cena_jm, 2)} zł` : '—'}</td>
+                                        <td className="px-4 py-2.5 text-right mono font-bold text-amber-400">{s.wartosc > 0 ? `${fmtL(s.wartosc, 2)} zł` : '—'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr className="border-t-2 border-[var(--border)] bg-[var(--bg-surface)]">
+                                      <td colSpan={3} className="px-4 py-2 font-black text-[var(--text-muted)] text-[11px] uppercase tracking-wider">Razem koszt wyrobu</td>
+                                      <td className="px-4 py-2 text-right mono font-black" style={{ color: 'var(--accent)' }}>{fmtL(w.koszt_total, 2)} zł</td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
 
               </div>
             </div>

@@ -77,6 +77,7 @@ model Asortyment {
   zaktualizowano_dnia      DateTime                   @updatedAt
   cena_sprzedazy           Float?
   stawka_vat               Float?
+  cena_zakupu              Float?
   alergeny                 Alergeny_Asortymentu?
   grupa                    Grupy_Towarowe?            @relation(fields: [id_grupy], references: [id])
   opakowania_wyrobowe      Opakowania_Wyrobowe[]

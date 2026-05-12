@@ -765,12 +765,12 @@ async function startServer() {
     }
   });
 
-  // --- CENY SPRZEDAŻY (wyroby gotowe) ---
+  // --- CENY (zakupu / sprzedaży) ---
   app.get("/api/asortyment/:id/ceny", async (req, res) => {
     try {
       const data = await prisma.asortyment.findUnique({
         where: { id: req.params.id },
-        select: { cena_sprzedazy: true, stawka_vat: true },
+        select: { cena_sprzedazy: true, stawka_vat: true, cena_zakupu: true },
       });
       res.json(data || {});
     } catch {
@@ -785,11 +785,13 @@ async function startServer() {
         ? parseFloat(req.body.cena_sprzedazy) : null;
       const vat = req.body.stawka_vat !== undefined && req.body.stawka_vat !== ""
         ? parseFloat(req.body.stawka_vat) : null;
+      const cenaZakupu = req.body.cena_zakupu !== undefined && req.body.cena_zakupu !== ""
+        ? parseFloat(req.body.cena_zakupu) : null;
       const result = await prisma.asortyment.update({
         where: { id },
-        data: { cena_sprzedazy: cena, stawka_vat: vat },
+        data: { cena_sprzedazy: cena, stawka_vat: vat, cena_zakupu: cenaZakupu },
       });
-      res.json({ cena_sprzedazy: result.cena_sprzedazy, stawka_vat: result.stawka_vat });
+      res.json({ cena_sprzedazy: result.cena_sprzedazy, stawka_vat: result.stawka_vat, cena_zakupu: result.cena_zakupu });
     } catch {
       res.status(500).json({ error: "Błąd zapisu cen" });
     }
@@ -1621,11 +1623,33 @@ async function startServer() {
       const opNazwyMap: Record<string, string> = {};
       opNazwy.forEach(a => opNazwyMap[a.id] = a.nazwa);
 
+      // Dla PW: przelicz koszt/kg z bieżących cena_zakupu składników (tak jak zakładka Koszty)
+      const kosztyPerKgByZlecenie: Record<string, number> = {};
+      const pwRuchyIds = [...new Set(ruchy.filter(r => r.typ_ruchu === 'Przyjecie_Z_Produkcji' && r.id_zlecenia).map(r => r.id_zlecenia as string))];
+      if (pwRuchyIds.length > 0) {
+        const zuzycieRuchy = await prisma.ruchy_Magazynowe.findMany({
+          where: { id_zlecenia: { in: pwRuchyIds }, typ_ruchu: 'Zuzycie', czy_aktywne: true },
+          include: { partia: { include: { asortyment: true } } },
+        });
+        for (const zlId of pwRuchyIds) {
+          const zuzycie = zuzycieRuchy.filter(r => r.id_zlecenia === zlId);
+          const totalKoszt = zuzycie.reduce((sum, r) => {
+            const cenaZakupu = (r.partia.asortyment as any).cena_zakupu ?? 0;
+            return sum + Math.abs(r.ilosc) * cenaZakupu;
+          }, 0);
+          const pwRuch = ruchy.find(r => r.id_zlecenia === zlId && r.typ_ruchu === 'Przyjecie_Z_Produkcji');
+          const iloscWyrobu = pwRuch ? pwRuch.ilosc : 0;
+          kosztyPerKgByZlecenie[zlId] = iloscWyrobu > 0 ? totalKoszt / iloscWyrobu : 0;
+        }
+      }
+
       let wartosc_calkowita = 0;
       const pozycje: any[] = [];
       for (const r of ruchy) {
         const ilosc = Math.abs(r.ilosc);
-        const cena = r.cena_jednostkowa || 0;
+        const cena = r.typ_ruchu === 'Przyjecie_Z_Produkcji'
+          ? (r.id_zlecenia ? (kosztyPerKgByZlecenie[r.id_zlecenia] ?? r.cena_jednostkowa ?? 0) : (r.cena_jednostkowa ?? 0))
+          : ((r.partia.asortyment as any).cena_zakupu ?? 0);
         let sztuki = sztukiByPartia[r.id_partii] || {};
 
         if (r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.partia.opakowania_json) {
@@ -1704,7 +1728,7 @@ async function startServer() {
             ilosc_kg: null,
             data_produkcji: r.partia.data_produkcji,
             termin_waznosci: r.partia.termin_waznosci,
-            cena_jednostkowa: r.cena_jednostkowa,
+            cena_jednostkowa: cena > 0 ? cena : null,
             wartosc,
             cena_netto: cenaNetto2,
             cena_brutto: cenaBrutto2,
@@ -2050,24 +2074,9 @@ async function startServer() {
       });
       if (!receptura) return res.status(404).json({ error: "Nie znaleziono" });
 
-      // Dla każdego składnika: znajdź średnią cenę ważoną z ruchów PZ
       const wiersze = await Promise.all(
         receptura.skladniki.map(async (s) => {
-          // Znajdź partie tego asortymentu z cenami
-          const ruchy = await prisma.ruchy_Magazynowe.findMany({
-            where: {
-              partia: { id_asortymentu: s.id_asortymentu_skladnika },
-              typ_ruchu: { in: ["PZ", "Przyjecie_Z_Produkcji"] },
-              cena_jednostkowa: { not: null },
-              czy_aktywne: true,
-            },
-            select: { ilosc: true, cena_jednostkowa: true },
-          });
-
-          // Średnia ważona cena
-          const totalIlosc = ruchy.reduce((acc, r) => acc + r.ilosc, 0);
-          const totalWart = ruchy.reduce((acc, r) => acc + r.ilosc * (r.cena_jednostkowa || 0), 0);
-          const cena_srednia = totalIlosc > 0 ? totalWart / totalIlosc : 0;
+          const cena_srednia = s.asortyment_skladnika.cena_zakupu ?? 0;
 
           // Przelicz masę: jeśli pomocnicza, użyj przelicznika
           const przelicznik = s.czy_pomocnicza && s.asortyment_skladnika.przelicznik_jednostki
@@ -2139,18 +2148,14 @@ async function startServer() {
         },
       });
 
-      // Pobierz średnie ceny dla wszystkich asortymentów składników
+      // Ceny zakupu z kartoteki asortymentu
       const allIngredientIds = [...new Set(receptury.flatMap(r => r.skladniki.map(s => s.id_asortymentu_skladnika)))];
       const cenySrednie: Record<string, number> = {};
-      await Promise.all(allIngredientIds.map(async (id) => {
-        const ruchy = await prisma.ruchy_Magazynowe.findMany({
-          where: { partia: { id_asortymentu: id }, typ_ruchu: { in: ["PZ", "Przyjecie_Z_Produkcji"] }, cena_jednostkowa: { not: null }, czy_aktywne: true },
-          select: { ilosc: true, cena_jednostkowa: true },
-        });
-        const totalIlosc = ruchy.reduce((s, r) => s + r.ilosc, 0);
-        const totalWart = ruchy.reduce((s, r) => s + r.ilosc * (r.cena_jednostkowa || 0), 0);
-        cenySrednie[id] = totalIlosc > 0 ? totalWart / totalIlosc : 0;
-      }));
+      const asortymenty = await prisma.asortyment.findMany({
+        where: { id: { in: allIngredientIds } },
+        select: { id: true, cena_zakupu: true },
+      });
+      asortymenty.forEach(a => { cenySrednie[a.id] = a.cena_zakupu ?? 0; });
 
       // Kalkulacja na produkt
       const produkty: any[] = [];
@@ -2210,6 +2215,75 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Błąd rozliczenia" });
+    }
+  });
+
+  // --- KOSZTY SESJI PRODUKCYJNEJ ---
+  app.get("/api/produkcja/sesje/:id/koszty", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const zlecenia = await prisma.zlecenia_Produkcyjne.findMany({
+        where: { id_sesji: id, czy_aktywne: true },
+        include: {
+          receptura: { include: { asortyment_docelowy: true } },
+          ruchy_magazynowe: {
+            where: { czy_aktywne: true },
+            include: { partia: { include: { asortyment: true } } },
+          },
+        },
+        orderBy: { etap: "asc" },
+      });
+
+      if (zlecenia.length === 0) return res.json(null);
+
+      const processZlecenie = (z: any) => {
+        const zuzycie = z.ruchy_magazynowe.filter((r: any) => r.typ_ruchu === "Zuzycie");
+        const pw = z.ruchy_magazynowe.find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.ilosc > 0);
+        const ilosc_kg = pw?.ilosc || z.rzeczywista_ilosc_wyrobu || 0;
+
+        // Zawsze przeliczamy z aktualnej cena_zakupu z kartoteki asortymentu
+        const surowceMap: Record<string, { nazwa: string; kod: string; jednostka: string; ilosc: number; cena_jm: number; wartosc: number }> = {};
+        for (const r of zuzycie) {
+          const ilosc = Math.abs(r.ilosc);
+          const cena = r.partia?.asortyment?.cena_zakupu ?? 0;
+          const key = r.partia?.asortyment?.id || r.id_partii;
+          if (!surowceMap[key]) {
+            surowceMap[key] = {
+              nazwa: r.partia?.asortyment?.nazwa || "—",
+              kod: r.partia?.asortyment?.kod_towaru || "—",
+              jednostka: r.partia?.asortyment?.jednostka_miary || "kg",
+              ilosc: 0, cena_jm: cena, wartosc: 0,
+            };
+          }
+          surowceMap[key].ilosc += ilosc;
+          surowceMap[key].wartosc += ilosc * cena;
+        }
+        const surowce = Object.values(surowceMap).sort((a, b) => b.wartosc - a.wartosc);
+        const koszt_surowcow = surowce.reduce((s, r) => s + r.wartosc, 0);
+        const koszt_total = koszt_surowcow;
+        const koszt_per_kg = ilosc_kg > 0 ? koszt_total / ilosc_kg : 0;
+
+        return { id: z.id, nazwa: z.receptura?.asortyment_docelowy?.nazwa || "—", ilosc_kg, koszt_per_kg, koszt_total, koszt_surowcow, surowce };
+      };
+
+      const bazaZp = zlecenia.find((z: any) => z.etap === 1);
+      const wyrobyZp = zlecenia.filter((z: any) => z.etap === 2 || (z.etap == null && !zlecenia.some((x: any) => x.etap === 1)));
+
+      const baza = bazaZp ? processZlecenie(bazaZp) : null;
+      const wyroby = wyrobyZp.map(processZlecenie);
+
+      const masa_wyrobow_total = wyroby.reduce((s: number, w: any) => s + w.ilosc_kg, 0);
+      const koszt_wyrobow_total = wyroby.reduce((s: number, w: any) => s + w.koszt_total, 0);
+
+      res.json({
+        baza,
+        wyroby,
+        masa_wyrobow_total,
+        koszt_wyrobow_total,
+        koszt_wyrobow_avg_per_kg: masa_wyrobow_total > 0 ? koszt_wyrobow_total / masa_wyrobow_total : 0,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Błąd pobierania kosztów sesji" });
     }
   });
 
@@ -2422,20 +2496,17 @@ async function startServer() {
             const ilosc = parseFloat(s.ilosc);
             const partia = await tx.partie_Magazynowe.findUnique({
               where: { id: s.id_partii },
-              include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
+              include: { ruchy_magazynowe: { where: { czy_aktywne: true } }, asortyment: true },
             });
             if (!partia) throw new Error(`Partia ${s.id_partii} nie istnieje`);
             const stanPartii = partia.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
             const juzZuzyte = zuzyteWTransakcji[s.id_partii] || 0;
             if (stanPartii - juzZuzyte < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
             zuzyteWTransakcji[s.id_partii] = juzZuzyte + ilosc;
-            const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
-              where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
-              orderBy: { utworzono_dnia: "asc" },
-            });
-            kosztBazy += ilosc * (cenaDoc?.cena_jednostkowa ?? 0);
+            const cenaJednBazy = partia.asortyment?.cena_zakupu ?? 0;
+            kosztBazy += ilosc * cenaJednBazy;
             await tx.ruchy_Magazynowe.create({
-              data: { id_partii: s.id_partii, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwBazyNr, id_uzytkownika: user.id },
+              data: { id_partii: s.id_partii, id_zlecenia: zlecenieBazy.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaJednBazy, referencja_dokumentu: rwBazyNr, id_uzytkownika: user.id },
             });
           }
 
@@ -2493,18 +2564,15 @@ async function startServer() {
             const ilosc = parseFloat(s.ilosc);
             const partia = await tx.partie_Magazynowe.findUnique({
               where: { id: s.id_partii },
-              include: { ruchy_magazynowe: { where: { czy_aktywne: true } } },
+              include: { ruchy_magazynowe: { where: { czy_aktywne: true } }, asortyment: true },
             });
             if (!partia) throw new Error(`Partia ${s.id_partii} nie istnieje`);
             const stanPartii = partia.ruchy_magazynowe.reduce((sum: number, r: any) => sum + r.ilosc, 0);
             if (stanPartii < ilosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}`);
-            const cenaDoc = await tx.ruchy_Magazynowe.findFirst({
-              where: { id_partii: s.id_partii, ilosc: { gt: 0 }, czy_aktywne: true },
-              orderBy: { utworzono_dnia: "asc" },
-            });
-            kosztWyrobu += ilosc * (cenaDoc?.cena_jednostkowa ?? 0);
+            const cenaJednWyrobu = partia.asortyment?.cena_zakupu ?? 0;
+            kosztWyrobu += ilosc * cenaJednWyrobu;
             await tx.ruchy_Magazynowe.create({
-              data: { id_partii: s.id_partii, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaDoc?.cena_jednostkowa ?? 0, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
+              data: { id_partii: s.id_partii, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -ilosc, cena_jednostkowa: cenaJednWyrobu, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
             });
           }
 
@@ -2628,7 +2696,7 @@ async function startServer() {
             // Walidacja partii: status i dostępny stan
             const partia = await tx.partie_Magazynowe.findUnique({
               where: { id: p.id_partii },
-              include: { ruchy_magazynowe: { where: { czy_aktywne: true } } }
+              include: { ruchy_magazynowe: { where: { czy_aktywne: true } }, asortyment: true }
             });
             if (!partia) throw new Error(`Partia ${p.id_partii} nie istnieje`);
             if (partia.status_partii !== "Dostepna") throw new Error(`Partia ${partia.numer_partii} nie jest dostępna (status: ${partia.status_partii})`);
@@ -2638,16 +2706,7 @@ async function startServer() {
             if (stanPartii - juzZuzyte < pobieranaIlosc - 0.001) throw new Error(`Niewystarczający stan partii ${partia.numer_partii}: dostępne ${(stanPartii - juzZuzyte).toFixed(3).replace('.', ',')}, żądane ${pobieranaIlosc.toFixed(3).replace('.', ',')}`)
             zuzyteWTransakcji[p.id_partii] = juzZuzyte + pobieranaIlosc;
 
-            // Pobranie ceny jednostkowej zarejestrowanej partii (z momentu przyjęcia - PZ lub PW)
-            const docWejscia = await tx.ruchy_Magazynowe.findFirst({
-              where: {
-                id_partii: p.id_partii,
-                typ_ruchu: { in: ["PZ", "Przyjecie_Z_Produkcji"] },
-                ilosc: { gt: 0 }
-              },
-              orderBy: { utworzono_dnia: 'asc' }
-            });
-            const cenaKosztowaPartii = docWejscia?.cena_jednostkowa || 0;
+            const cenaKosztowaPartii = partia.asortyment?.cena_zakupu ?? 0;
             totalCost += pobieranaIlosc * cenaKosztowaPartii;
 
             await tx.ruchy_Magazynowe.create({
@@ -2692,15 +2751,7 @@ async function startServer() {
 
               const iloscDoPobrania = Math.min(stanPartii, pozostaloDoPobrania);
               
-              const docWejscia = await tx.ruchy_Magazynowe.findFirst({
-                where: { 
-                  id_partii: partia.id, 
-                  typ_ruchu: { in: ["PZ", "Przyjecie_Z_Produkcji"] }, 
-                  ilosc: { gt: 0 } 
-                },
-                orderBy: { utworzono_dnia: 'asc' }
-              });
-              const cenaKosztowaPartii = docWejscia?.cena_jednostkowa || 0;
+              const cenaKosztowaPartii = asort?.cena_zakupu ?? 0;
               totalCost += iloscDoPobrania * cenaKosztowaPartii; // sumujemy koszt RW
 
               await tx.ruchy_Magazynowe.create({

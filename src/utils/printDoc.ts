@@ -36,6 +36,8 @@ export function printDocument(docData: any): void {
 
   const pozycje: any[] = docData.pozycje || [];
   const isWZ = docData.typ === 'WZ';
+  const isPW = docData.typ === 'PW';
+  const isRW = docData.typ === 'RW';
   const hasOp = pozycje.some((p: any) => p.wyrob);
   const vatSummary = isWZ ? computeVatSummary(docData) : null;
 
@@ -46,6 +48,9 @@ export function printDocument(docData: any): void {
       <td class="r mono brutto">${num(p.cena_brutto)} zł</td>
       <td class="r mono">${num(p.wartosc_netto)} zł</td>
       <td class="r mono total">${num(p.wartosc_brutto)} zł</td>
+    ` : (isPW || isRW) ? `
+      <td class="r mono">${p.cena_jednostkowa != null && p.cena_jednostkowa > 0 ? num(p.cena_jednostkowa, 4) + ' zł' : '—'}</td>
+      <td class="r mono total">${p.wartosc != null && p.wartosc > 0 ? num(p.wartosc) + ' zł' : '—'}</td>
     ` : '';
     const iloscKg = p.ilosc_kg != null ? `<span class="sub">${fmtL(p.ilosc_kg, 3)} kg</span>` : '';
     if (hasOp) {
@@ -69,6 +74,8 @@ export function printDocument(docData: any): void {
 
   const priceHeaders = isWZ
     ? '<th class="r">Cena netto</th><th class="r">VAT</th><th class="r">Cena brutto</th><th class="r">Wartość netto</th><th class="r">Wartość brutto</th>'
+    : (isPW || isRW)
+    ? '<th class="r">Koszt jm</th><th class="r">Wartość</th>'
     : '';
   const thead = hasOp
     ? `<tr><th>Lp.</th><th>Wyrób / Opakowanie</th><th>Nr partii</th><th class="r">Ilość</th>${priceHeaders}</tr>`
@@ -83,6 +90,20 @@ export function printDocument(docData: any): void {
     .map(([n, kg]) => `<tr><td>${n}</td><td class="r mono b">${fmtL(kg, 3)} kg</td></tr>`)
     .join('');
   const totalKg = Object.values(sumaMap).reduce((s, v) => s + v, 0);
+
+  let costBlock = '';
+  if (isPW || isRW) {
+    const totalWartosc = pozycje.reduce((s: number, p: any) => s + (p.wartosc || 0), 0);
+    if (totalWartosc > 0) {
+      costBlock = `<div class="vat-wrap"><div class="vat-box">
+        <div class="vat-title">Wartość kosztów produkcji</div>
+        <table class="vat-tbl"><thead><tr><th>Pozycja</th><th class="r">Wartość</th></tr></thead>
+        <tbody>${pozycje.filter((p: any) => p.wartosc > 0).map((p: any) => `<tr><td>${p.wyrob || p.asortyment}</td><td class="r mono">${num(p.wartosc)} zł</td></tr>`).join('')}
+        <tr class="tot"><td class="b">ŁĄCZNIE</td><td class="r mono b">${totalWartosc.toFixed(2)} zł</td></tr>
+        </tbody></table>
+      </div></div>`;
+    }
+  }
 
   let vatBlock = '';
   if (isWZ && vatSummary) {
@@ -195,6 +216,7 @@ ${totalKg > 0 ? `
   <tr class="waga-total"><td>Masa całkowita dokumentu</td><td class="r mono">${fmtL(totalKg, 3)} kg</td></tr>
 </tbody></table>` : ''}
 
+${costBlock}
 ${vatBlock}
 
 </body></html>`;
@@ -221,17 +243,21 @@ export function printSesja(sesja: any): void {
   const wyroby: any[] = sesja.wyroby || [];
   const allZp: any[] = sesja.zlecenia || [];
 
-  // Agregat surowców ze wszystkich ZP
-  const surowceMap = new Map<string, { nazwa: string; ilosc: number; jm: string }>();
+  // Agregat surowców ze wszystkich ZP (z cenami zakupu z kartoteki)
+  const surowceMap = new Map<string, { nazwa: string; ilosc: number; jm: string; cena_jm: number; wartosc: number }>();
   allZp.forEach((z: any) => {
     (z.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === 'Zuzycie').forEach((r: any) => {
       const k = r.partia?.asortyment?.nazwa || '?';
       const jm = r.partia?.asortyment?.jednostka_miary || 'kg';
-      if (!surowceMap.has(k)) surowceMap.set(k, { nazwa: k, ilosc: 0, jm });
-      surowceMap.get(k)!.ilosc += Math.abs(r.ilosc);
+      const cena = r.partia?.asortyment?.cena_zakupu ?? 0;
+      const ilosc = Math.abs(r.ilosc);
+      if (!surowceMap.has(k)) surowceMap.set(k, { nazwa: k, ilosc: 0, jm, cena_jm: cena, wartosc: 0 });
+      const e = surowceMap.get(k)!;
+      e.ilosc += ilosc;
+      e.wartosc += ilosc * cena;
     });
   });
-  const surowce = [...surowceMap.values()].sort((a, b) => b.ilosc - a.ilosc);
+  const surowce = [...surowceMap.values()].sort((a, b) => b.wartosc - a.wartosc);
 
   // Pozycje — każde opakowanie jako wiersz
   let lp = 0;
@@ -287,9 +313,20 @@ export function printSesja(sesja: any): void {
       <td class="r mono">${fmtL(totalKg > 0 ? totalKg : totalWyk, 3)} kg</td>
     </tr>`;
 
+  const totalSurWartosc = surowce.reduce((s, r) => s + r.wartosc, 0);
+  const hasCeny = surowce.some(s => s.cena_jm > 0);
   const tbodySur = surowce.map(s =>
-    `<tr><td>${s.nazwa}</td><td class="r mono b">${fmtL(s.ilosc, 3)}</td><td>${s.jm}</td></tr>`
-  ).join('');
+    `<tr>
+      <td><b>${s.nazwa}</b></td>
+      <td class="r mono b">${fmtL(s.ilosc, 3)}</td>
+      <td>${s.jm}</td>
+      ${hasCeny ? `<td class="r mono">${s.cena_jm > 0 ? s.cena_jm.toFixed(2) + ' zł' : '—'}</td><td class="r mono b">${s.wartosc > 0 ? s.wartosc.toFixed(2) + ' zł' : '—'}</td>` : ''}
+    </tr>`
+  ).join('') + (hasCeny ? `<tr class="waga-total">
+    <td colspan="3">Razem wartość surowców</td>
+    <td></td>
+    <td class="r mono">${totalSurWartosc.toFixed(2)} zł</td>
+  </tr>` : '');
 
   const bazaInfo = sesja.baza
     ? `<div><div class="meta-label">Baza (E1)</div><div class="meta-val">${sesja.baza.receptura?.asortyment_docelowy?.nazwa}</div><div class="meta-sub mono">${fmtL(sesja.baza.rzeczywista_ilosc_wyrobu || 0, 3)} ${sesja.baza.receptura?.asortyment_docelowy?.jednostka_miary || 'kg'}</div></div>`
@@ -371,14 +408,10 @@ tbody tr:last-child td{border-bottom:none}
 
 ${surowce.length > 0 ? `<div class="section">Zużyte surowce (cała sesja)</div>
 <table>
-  <thead><tr><th>Surowiec</th><th class="r">Ilość</th><th>J.M.</th></tr></thead>
+  <thead><tr><th>Surowiec</th><th class="r">Ilość</th><th>J.M.</th>${hasCeny ? '<th class="r">Cena jm</th><th class="r">Wartość</th>' : ''}</tr></thead>
   <tbody>${tbodySur}</tbody>
 </table>` : ''}
 
-<div class="sig-row">
-  <div class="sig-box"><div>Sporządził</div><div class="sig-line"></div></div>
-  <div class="sig-box"><div>Zatwierdził</div><div class="sig-line"></div></div>
-</div>
 
 </body></html>`;
 

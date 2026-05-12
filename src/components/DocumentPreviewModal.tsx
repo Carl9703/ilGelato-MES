@@ -44,7 +44,17 @@ export default function DocumentPreviewModal({
   onZatwierdz, onAnuluj, onUsun, onPrintLabels, actionLoading,
 }: Props) {
   const isWZ = docData?.typ === "WZ";
+  const isPW = docData?.typ === "PW";
+  const isRW = docData?.typ === "RW";
   const vatSummary = React.useMemo(() => isWZ ? computeVatSummary(docData) : null, [docData, isWZ]);
+  const costSummary = React.useMemo(() => {
+    if (!docData || !(isPW || isRW)) return null;
+    const pozycje: any[] = docData?.pozycje || [];
+    const hasCeny = pozycje.some((p: any) => p.cena_jednostkowa != null && p.cena_jednostkowa > 0);
+    if (!hasCeny) return null;
+    const total = pozycje.reduce((acc: number, p: any) => acc + (p.wartosc || 0), 0);
+    return { total };
+  }, [docData, isPW, isRW]);
 
   return (
     <>
@@ -137,6 +147,19 @@ export default function DocumentPreviewModal({
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Anulowano</div>
                     <div className="font-medium" style={{ color: '#ef4444' }}>{docData.uzytkownik_anulowania}</div>
                     <div className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{fmtFull(docData.data_anulowania)}</div>
+                  </div>
+                )}
+
+                {/* Koszty dla PW/RW */}
+                {costSummary && (
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Wartość kosztów</div>
+                    <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+                      <div className="flex justify-between items-center px-3 py-2.5" style={{ background: 'var(--bg-app)' }}>
+                        <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Łączna wartość</span>
+                        <span className="text-sm font-mono font-bold" style={{ color: '#38bdf8' }}>{costSummary.total.toFixed(2)} zł</span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -278,6 +301,12 @@ export default function DocumentPreviewModal({
                           <th className="text-right" style={{ color: '#fb923c', fontWeight: 700 }}>Wartość brutto</th>
                         </>
                       )}
+                      {(isPW || isRW) && (
+                        <>
+                          <th className="text-right" style={{ color: 'var(--text-muted)', fontSize: 10 }}>Koszt jm</th>
+                          <th className="text-right" style={{ fontWeight: 700 }}>Wartość</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -321,6 +350,20 @@ export default function DocumentPreviewModal({
                             </td>
                             <td className="text-right font-mono font-bold" style={{ color: '#fb923c' }}>
                               {poz.wartosc_brutto != null ? `${poz.wartosc_brutto.toFixed(2)} zł` : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>}
+                            </td>
+                          </>
+                        )}
+                        {(isPW || isRW) && (
+                          <>
+                            <td className="text-right font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
+                              {poz.cena_jednostkowa != null && poz.cena_jednostkowa > 0
+                                ? `${poz.cena_jednostkowa.toFixed(4)} zł`
+                                : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                            </td>
+                            <td className="text-right font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                              {poz.wartosc != null && poz.wartosc > 0
+                                ? `${poz.wartosc.toFixed(2)} zł`
+                                : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>}
                             </td>
                           </>
                         )}

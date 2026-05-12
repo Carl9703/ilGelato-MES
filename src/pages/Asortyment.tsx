@@ -13,7 +13,7 @@ import { EmptyState } from "../components/EmptyState";
 
 
 type GrupaTowarowa = { id: string; kod: string; nazwa: string; id_grupy_nadrzednej: string | null; kolejnosc: number; podgrupy?: GrupaTowarowa[] };
-type AsortymentOgolne = { id: string; kod_towaru: string; nazwa: string; typ_asortymentu: string; jednostka_miary: string; jednostka_pomocnicza: string | null; przelicznik_jednostki: number | null; czy_wymaga_daty_waznosci: boolean; czy_zasob_nieograniczony: boolean; czy_aktywne: boolean; ilosc: number; rezerwacje: number; cena_srednia: number; id_grupy: string | null; cena_sprzedazy?: number | null; stawka_vat?: number | null; };
+type AsortymentOgolne = { id: string; kod_towaru: string; nazwa: string; typ_asortymentu: string; jednostka_miary: string; jednostka_pomocnicza: string | null; przelicznik_jednostki: number | null; czy_wymaga_daty_waznosci: boolean; czy_zasob_nieograniczony: boolean; czy_aktywne: boolean; ilosc: number; rezerwacje: number; cena_srednia: number; id_grupy: string | null; cena_sprzedazy?: number | null; stawka_vat?: number | null; cena_zakupu?: number | null; };
 type Podsumowanie = { stan_calkowity: number; zarezerwowane: number; dostepne: number; cena_srednia_wazona: number; wartosc_magazynowa: number };
 type Zasob = { id_partii: string; numer_partii: string; stan: number; zarezerwowane: number; dostepne: number; cena_jednostkowa: number; wartosc: number; data_produkcji: string | null; termin_waznosci: string | null; status_partii: string; dokument_przyjecia: string | null };
 type HistoriaRuch = { id: string; data: string; typ: string; referencja: string; partia: string; ilosc: number; cena_jednostkowa: number | null; saldo_po_operacji: number };
@@ -78,8 +78,8 @@ export default function Asortyment() {
   const [skladnikiOpisForm, setSkladnikiOpisForm] = useState({ producent: "", zrodlo_danych: "", skladniki_opis: "", moze_zawierac: "" });
   const [kartoSaving, setKartoSaving] = useState(false);
 
-  // Ceny sprzedaży
-  const [cenyForm, setCenyForm] = useState({ cena_sprzedazy: "", stawka_vat: "" });
+  // Ceny zakupu / sprzedaży
+  const [cenyForm, setCenyForm] = useState({ cena_sprzedazy: "", stawka_vat: "", cena_zakupu: "" });
   const [cenySaving, setCenySaving] = useState(false);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -166,7 +166,7 @@ export default function Asortyment() {
       setSkladnikiOpisForm({ producent: (a as any).producent || "", zrodlo_danych: (a as any).zrodlo_danych || "", skladniki_opis: (a as any).skladniki_opis || "", moze_zawierac: (a as any).moze_zawierac || "" });
     }).catch(() => {});
     fetch(`/api/asortyment/${a.id}/ceny`).then(r => r.json()).then(d => {
-      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? String(d.cena_sprzedazy) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "5" });
+      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? String(d.cena_sprzedazy) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "5", cena_zakupu: d?.cena_zakupu != null ? String(d.cena_zakupu) : "" });
     }).catch(() => {});
   };
 
@@ -426,7 +426,7 @@ export default function Asortyment() {
                 { id: "historia", label: "Dziennik zdarzeń", icon: History },
                 { id: "odzywcze", label: "Wartości odżywcze", icon: null },
                 { id: "alergeny", label: "Alergeny", icon: null },
-                ...(detailData.ogolne.typ_asortymentu === "Wyrob_Gotowy" ? [{ id: "ceny", label: "Ceny", icon: null }] : []),
+                { id: "ceny", label: "Ceny", icon: null },
               ].map((tab, i) => (
                 <button
                   key={tab.id}
@@ -654,19 +654,21 @@ export default function Asortyment() {
             {detailTab === "ceny" && (
               <div className="mes-panel rounded">
                 <div className="px-4 py-3 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
-                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Ceny sprzedaży</span>
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    {detailData.ogolne.typ_asortymentu === "Wyrob_Gotowy" ? "Ceny zakupu i sprzedaży" : "Cena zakupu"}
+                  </span>
                   <button onClick={saveCeny} disabled={cenySaving} className="px-4 py-1.5 rounded text-xs font-semibold text-white btn-hover-effect disabled:opacity-50" style={{ background: 'var(--accent)' }}>
                     {cenySaving ? "Zapisywanie…" : "Zapisz"}
                   </button>
                 </div>
                 <div className="p-5 space-y-4 max-w-sm">
                   <div>
-                    <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Cena sprzedaży netto (PLN)</label>
+                    <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Cena zakupu netto (PLN)</label>
                     <div className="flex items-center gap-2">
                       <input
                         type="number" step="0.01" min="0"
-                        value={cenyForm.cena_sprzedazy}
-                        onChange={e => setCenyForm(f => ({ ...f, cena_sprzedazy: e.target.value }))}
+                        value={cenyForm.cena_zakupu}
+                        onChange={e => setCenyForm(f => ({ ...f, cena_zakupu: e.target.value }))}
                         className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
                         style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                         placeholder="0.00"
@@ -674,41 +676,57 @@ export default function Asortyment() {
                       <span className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>zł</span>
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Stawka VAT</label>
-                    <select
-                      value={cenyForm.stawka_vat !== "" ? cenyForm.stawka_vat : "5"}
-                      onChange={e => setCenyForm(f => ({ ...f, stawka_vat: e.target.value }))}
-                      className="w-full rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1 cursor-pointer"
-                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                    >
-                      <option value="5">5%</option>
-                      <option value="8">8%</option>
-                      <option value="23">23%</option>
-                    </select>
-                  </div>
-                  {cenyForm.cena_sprzedazy && cenyForm.stawka_vat !== "" && (
-                    <div className="rounded p-3 text-sm space-y-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-                      <div className="flex justify-between">
-                        <span style={{ color: 'var(--text-muted)' }}>Cena netto:</span>
-                        <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {parseFloat(cenyForm.cena_sprzedazy).toFixed(2)} zł
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span style={{ color: 'var(--text-muted)' }}>VAT ({cenyForm.stawka_vat}%):</span>
-                        <span className="font-mono font-semibold" style={{ color: 'var(--text-muted)' }}>
-                          {(parseFloat(cenyForm.cena_sprzedazy) * parseFloat(cenyForm.stawka_vat) / 100).toFixed(2)} zł
-                        </span>
-                      </div>
-                      <div className="flex justify-between border-t pt-1 mt-1" style={{ borderColor: 'var(--border)' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Cena brutto:</span>
-                        <span className="font-mono font-bold" style={{ color: 'var(--accent)' }}>
-                          {(parseFloat(cenyForm.cena_sprzedazy) * (1 + parseFloat(cenyForm.stawka_vat) / 100)).toFixed(2)} zł
-                        </span>
+                  {detailData.ogolne.typ_asortymentu === "Wyrob_Gotowy" && (<>
+                    <div className="border-t pt-4" style={{ borderColor: 'var(--border)' }}>
+                      <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Cena sprzedaży netto (PLN)</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number" step="0.01" min="0"
+                          value={cenyForm.cena_sprzedazy}
+                          onChange={e => setCenyForm(f => ({ ...f, cena_sprzedazy: e.target.value }))}
+                          className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
+                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                          placeholder="0.00"
+                        />
+                        <span className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>zł</span>
                       </div>
                     </div>
-                  )}
+                    <div>
+                      <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Stawka VAT</label>
+                      <select
+                        value={cenyForm.stawka_vat !== "" ? cenyForm.stawka_vat : "5"}
+                        onChange={e => setCenyForm(f => ({ ...f, stawka_vat: e.target.value }))}
+                        className="w-full rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1 cursor-pointer"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                      >
+                        <option value="5">5%</option>
+                        <option value="8">8%</option>
+                        <option value="23">23%</option>
+                      </select>
+                    </div>
+                    {cenyForm.cena_sprzedazy && cenyForm.stawka_vat !== "" && (
+                      <div className="rounded p-3 text-sm space-y-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                        <div className="flex justify-between">
+                          <span style={{ color: 'var(--text-muted)' }}>Cena netto:</span>
+                          <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {parseFloat(cenyForm.cena_sprzedazy).toFixed(2)} zł
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span style={{ color: 'var(--text-muted)' }}>VAT ({cenyForm.stawka_vat}%):</span>
+                          <span className="font-mono font-semibold" style={{ color: 'var(--text-muted)' }}>
+                            {(parseFloat(cenyForm.cena_sprzedazy) * parseFloat(cenyForm.stawka_vat) / 100).toFixed(2)} zł
+                          </span>
+                        </div>
+                        <div className="flex justify-between border-t pt-1 mt-1" style={{ borderColor: 'var(--border)' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Cena brutto:</span>
+                          <span className="font-mono font-bold" style={{ color: 'var(--accent)' }}>
+                            {(parseFloat(cenyForm.cena_sprzedazy) * (1 + parseFloat(cenyForm.stawka_vat) / 100)).toFixed(2)} zł
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </>)}
                 </div>
               </div>
             )}
@@ -1037,7 +1055,7 @@ export default function Asortyment() {
                   <SortableTh label="Ilość"         field="ilosc"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
                   <SortableTh label="Zarezerwowane" field="rezerwacje"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
                   <SortableTh label="Dostępne"      field="dostepne"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-                  <th style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'right', padding: '6px 12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cena netto</th>
+                  <th style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'right', padding: '6px 12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cena zakupu / sprzedaży</th>
                 </tr>
               </thead>
               <tbody>
@@ -1072,8 +1090,10 @@ export default function Asortyment() {
                     <td className={`text-right mono font-medium ${(a.ilosc - a.rezerwacje) > 0 ? 'text-emerald-400' : ''}`} style={(a.ilosc - a.rezerwacje) <= 0 ? { color: 'var(--text-muted)' } : {}}>
                       {fillZero(a.ilosc - a.rezerwacje)}
                     </td>
-                    <td className="text-right mono font-medium" style={{ color: a.cena_sprzedazy ? 'var(--accent)' : 'var(--text-muted)' }}>
-                      {a.cena_sprzedazy != null ? `${fillZero(a.cena_sprzedazy)} zł` : '—'}
+                    <td className="text-right mono font-medium" style={{ color: (a.typ_asortymentu === "Wyrob_Gotowy" ? a.cena_sprzedazy : a.cena_zakupu) ? 'var(--accent)' : 'var(--text-muted)' }}>
+                      {a.typ_asortymentu === "Wyrob_Gotowy"
+                        ? (a.cena_sprzedazy != null ? `${fillZero(a.cena_sprzedazy)} zł` : '—')
+                        : (a.cena_zakupu != null ? `${fillZero(a.cena_zakupu)} zł` : '—')}
                     </td>
                   </tr>
                 ))}
