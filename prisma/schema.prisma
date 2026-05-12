@@ -48,6 +48,7 @@ model Dokumenty_Magazynowe {
   utworzono_dnia               DateTime              @default(now())
   zaktualizowano_dnia          DateTime              @updatedAt
   pozycje_json                 String?
+  numer_zewnetrzny             String?
   kontrahent                   Kontrahenci?          @relation(fields: [id_kontrahenta], references: [id])
   uzytkownik_anulowania        Uzytkownicy?          @relation("DokumentAnulowany", fields: [id_uzytkownika_anulowania], references: [id])
   uzytkownik_zatwierdzenia     Uzytkownicy?          @relation("DokumentZatwierdzony", fields: [id_uzytkownika_zatwierdzenia], references: [id])

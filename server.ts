@@ -843,6 +843,7 @@ async function startServer() {
             data: header.utworzono_dnia,
             uzytkownik: header.uzytkownik_utworzenia.login,
             numer_zlecenia: null,
+            numer_zewnetrzny: (header as any).numer_zewnetrzny || null,
             kontrahent: (header as any).kontrahent ? { id: (header as any).kontrahent.id, kod: (header as any).kontrahent.kod, nazwa: (header as any).kontrahent.nazwa } : null,
             pozycje: docRuchy.map(r => ({
               id_asortymentu: r.partia.id_asortymentu,
@@ -1355,10 +1356,7 @@ async function startServer() {
       if (!user) throw new Error("Brak użytkownika w systemie");
 
       const result = await prisma.$transaction(async (tx) => {
-        let finalReferencja = referencja_zewnetrzna;
-        if (!finalReferencja) {
-          finalReferencja = await generateDocNumber(tx, "PZ");
-        }
+        const finalReferencja = await generateDocNumber(tx, "PZ");
 
         // Utwórz nagłówek dokumentu w stanie Bufor
         await tx.dokumenty_Magazynowe.create({
@@ -1367,6 +1365,7 @@ async function startServer() {
             typ: "PZ",
             status: "Bufor",
             id_uzytkownika_utworzenia: user.id,
+            numer_zewnetrzny: referencja_zewnetrzna || null,
           }
         });
 
@@ -1433,10 +1432,7 @@ async function startServer() {
       if (!user) throw new Error("Brak użytkownika w systemie");
 
       const result = await prisma.$transaction(async (tx) => {
-        let finalReferencja = referencja_zewnetrzna;
-        if (!finalReferencja) {
-          finalReferencja = await generateDocNumber(tx, "WZ");
-        }
+        const finalReferencja = await generateDocNumber(tx, "WZ");
 
         // Utwórz nagłówek dokumentu w stanie Bufor
         await tx.dokumenty_Magazynowe.create({
@@ -1446,6 +1442,7 @@ async function startServer() {
             status: "Bufor",
             id_uzytkownika_utworzenia: user.id,
             id_kontrahenta: id_kontrahenta || null,
+            numer_zewnetrzny: referencja_zewnetrzna || null,
             pozycje_json: JSON.stringify(items.map((it: any) => ({
               id_partii: it.id_partii,
               ilosc: it.ilosc,
@@ -1734,6 +1731,7 @@ async function startServer() {
         data_anulowania: header?.data_anulowania || null,
         uzytkownik_anulowania: header?.uzytkownik_anulowania?.login || null,
         numer_zlecenia: firstRuch?.zlecenie?.numer_zlecenia || null,
+        numer_zewnetrzny: (header as any)?.numer_zewnetrzny || null,
         kontrahent: header?.kontrahent ? { id: header.kontrahent.id, kod: header.kontrahent.kod, nazwa: header.kontrahent.nazwa } : null,
         pozycje,
         wartosc_calkowita

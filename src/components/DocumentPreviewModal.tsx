@@ -110,6 +110,13 @@ export default function DocumentPreviewModal({
                   </div>
                 )}
 
+                {docData.numer_zewnetrzny && (
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Nr zewnętrzny</div>
+                    <div className="font-mono font-medium" style={{ color: 'var(--text-code)' }}>{docData.numer_zewnetrzny}</div>
+                  </div>
+                )}
+
                 {docData.numer_zlecenia && (
                   <div>
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Zlecenie produkcyjne</div>

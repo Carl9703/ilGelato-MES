@@ -27,6 +27,7 @@ type Dokument = {
   numer_zlecenia: string | null; pozycje: Pozycja[]; wartosc_calkowita: number;
   status: string; // Bufor | Zatwierdzony | Anulowany
   kontrahent: Kontrahent | null;
+  numer_zewnetrzny: string | null;
 };
 type Etykieta = {
   numer_partii: string; nazwa_produktu: string; kod_towaru: string;
@@ -1787,6 +1788,11 @@ export default function Dokumenty() {
                       <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:700, color:'var(--text-primary)' }}>
                         {doc.referencja}
                       </span>
+                      {doc.numer_zewnetrzny && (
+                        <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:'var(--text-muted)', marginTop:2 }}>
+                          ext: {doc.numer_zewnetrzny}
+                        </div>
+                      )}
                     </td>
 
                     {/* Data · Operator */}
