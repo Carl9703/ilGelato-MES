@@ -42,7 +42,7 @@ type Zlecenie = {
 
 type WizPartia = { id: string; numer_partii: string; termin_waznosci: string | null; stan: number };
 type WizSurowiecBaza = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; czy_zasob_nieograniczony: boolean; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
-type WizWyrob = { _key: string; id_receptury: string; liczba_porcji: string };
+type WizWyrob = { _key: string; id_receptury: string; liczba_porcji: string; ilosc_bazy_str?: string };
 type WizSurowiecWyrob = { id_asortymentu: string; nazwa: string; jednostka: string; jednostka_glowna: string; czy_pomocnicza: boolean; przelicznik: number; ilosc_wymagana: number; ilosc_jm: number; czy_zasob_nieograniczony: boolean; zuzyte_partie: { _uid: string, id_partii: string, ilosc: number }[]; partie: WizPartia[] };
 
 export default function Produkcja() {
@@ -458,11 +458,27 @@ export default function Produkcja() {
     return Math.round(porcje * (rec?.wielkosc_produkcji ?? 1) * 1000) / 1000;
   };
 
+  // Zwraca rzeczywiste zużycie bazy dla wyrobu — jeśli user wpisał kg bazy bezpośrednio, używa tej wartości bez pośrednich zaokrągleń
+  const getEffectiveBazaForWyrob = (w: WizWyrob): number => {
+    if (w.ilosc_bazy_str) {
+      const direct = parseFloat(w.ilosc_bazy_str.replace(",", "."));
+      if (!isNaN(direct) && direct > 0) return Math.round(direct * 1000) / 1000;
+    }
+    return getBazaUsageForWyrob(w.id_receptury, getIloscWyrobu(w));
+  };
+
   const wizTotalBazaUsed = wizWyroby.reduce((sum, w) => {
-    return sum + getBazaUsageForWyrob(w.id_receptury, getIloscWyrobu(w));
+    return sum + getEffectiveBazaForWyrob(w);
   }, 0);
   const wizTotalWyroby = wizWyroby.reduce((sum, w) => sum + getIloscWyrobu(w), 0);
   const wizTotalDodatki = Math.max(0, wizTotalWyroby - wizTotalBazaUsed);
+  const wizSumaIngBezBazy = (Object.values(wizWyrobySurowceMap) as WizSurowiecWyrob[][]).reduce((sum, surowce) =>
+    sum + surowce.filter(s => s.id_asortymentu !== wizPolproduktAsortId).reduce((s2, s) => {
+      const ilosc_kg = (!s.czy_pomocnicza && s.przelicznik > 1) ? s.ilosc_wymagana * s.przelicznik : s.ilosc_wymagana;
+      return s2 + ilosc_kg;
+    }, 0), 0);
+  const wizTotalInput = Math.round((wizTotalBazaUsed + wizSumaIngBezBazy) * 1000) / 1000;
+  const wizStrata = Math.round((wizTotalInput - wizTotalWyroby) * 1000) / 1000;
   const wizBazaAvail = parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", ".")) || 0;
   const wizBazaOk = !wizBazaAvail || wizTotalBazaUsed <= wizBazaAvail + 0.001;
 
@@ -478,7 +494,13 @@ export default function Produkcja() {
       const ilosc = getIloscWyrobu(wyrob);
       if (ilosc <= 0) continue;
       newMap[wyrob._key] = rec.skladniki.map(s => {
-        const ilosc_wymagana = Math.round(s.ilosc_wymagana * ilosc * 1000) / 1000;
+        // Dla składnika bazy używamy bezpośrednio wpisanej ilości, żeby uniknąć błędów zaokrągleń w łańcuchu kg→porcje→kg
+        const directBaza = s.id_asortymentu_skladnika === wizPolproduktAsortId && wyrob.ilosc_bazy_str
+          ? parseFloat(wyrob.ilosc_bazy_str.replace(",", "."))
+          : NaN;
+        const ilosc_wymagana = !isNaN(directBaza) && directBaza > 0
+          ? Math.round(directBaza * 1000) / 1000
+          : Math.round(s.ilosc_wymagana * ilosc * 1000) / 1000;
         const przelicznik = s.asortyment_skladnika.przelicznik_jednostki ?? 1;
         const ilosc_jm = s.czy_pomocnicza && przelicznik > 0
           ? Math.round(ilosc_wymagana / przelicznik * 1000) / 1000
@@ -605,7 +627,9 @@ export default function Produkcja() {
     if (!wizAddRecId) return;
     if (wizWyroby.find(w => w.id_receptury === wizAddRecId)) return;
     const rec = receptury.find(r => r.id === wizAddRecId);
-    setWizWyroby(prev => [...prev, { _key: wizAddRecId + Date.now(), id_receptury: wizAddRecId, liczba_porcji: "1" }]);
+    const initIlosc = rec?.wielkosc_produkcji ?? 1;
+    const initBaza = getBazaUsageForWyrob(wizAddRecId, initIlosc);
+    setWizWyroby(prev => [...prev, { _key: wizAddRecId + Date.now(), id_receptury: wizAddRecId, liczba_porcji: "1", ilosc_bazy_str: initBaza > 0 ? String(initBaza) : "" }]);
     setWizAddRecId("");
   };
 
@@ -2034,6 +2058,27 @@ export default function Produkcja() {
                       </div>
                     )}
 
+                    {/* Bilans surowców — wejście vs wyjście */}
+                    {wizWyroby.length > 0 && Object.keys(wizWyrobySurowceMap).length > 0 && (
+                      <div className="px-5 py-2.5 border-b border-[var(--border)] flex items-center gap-6 flex-wrap" style={{ background: 'rgba(100,100,200,0.06)' }}>
+                        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Bilans masy</span>
+                        <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Wejście (surowce) </span><strong className="font-mono text-white">{fmtL(wizTotalInput, 3)} kg</strong></span>
+                        <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Wyjście (wyroby) </span><strong className="font-mono text-white">{fmtL(wizTotalWyroby, 3)} kg</strong></span>
+                        <span className="text-slate-600 select-none">|</span>
+                        <span className="text-sm">
+                          <span style={{ color: 'var(--text-muted)' }}>Strata </span>
+                          <strong className="font-mono" style={{ color: wizStrata > 0 ? 'var(--warn)' : wizStrata < 0 ? 'var(--danger)' : 'var(--ok)' }}>
+                            {wizStrata > 0 ? '+' : ''}{fmtL(wizStrata, 3)} kg
+                          </strong>
+                          {wizTotalInput > 0 && (
+                            <span className="ml-1 text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+                              ({fmtL(Math.round(wizStrata / wizTotalInput * 1000) / 10, 1)}%)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+
                     {/* Dodaj wyrób */}
                     <div className="px-5 py-3 border-b border-[var(--border)] flex gap-2" style={{ background: 'var(--bg-surface)' }}>
                       <select value={wizAddRecId} onChange={e => setWizAddRecId(e.target.value)}
@@ -2078,7 +2123,7 @@ export default function Produkcja() {
                             {wizWyroby.map(w => {
                               const rec = receptury.find(r => r.id === w.id_receptury);
                               const ilosc = getIloscWyrobu(w);
-                              const bazaUse = wizTyp === "lody" ? getBazaUsageForWyrob(w.id_receptury, ilosc) : 0;
+                              const bazaUse = wizTyp === "lody" ? getEffectiveBazaForWyrob(w) : 0;
                               const bazaPerPorcja = wizTyp === "lody" ? getBazaUsageForWyrob(w.id_receptury, rec?.wielkosc_produkcji ?? 1) : 0;
                               const maxPorcje = bazaPerPorcja > 0 ? Math.max(0, Math.floor((wizBazaAvail - wizTotalBazaUsed + bazaUse) / bazaPerPorcja)) : 0;
                               const surowceWyrobu = wizWyrobySurowceMap[w._key] || [];
@@ -2093,19 +2138,69 @@ export default function Produkcja() {
                                       </span>
                                     </td>
                                     <td className="text-right">
-                                      <div className="flex items-center justify-end gap-1.5">
-                                        {wizTyp === "lody" && maxPorcje > 0 && (
-                                          <button onClick={() => setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: String(maxPorcje) } : x))}
-                                            className="px-1.5 py-0.5 rounded text-xs font-mono font-bold transition-colors"
-                                            style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}
-                                            title={`Maksymalna ilość przy dostępnej bazie: ${maxPorcje} szt.`}>
-                                            max
-                                          </button>
+                                      <div className="flex items-center justify-end gap-3">
+                                        <div className="flex items-center gap-1.5">
+                                          {wizTyp === "lody" && maxPorcje > 0 && (
+                                            <button onClick={() => {
+                                              const newIlosc = Math.round(maxPorcje * (rec?.wielkosc_produkcji ?? 1) * 1000) / 1000;
+                                              const newBaza = getBazaUsageForWyrob(w.id_receptury, newIlosc);
+                                              setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: String(maxPorcje), ilosc_bazy_str: newBaza > 0 ? String(newBaza) : x.ilosc_bazy_str } : x));
+                                            }}
+                                              className="px-1.5 py-0.5 rounded text-xs font-mono font-bold transition-colors"
+                                              style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}
+                                              title={`Maksymalna ilość przy dostępnej bazie: ${maxPorcje} szt.`}>
+                                              max
+                                            </button>
+                                          )}
+                                          <input type="text" value={w.liczba_porcji}
+                                            onChange={e => {
+                                              const val = e.target.value;
+                                              const porcje = parseFloat(val.replace(",", "."));
+                                              if (!isNaN(porcje) && porcje > 0 && bazaPerPorcja > 0) {
+                                                const newIlosc = Math.round(porcje * (rec?.wielkosc_produkcji ?? 1) * 1000) / 1000;
+                                                const newBaza = getBazaUsageForWyrob(w.id_receptury, newIlosc);
+                                                setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: val, ilosc_bazy_str: String(newBaza) } : x));
+                                              } else {
+                                                setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: val } : x));
+                                              }
+                                            }}
+                                            className="w-16 rounded px-2 py-1 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
+                                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>szt.</span>
+                                        </div>
+                                        {wizTyp === "lody" && bazaPerPorcja > 0 && (
+                                          <div className="flex items-center gap-1.5">
+                                            {maxPorcje > 0 && (
+                                              <button onClick={() => {
+                                                const maxBaza = Math.round(Math.max(0, wizBazaAvail - wizTotalBazaUsed + bazaUse) * 1000) / 1000;
+                                                const bazaSkladnik = rec?.skladniki.find(s => s.id_asortymentu_skladnika === wizPolproduktAsortId);
+                                                const newPorcje = bazaSkladnik && bazaSkladnik.ilosc_wymagana > 0 && rec
+                                                  ? Math.round(maxBaza / bazaSkladnik.ilosc_wymagana / rec.wielkosc_produkcji * 100) / 100
+                                                  : maxPorcje;
+                                                setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, ilosc_bazy_str: String(maxBaza), liczba_porcji: String(newPorcje) } : x));
+                                              }}
+                                                className="px-1.5 py-0.5 rounded text-xs font-mono font-bold transition-colors"
+                                                style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}
+                                                title={`Maks. dostępna baza: ${fmtL(Math.max(0, wizBazaAvail - wizTotalBazaUsed + bazaUse), 3)} kg`}>
+                                                max
+                                              </button>
+                                            )}
+                                            <input type="text" value={w.ilosc_bazy_str ?? ""}
+                                              onChange={e => {
+                                                const val = e.target.value;
+                                                const iloscBazy = parseFloat(val.replace(",", "."));
+                                                const bazaSkladnik = rec?.skladniki.find(s => s.id_asortymentu_skladnika === wizPolproduktAsortId);
+                                                if (!isNaN(iloscBazy) && iloscBazy > 0 && bazaSkladnik && bazaSkladnik.ilosc_wymagana > 0 && rec) {
+                                                  const newIlosc = Math.round(iloscBazy / bazaSkladnik.ilosc_wymagana * 1000) / 1000;
+                                                  const newPorcje = Math.round(newIlosc / rec.wielkosc_produkcji * 100) / 100;
+                                                  setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, ilosc_bazy_str: val, liczba_porcji: String(newPorcje) } : x));
+                                                } else {
+                                                  setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, ilosc_bazy_str: val } : x));
+                                                }
+                                              }}
+                                              className="w-16 rounded px-2 py-1 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
+                                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>kg bazy</span>
+                                          </div>
                                         )}
-                                        <input type="text" value={w.liczba_porcji}
-                                          onChange={e => setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, liczba_porcji: e.target.value } : x))}
-                                          className="w-20 rounded px-2 py-1 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
-                                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>szt.</span>
                                       </div>
                                     </td>
                                     <td className="text-right mono font-bold text-white">
@@ -2899,14 +2994,18 @@ export default function Produkcja() {
                     return acc + uniq.size;
                   }, 0);
 
-                  // Agregat surowców ze wszystkich ZP sesji
+                  // Agregat surowców ze wszystkich ZP sesji — ilości zawsze w kg
                   const surowceMap = new Map<string, { nazwa: string; ilosc: number; jm: string }>();
                   viewSesjaData.zlecenia.forEach(z => {
                     (z.ruchy_magazynowe || []).filter(r => r.typ_ruchu === "Zuzycie").forEach(r => {
                       const k = r.partia?.asortyment?.nazwa || "?";
-                      const jm = r.partia?.asortyment?.jednostka_miary || "kg";
+                      const przelicznik = r.partia?.asortyment?.przelicznik_jednostki ?? 0;
+                      const jm_pom = r.partia?.asortyment?.jednostka_pomocnicza;
+                      const use_kg = przelicznik > 0 && !!jm_pom;
+                      const ilosc = use_kg ? Math.abs(r.ilosc) * przelicznik : Math.abs(r.ilosc);
+                      const jm = use_kg ? jm_pom! : (r.partia?.asortyment?.jednostka_miary || "kg");
                       if (!surowceMap.has(k)) surowceMap.set(k, { nazwa: k, ilosc: 0, jm });
-                      surowceMap.get(k)!.ilosc += Math.abs(r.ilosc);
+                      surowceMap.get(k)!.ilosc += ilosc;
                     });
                   });
                   const surowceSesji = [...surowceMap.values()].sort((a, b) => b.ilosc - a.ilosc);
@@ -2923,7 +3022,11 @@ export default function Produkcja() {
                     .filter(z => z.etap === 2)
                     .reduce((sum, z) => sum + (z.ruchy_magazynowe || [])
                       .filter(r => r.typ_ruchu === "Zuzycie" && r.partia?.asortyment?.nazwa !== bazaNazwa)
-                      .reduce((s, r) => s + Math.abs(r.ilosc), 0), 0);
+                      .reduce((s, r) => {
+                        const ilosc_raw = Math.abs(r.ilosc);
+                        const przelicznik = r.partia?.asortyment?.przelicznik_jednostki ?? 0;
+                        return s + (przelicznik > 0 && r.partia?.asortyment?.jednostka_pomocnicza ? ilosc_raw * przelicznik : ilosc_raw);
+                      }, 0), 0);
                   const wejscieE2 = bazaZuzytaWE2 + dodatkiFaktyczne;
                   const stratyProdukcji = Math.max(0, wejscieE2 - totalWyk);
 
@@ -3230,6 +3333,47 @@ export default function Produkcja() {
                       <div className="mes-panel rounded p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Brak danych kosztowych dla tej sesji.</div>
                     ) : (
                       <>
+                        {/* ── Bilans wartościowy ── */}
+                        {(() => {
+                          // wejscieK i totalWykK pobieramy z danych koszty (surowce już w kg po konwersji)
+                          const wejscieK = sesjaKoszty.wyroby.reduce((s: number, w: any) => s + (w.surowce_ilosc_kg_total || 0), 0);
+                          const totalWykK = sesjaKoszty.masa_wyrobow_total;
+                          const strataKg = Math.max(0, wejscieK - totalWykK);
+                          const koszt_per_kg_input = wejscieK > 0 ? sesjaKoszty.koszt_wyrobow_total / wejscieK : 0;
+                          const strata_wartosc = Math.round(strataKg * koszt_per_kg_input * 100) / 100;
+                          const wartosc_w_wyrobach = Math.round((sesjaKoszty.koszt_wyrobow_total - strata_wartosc) * 100) / 100;
+                          const strata_pct = sesjaKoszty.koszt_wyrobow_total > 0 ? strata_wartosc / sesjaKoszty.koszt_wyrobow_total * 100 : 0;
+                          if (wejscieK === 0) return null;
+                          return (
+                            <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
+                              <div className="px-4 py-2.5 bg-[var(--bg-surface)] border-b border-[var(--border)]">
+                                <span className="text-[11px] font-black uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Bilans wartościowy</span>
+                              </div>
+                              <div className="grid grid-cols-3 divide-x divide-[var(--border)]">
+                                <div className="px-4 py-3">
+                                  <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-0.5">Wejście — surowce</div>
+                                  <div className="text-xl font-black text-white">{fmtL(sesjaKoszty.koszt_wyrobow_total, 2)} <span className="text-xs font-normal">zł</span></div>
+                                  <div className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{fmtL(wejscieK, 3)} kg</div>
+                                </div>
+                                <div className="px-4 py-3">
+                                  <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-0.5">Wyjście — wyroby</div>
+                                  <div className="text-xl font-black text-emerald-400">{fmtL(wartosc_w_wyrobach, 2)} <span className="text-xs font-normal">zł</span></div>
+                                  <div className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{fmtL(totalWykK, 3)} kg</div>
+                                </div>
+                                <div className="px-4 py-3">
+                                  <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-0.5">Strata produkcyjna</div>
+                                  <div className="text-xl font-black" style={{ color: strata_wartosc > 0 ? 'var(--warn)' : 'var(--ok)' }}>
+                                    {fmtL(strata_wartosc, 2)} <span className="text-xs font-normal">zł</span>
+                                  </div>
+                                  <div className="text-xs font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                    {fmtL(strataKg, 3)} kg · {fmtL(strata_pct, 1)}%
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {/* KPI */}
                         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                           <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">

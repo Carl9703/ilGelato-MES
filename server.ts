@@ -2241,29 +2241,38 @@ async function startServer() {
         const pw = z.ruchy_magazynowe.find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.ilosc > 0);
         const ilosc_kg = pw?.ilosc || z.rzeczywista_ilosc_wyrobu || 0;
 
-        // Zawsze przeliczamy z aktualnej cena_zakupu z kartoteki asortymentu
+        // Zawsze przeliczamy z aktualnej cena_zakupu z kartoteki; ilości konwertujemy do kg gdy jest przelicznik
         const surowceMap: Record<string, { nazwa: string; kod: string; jednostka: string; ilosc: number; cena_jm: number; wartosc: number }> = {};
         for (const r of zuzycie) {
-          const ilosc = Math.abs(r.ilosc);
-          const cena = r.partia?.asortyment?.cena_zakupu ?? 0;
-          const key = r.partia?.asortyment?.id || r.id_partii;
+          const ilosc_raw = Math.abs(r.ilosc);
+          const asort = r.partia?.asortyment;
+          const przelicznik = asort?.przelicznik_jednostki ?? 0;
+          const jm_pomocnicza = asort?.jednostka_pomocnicza;
+          const use_kg = przelicznik > 0 && !!jm_pomocnicza;
+          const ilosc = use_kg ? Math.round(ilosc_raw * przelicznik * 1000) / 1000 : ilosc_raw;
+          const cena_raw = asort?.cena_zakupu ?? 0;
+          const cena_jm = use_kg ? cena_raw / przelicznik : cena_raw;
+          const jednostka = use_kg ? jm_pomocnicza! : (asort?.jednostka_miary || "kg");
+          const key = asort?.id || r.id_partii;
           if (!surowceMap[key]) {
             surowceMap[key] = {
-              nazwa: r.partia?.asortyment?.nazwa || "—",
-              kod: r.partia?.asortyment?.kod_towaru || "—",
-              jednostka: r.partia?.asortyment?.jednostka_miary || "kg",
-              ilosc: 0, cena_jm: cena, wartosc: 0,
+              nazwa: asort?.nazwa || "—",
+              kod: asort?.kod_towaru || "—",
+              jednostka, ilosc: 0, cena_jm, wartosc: 0,
             };
           }
           surowceMap[key].ilosc += ilosc;
-          surowceMap[key].wartosc += ilosc * cena;
+          surowceMap[key].wartosc += ilosc_raw * cena_raw;
         }
         const surowce = Object.values(surowceMap).sort((a, b) => b.wartosc - a.wartosc);
+        const surowce_ilosc_kg_total = surowce.reduce((s, r) => s + r.ilosc, 0);
         const koszt_surowcow = surowce.reduce((s, r) => s + r.wartosc, 0);
         const koszt_total = koszt_surowcow;
         const koszt_per_kg = ilosc_kg > 0 ? koszt_total / ilosc_kg : 0;
+        const cena_sprzedazy = z.receptura?.asortyment_docelowy?.cena_sprzedazy ?? 0;
+        const wartosc_sprzedazy = ilosc_kg * cena_sprzedazy;
 
-        return { id: z.id, nazwa: z.receptura?.asortyment_docelowy?.nazwa || "—", ilosc_kg, koszt_per_kg, koszt_total, koszt_surowcow, surowce };
+        return { id: z.id, nazwa: z.receptura?.asortyment_docelowy?.nazwa || "—", ilosc_kg, koszt_per_kg, koszt_total, koszt_surowcow, cena_sprzedazy, wartosc_sprzedazy, surowce_ilosc_kg_total, surowce };
       };
 
       const bazaZp = zlecenia.find((z: any) => z.etap === 1);
@@ -2274,6 +2283,7 @@ async function startServer() {
 
       const masa_wyrobow_total = wyroby.reduce((s: number, w: any) => s + w.ilosc_kg, 0);
       const koszt_wyrobow_total = wyroby.reduce((s: number, w: any) => s + w.koszt_total, 0);
+      const wartosc_sprzedazy_total = wyroby.reduce((s: number, w: any) => s + w.wartosc_sprzedazy, 0);
 
       res.json({
         baza,
@@ -2281,6 +2291,7 @@ async function startServer() {
         masa_wyrobow_total,
         koszt_wyrobow_total,
         koszt_wyrobow_avg_per_kg: masa_wyrobow_total > 0 ? koszt_wyrobow_total / masa_wyrobow_total : 0,
+        wartosc_sprzedazy_total,
       });
     } catch (error) {
       res.status(500).json({ error: "Błąd pobierania kosztów sesji" });

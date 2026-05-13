@@ -159,7 +159,11 @@
       "Bash(cat .env)",
       "Bash(cat prisma.config.ts)",
       "Skill(code-review:code-review)",
-      "PowerShell(cmd /c \"taskkill /F /IM node.exe 2>nul\"; Start-Sleep -Seconds 1; Start-Process -NoNewWindow -FilePath \"npx\" -ArgumentList \"tsx\",\"server.ts\" -PassThru | Select-Object Id)"
+      "PowerShell(cmd /c \"taskkill /F /IM node.exe 2>nul\"; Start-Sleep -Seconds 1; Start-Process -NoNewWindow -FilePath \"npx\" -ArgumentList \"tsx\",\"server.ts\" -PassThru | Select-Object Id)",
+      "PowerShell(Start-Process -NoNewWindow -FilePath \"npx\" -ArgumentList \"tsx\",\"server.ts\" -WorkingDirectory \"D:\\\\Apps\\\\ilGelatoMES\" -RedirectStandardOutput \"C:\\\\Temp\\\\server.log\" -RedirectStandardError \"C:\\\\Temp\\\\server_err.log\")",
+      "Bash(DATABASE_URL=\"file:./test.db\" npx prisma db push --skip-generate)",
+      "PowerShell(Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npx tsx server.ts')",
+      "PowerShell(Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npm run dev')"
     ]
   },
   "hooks": {
