@@ -60,7 +60,7 @@ export default function Dashboard() {
             className="rounded-lg px-5 py-4 flex items-center gap-4"
             style={{ background: bg, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}
           >
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${bg}`, border: `1px solid ${color}22` }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${color}18`, border: `1px solid ${color}44` }}>
               <Icon className="w-4 h-4" style={{ color }} />
             </div>
             <div>

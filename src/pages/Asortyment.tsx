@@ -1055,7 +1055,8 @@ export default function Asortyment() {
                   <SortableTh label="Ilość"         field="ilosc"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
                   <SortableTh label="Zarezerwowane" field="rezerwacje"      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
                   <SortableTh label="Dostępne"      field="dostepne"        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="text-right" />
-                  <th style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'right', padding: '6px 12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cena zakupu / sprzedaży</th>
+                  <th style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'right', padding: '6px 12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cena zakupu</th>
+                  <th style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'right', padding: '6px 12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cena sprzedaży</th>
                 </tr>
               </thead>
               <tbody>
@@ -1090,10 +1091,11 @@ export default function Asortyment() {
                     <td className={`text-right mono font-medium ${(a.ilosc - a.rezerwacje) > 0 ? 'text-emerald-400' : ''}`} style={(a.ilosc - a.rezerwacje) <= 0 ? { color: 'var(--text-muted)' } : {}}>
                       {fillZero(a.ilosc - a.rezerwacje)}
                     </td>
-                    <td className="text-right mono font-medium" style={{ color: (a.typ_asortymentu === "Wyrob_Gotowy" ? a.cena_sprzedazy : a.cena_zakupu) ? 'var(--accent)' : 'var(--text-muted)' }}>
-                      {a.typ_asortymentu === "Wyrob_Gotowy"
-                        ? (a.cena_sprzedazy != null ? `${fillZero(a.cena_sprzedazy)} zł` : '—')
-                        : (a.cena_zakupu != null ? `${fillZero(a.cena_zakupu)} zł` : '—')}
+                    <td className="text-right mono font-medium" style={{ color: a.cena_zakupu != null ? 'var(--accent)' : 'var(--text-muted)' }}>
+                      {a.cena_zakupu != null ? `${fillZero(a.cena_zakupu)} zł` : '—'}
+                    </td>
+                    <td className="text-right mono font-medium" style={{ color: a.cena_sprzedazy != null ? 'var(--ok)' : 'var(--text-muted)' }}>
+                      {a.cena_sprzedazy != null ? `${fillZero(a.cena_sprzedazy)} zł` : '—'}
                     </td>
                   </tr>
                 ))}
@@ -1128,6 +1130,7 @@ export default function Asortyment() {
                       }, {})
                     ).map(([jm, sum]) => `${fillZero(sum)} ${jm}`).join(' / ')}
                   </td>
+                  <td />
                   <td />
                 </tr>
               </tfoot>

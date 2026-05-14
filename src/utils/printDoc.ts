@@ -1,4 +1,4 @@
-import { fmtL, fmtDate as fmt, fmtFull } from './fmt';
+import { fmtL, fmtDate as fmt, fmtFull, resolveDisplayUnit } from './fmt';
 
 const docTypeLabel: Record<string, string> = {
   PZ: 'Przyjęcie Zewnętrzne',
@@ -38,6 +38,8 @@ export function printDocument(docData: any): void {
   const isWZ = docData.typ === 'WZ';
   const isPW = docData.typ === 'PW';
   const isRW = docData.typ === 'RW';
+  const isPZ = docData.typ === 'PZ';
+  const isCostDoc = isPW || isRW || isPZ;
   const hasOp = pozycje.some((p: any) => p.wyrob);
   const vatSummary = isWZ ? computeVatSummary(docData) : null;
 
@@ -48,7 +50,7 @@ export function printDocument(docData: any): void {
       <td class="r mono brutto">${num(p.cena_brutto)} zł</td>
       <td class="r mono">${num(p.wartosc_netto)} zł</td>
       <td class="r mono total">${num(p.wartosc_brutto)} zł</td>
-    ` : (isPW || isRW) ? `
+    ` : isCostDoc ? `
       <td class="r mono">${p.cena_jednostkowa != null && p.cena_jednostkowa > 0 ? num(p.cena_jednostkowa, 4) + ' zł' : '—'}</td>
       <td class="r mono total">${p.wartosc != null && p.wartosc > 0 ? num(p.wartosc) + ' zł' : '—'}</td>
     ` : '';
@@ -74,8 +76,8 @@ export function printDocument(docData: any): void {
 
   const priceHeaders = isWZ
     ? '<th class="r">Cena netto</th><th class="r">VAT</th><th class="r">Cena brutto</th><th class="r">Wartość netto</th><th class="r">Wartość brutto</th>'
-    : (isPW || isRW)
-    ? '<th class="r">Koszt jm</th><th class="r">Wartość</th>'
+    : isCostDoc
+    ? `<th class="r">${isPZ ? 'Cena jm' : 'Koszt jm'}</th><th class="r">${isPZ ? 'Wartość netto' : 'Wartość'}</th>`
     : '';
   const thead = hasOp
     ? `<tr><th>Lp.</th><th>Wyrób / Opakowanie</th><th>Nr partii</th><th class="r">Ilość</th>${priceHeaders}</tr>`
@@ -92,16 +94,25 @@ export function printDocument(docData: any): void {
   const totalKg = Object.values(sumaMap).reduce((s, v) => s + v, 0);
 
   let costBlock = '';
-  if (isPW || isRW) {
+  if (isCostDoc) {
     const totalWartosc = pozycje.reduce((s: number, p: any) => s + (p.wartosc || 0), 0);
     if (totalWartosc > 0) {
-      costBlock = `<div class="vat-wrap"><div class="vat-box">
+      if (isPZ) {
+        costBlock = `<div class="vat-wrap"><div class="vat-box">
+        <div class="vat-title">Wartość dokumentu (netto)</div>
+        <table class="vat-tbl"><tbody>
+        <tr class="tot"><td class="b">ŁĄCZNIE</td><td class="r mono b">${totalWartosc.toFixed(2)} zł</td></tr>
+        </tbody></table>
+      </div></div>`;
+      } else {
+        costBlock = `<div class="vat-wrap"><div class="vat-box">
         <div class="vat-title">Wartość kosztów produkcji</div>
         <table class="vat-tbl"><thead><tr><th>Pozycja</th><th class="r">Wartość</th></tr></thead>
         <tbody>${pozycje.filter((p: any) => p.wartosc > 0).map((p: any) => `<tr><td>${p.wyrob || p.asortyment}</td><td class="r mono">${num(p.wartosc)} zł</td></tr>`).join('')}
         <tr class="tot"><td class="b">ŁĄCZNIE</td><td class="r mono b">${totalWartosc.toFixed(2)} zł</td></tr>
         </tbody></table>
       </div></div>`;
+      }
     }
   }
 
@@ -199,6 +210,9 @@ tbody tr:last-child td{border-bottom:none}
   ${docData.numer_zlecenia ? `<div>
     <div class="meta-label">Zlecenie produkcyjne</div>
     <div class="meta-val mono" style="font-size:13px">${docData.numer_zlecenia}</div>
+  </div>` : isWZ && docData.data_dostawy ? `<div>
+    <div class="meta-label">Data dostawy</div>
+    <div class="meta-val mono">${fmt(docData.data_dostawy)}</div>
   </div>` : '<div></div>'}
   <div style="text-align:right">
     <div class="meta-label">Status</div>
@@ -209,7 +223,7 @@ tbody tr:last-child td{border-bottom:none}
 <div class="section">Pozycje dokumentu</div>
 <table><thead>${thead}</thead><tbody>${tbody}</tbody></table>
 
-${totalKg > 0 ? `
+${isWZ && totalKg > 0 ? `
 <div class="section">Podsumowanie wagi</div>
 <table><tbody>
   ${wagaRows}
@@ -248,16 +262,21 @@ export function printSesja(sesja: any): void {
   allZp.forEach((z: any) => {
     (z.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === 'Zuzycie').forEach((r: any) => {
       const k = r.partia?.asortyment?.nazwa || '?';
-      const jm = r.partia?.asortyment?.jednostka_miary || 'kg';
-      const cena = r.partia?.asortyment?.cena_zakupu ?? 0;
-      const ilosc = Math.abs(r.ilosc);
+      const asort = r.partia?.asortyment;
+      const ilosc_raw = Math.abs(r.ilosc);
+      const { ilosc, jm } = resolveDisplayUnit(asort, ilosc_raw);
+      const cena = asort?.cena_zakupu ?? 0;
       if (!surowceMap.has(k)) surowceMap.set(k, { nazwa: k, ilosc: 0, jm, cena_jm: cena, wartosc: 0 });
       const e = surowceMap.get(k)!;
       e.ilosc += ilosc;
-      e.wartosc += ilosc * cena;
+      e.wartosc += ilosc_raw * cena;
     });
   });
-  const surowce = [...surowceMap.values()].sort((a, b) => b.wartosc - a.wartosc);
+  
+  const bazaNazwa = sesja.baza?.receptura?.asortyment_docelowy?.nazwa;
+  const surowce = [...surowceMap.values()]
+    .filter(s => s.nazwa !== bazaNazwa)
+    .sort((a, b) => b.wartosc - a.wartosc);
 
   // Pozycje — każde opakowanie jako wiersz
   let lp = 0;
@@ -464,9 +483,11 @@ export function printZP(z: any): void {
       return `<tr><td class="b">${s.asortyment_skladnika?.nazwa}</td><td class="mono small" style="color:#3b82f6">${partia}</td><td class="r mono b">${fmtL(suma, 3)} <span style="font-weight:400;color:#555">${s.asortyment_skladnika?.jednostka_miary}</span></td></tr>`;
     }).join('');
   } else {
-    tbodySkladniki = (z.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === 'Zuzycie').map((r: any) =>
-      `<tr><td class="b">${r.partia?.asortyment?.nazwa}</td><td class="mono small" style="color:#3b82f6">${r.partia?.numer_partii}</td><td class="r mono b" style="color:#16a34a">${fmtL(Math.abs(r.ilosc), 3)} <span style="font-weight:400;color:#555">${r.partia?.asortyment?.jednostka_miary}</span></td></tr>`
-    ).join('');
+    tbodySkladniki = (z.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === 'Zuzycie').map((r: any) => {
+      const asort = r.partia?.asortyment;
+      const { ilosc, jm } = resolveDisplayUnit(asort, Math.abs(r.ilosc));
+      return `<tr><td class="b">${asort?.nazwa}</td><td class="mono small" style="color:#3b82f6">${r.partia?.numer_partii}</td><td class="r mono b" style="color:#16a34a">${fmtL(ilosc, 3)} <span style="font-weight:400;color:#555">${jm}</span></td></tr>`;
+    }).join('');
   }
 
   // ── Opakowania ──

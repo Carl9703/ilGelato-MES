@@ -459,7 +459,7 @@ export default function Raporty() {
   );
 
   return (
-    <div className="flex flex-col gap-3 h-full">
+    <div className="flex flex-col gap-3 h-full animate-view">
       {/* Nagłówek */}
       <div className="flex items-center justify-between shrink-0">
         <div>

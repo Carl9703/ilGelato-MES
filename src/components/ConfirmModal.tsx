@@ -33,7 +33,7 @@ export default function ConfirmModal({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+      <div className="rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', animation: 'modalIn 0.18s ease forwards' }}>
         <div className="flex justify-between items-center p-5" style={{ borderBottom: '1px solid var(--border)' }}>
           <div className="flex items-center gap-3">
             {isDestructive && (

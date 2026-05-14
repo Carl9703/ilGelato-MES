@@ -1425,7 +1425,7 @@ async function startServer() {
   // --- MAGAZYN: WZ ---
   app.post("/api/magazyn/wz", async (req, res) => {
     try {
-      const { items, referencja_zewnetrzna, id_kontrahenta } = req.body;
+      const { items, referencja_zewnetrzna, id_kontrahenta, data_dostawy } = req.body;
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Brak pozycji do wydania" });
       }
@@ -1445,6 +1445,7 @@ async function startServer() {
             id_uzytkownika_utworzenia: user.id,
             id_kontrahenta: id_kontrahenta || null,
             numer_zewnetrzny: referencja_zewnetrzna || null,
+            data_dostawy: data_dostawy ? new Date(data_dostawy) : null,
             pozycje_json: JSON.stringify(items.map((it: any) => ({
               id_partii: it.id_partii,
               ilosc: it.ilosc,
@@ -1649,6 +1650,8 @@ async function startServer() {
         const ilosc = Math.abs(r.ilosc);
         const cena = r.typ_ruchu === 'Przyjecie_Z_Produkcji'
           ? (r.id_zlecenia ? (kosztyPerKgByZlecenie[r.id_zlecenia] ?? r.cena_jednostkowa ?? 0) : (r.cena_jednostkowa ?? 0))
+          : r.typ_ruchu === 'PZ'
+          ? (r.cena_jednostkowa ?? (r.partia.asortyment as any).cena_zakupu ?? 0)
           : ((r.partia.asortyment as any).cena_zakupu ?? 0);
         let sztuki = sztukiByPartia[r.id_partii] || {};
 
@@ -1756,6 +1759,7 @@ async function startServer() {
         uzytkownik_anulowania: header?.uzytkownik_anulowania?.login || null,
         numer_zlecenia: firstRuch?.zlecenie?.numer_zlecenia || null,
         numer_zewnetrzny: (header as any)?.numer_zewnetrzny || null,
+        data_dostawy: (header as any)?.data_dostawy || null,
         kontrahent: header?.kontrahent ? { id: header.kontrahent.id, kod: header.kontrahent.kod, nazwa: header.kontrahent.nazwa } : null,
         pozycje,
         wartosc_calkowita
@@ -2246,13 +2250,15 @@ async function startServer() {
         for (const r of zuzycie) {
           const ilosc_raw = Math.abs(r.ilosc);
           const asort = r.partia?.asortyment;
+          const jmGl = asort?.jednostka_miary || "kg";
           const przelicznik = asort?.przelicznik_jednostki ?? 0;
           const jm_pomocnicza = asort?.jednostka_pomocnicza;
-          const use_kg = przelicznik > 0 && !!jm_pomocnicza;
-          const ilosc = use_kg ? Math.round(ilosc_raw * przelicznik * 1000) / 1000 : ilosc_raw;
+          const mainIsKg = jmGl.toLowerCase() === "kg";
+          const auxIsKg = jm_pomocnicza?.toLowerCase() === "kg" && przelicznik > 0;
+          const ilosc = auxIsKg ? Math.round(ilosc_raw * przelicznik * 1000) / 1000 : ilosc_raw;
           const cena_raw = asort?.cena_zakupu ?? 0;
-          const cena_jm = use_kg ? cena_raw / przelicznik : cena_raw;
-          const jednostka = use_kg ? jm_pomocnicza! : (asort?.jednostka_miary || "kg");
+          const cena_jm = auxIsKg ? cena_raw / przelicznik : cena_raw;
+          const jednostka = (mainIsKg || auxIsKg) ? "kg" : jmGl;
           const key = asort?.id || r.id_partii;
           if (!surowceMap[key]) {
             surowceMap[key] = {

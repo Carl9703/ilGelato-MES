@@ -10,6 +10,7 @@ type AsortymentItem = {
   jednostka_miary: string;
   ilosc?: number;
   cena_srednia?: number;
+  cena_zakupu?: number | null;
 };
 
 export type WybranyTowar = {
@@ -18,6 +19,7 @@ export type WybranyTowar = {
   nazwa: string;
   jednostka_miary: string;
   ilosc: string;
+  cena_zakupu?: number | null;
 };
 
 type Props = {
@@ -153,6 +155,7 @@ export default function AsortymentSelektor({ onConfirm, onClose, tryb = "pz", ty
         nazwa: item.nazwa,
         jednostka_miary: item.jednostka_miary,
         ilosc: s.ilosc,
+        cena_zakupu: item.cena_zakupu ?? null,
       };
     });
     onConfirm(result);

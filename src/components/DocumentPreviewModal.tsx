@@ -46,15 +46,17 @@ export default function DocumentPreviewModal({
   const isWZ = docData?.typ === "WZ";
   const isPW = docData?.typ === "PW";
   const isRW = docData?.typ === "RW";
+  const isPZ = docData?.typ === "PZ";
+  const isCostDoc = isPW || isRW || isPZ;
   const vatSummary = React.useMemo(() => isWZ ? computeVatSummary(docData) : null, [docData, isWZ]);
   const costSummary = React.useMemo(() => {
-    if (!docData || !(isPW || isRW)) return null;
+    if (!docData || !isCostDoc) return null;
     const pozycje: any[] = docData?.pozycje || [];
     const hasCeny = pozycje.some((p: any) => p.cena_jednostkowa != null && p.cena_jednostkowa > 0);
     if (!hasCeny) return null;
     const total = pozycje.reduce((acc: number, p: any) => acc + (p.wartosc || 0), 0);
     return { total };
-  }, [docData, isPW, isRW]);
+  }, [docData, isCostDoc]);
 
   return (
     <>
@@ -120,6 +122,13 @@ export default function DocumentPreviewModal({
                   </div>
                 )}
 
+                {isWZ && docData.data_dostawy && (
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Data dostawy</div>
+                    <div className="font-medium text-white">{fmtDate(docData.data_dostawy)}</div>
+                  </div>
+                )}
+
                 {docData.numer_zewnetrzny && (
                   <div>
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Nr zewnętrzny</div>
@@ -153,7 +162,7 @@ export default function DocumentPreviewModal({
                 {/* Koszty dla PW/RW */}
                 {costSummary && (
                   <div>
-                    <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Wartość kosztów</div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>{isPZ ? "Wartość dokumentu" : "Wartość kosztów"}</div>
                     <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
                       <div className="flex justify-between items-center px-3 py-2.5" style={{ background: 'var(--bg-app)' }}>
                         <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Łączna wartość</span>
@@ -301,10 +310,10 @@ export default function DocumentPreviewModal({
                           <th className="text-right" style={{ color: '#fb923c', fontWeight: 700 }}>Wartość brutto</th>
                         </>
                       )}
-                      {(isPW || isRW) && (
+                      {isCostDoc && (
                         <>
-                          <th className="text-right" style={{ color: 'var(--text-muted)', fontSize: 10 }}>Koszt jm</th>
-                          <th className="text-right" style={{ fontWeight: 700 }}>Wartość</th>
+                          <th className="text-right" style={{ color: 'var(--text-muted)', fontSize: 10 }}>{isPZ ? "Cena jm" : "Koszt jm"}</th>
+                          <th className="text-right" style={{ fontWeight: 700 }}>{isPZ ? "Wartość netto" : "Wartość"}</th>
                         </>
                       )}
                     </tr>
@@ -353,7 +362,7 @@ export default function DocumentPreviewModal({
                             </td>
                           </>
                         )}
-                        {(isPW || isRW) && (
+                        {isCostDoc && (
                           <>
                             <td className="text-right font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
                               {poz.cena_jednostkowa != null && poz.cena_jednostkowa > 0

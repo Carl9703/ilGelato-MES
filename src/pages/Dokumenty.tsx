@@ -144,6 +144,7 @@ export default function Dokumenty() {
   const [wzRows, setWzRows] = useState<WzRow[]>([]);
   const [wzReferencja, setWzReferencja] = useState("");
   const [wzKontrahentId, setWzKontrahentId] = useState("");
+  const [wzDataDostawy, setWzDataDostawy] = useState(new Date().toISOString().slice(0, 10));
   const [kontrahenci, setKontrahenci] = useState<Kontrahent[]>([]);
 
   // Formularz RW
@@ -304,7 +305,7 @@ export default function Dokumenty() {
         jednostka_miary: w.jednostka_miary,
         numer_partii: prefix ? `${prefix}-${startIdx + i}` : "",
         ilosc: w.ilosc || "",
-        cena_jednostkowa: "",
+        cena_jednostkowa: w.cena_zakupu != null ? String(w.cena_zakupu) : "",
         data_produkcji: "",
         termin_waznosci: "",
         _open: true,
@@ -376,6 +377,7 @@ export default function Dokumenty() {
     setWzRows([]);
     setWzReferencja("");
     setWzKontrahentId("");
+    setWzDataDostawy(new Date().toISOString().slice(0, 10));
     
     setShowWz(true);
     try {
@@ -502,7 +504,7 @@ export default function Dokumenty() {
       const res = await fetch("/api/magazyn/wz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, referencja_zewnetrzna: wzReferencja || undefined, id_kontrahenta: wzKontrahentId }),
+        body: JSON.stringify({ items, referencja_zewnetrzna: wzReferencja || undefined, id_kontrahenta: wzKontrahentId, data_dostawy: wzDataDostawy || undefined }),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       const data = await res.json();
@@ -760,7 +762,7 @@ export default function Dokumenty() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-full flex flex-col gap-3">
+    <div className="h-full flex flex-col gap-3 animate-view">
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 shrink-0">
@@ -897,17 +899,26 @@ export default function Dokumenty() {
               {/* Stopka */}
               {(() => {
                 const iloscTotal = pzRows.reduce((s, r) => s + (parseFloat(r.ilosc) || 0), 0);
+                const wartoscTotal = pzRows.reduce((s, r) => s + (parseFloat(r.ilosc) || 0) * (parseFloat(r.cena_jednostkowa) || 0), 0);
                 return (
                   <div className="p-4 border-t space-y-2 shrink-0" style={{ borderColor: 'var(--border)' }}>
                     {pzRows.length > 0 && (
-                      <div className="text-xs font-mono mb-3 flex items-center justify-between">
-                        <span style={{ color: 'var(--text-muted)' }}>
-                          <span className="font-bold" style={{ color: 'var(--text-primary)' }}>{pzRows.length}</span> poz.
-                        </span>
-                        {iloscTotal > 0 && (
+                      <div className="text-xs font-mono mb-3 space-y-1.5">
+                        <div className="flex items-center justify-between">
                           <span style={{ color: 'var(--text-muted)' }}>
-                            <span className="font-bold" style={{ color: '#4ade80' }}>{fmtL(iloscTotal, 3)}</span> jedn.
+                            <span className="font-bold" style={{ color: 'var(--text-primary)' }}>{pzRows.length}</span> poz.
                           </span>
+                          {iloscTotal > 0 && (
+                            <span style={{ color: 'var(--text-muted)' }}>
+                              <span className="font-bold" style={{ color: '#4ade80' }}>{fmtL(iloscTotal, 3)}</span> jedn.
+                            </span>
+                          )}
+                        </div>
+                        {wartoscTotal > 0 && (
+                          <div className="flex items-center justify-between pt-1 border-t" style={{ borderColor: 'var(--border)' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Wartość netto</span>
+                            <span className="font-bold" style={{ color: 'var(--accent)' }}>{fmtL(wartoscTotal, 2)} zł</span>
+                          </div>
                         )}
                       </div>
                     )}
@@ -1108,6 +1119,13 @@ export default function Dokumenty() {
                     <option value="">— wybierz kontrahenta —</option>
                     {kontrahenci.map(k => <option key={k.id} value={k.id}>{k.kod} — {k.nazwa}</option>)}
                   </select>
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                    Data dostawy
+                  </label>
+                  <input type="date" value={wzDataDostawy} onChange={e => setWzDataDostawy(e.target.value)}
+                    className="mes-input text-sm font-mono" />
                 </div>
                 <div>
                   <label className="block text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
@@ -1741,16 +1759,16 @@ export default function Dokumenty() {
                   { label: 'Status',          field: 'status'     },
                   { label: 'Nr dokumentu',    field: 'referencja' },
                   { label: 'Data · Operator', field: 'data'       },
-                  { label: 'Kontrahent',      field: 'kontrahent' },
-                  { label: 'ZP',              field: null         },
+                  ...(filter !== 'RW' && filter !== 'PW' ? [{ label: 'Kontrahent', field: 'kontrahent' }] : []),
+                  ...(filter !== 'PZ' && filter !== 'WZ' ? [{ label: 'ZP', field: null }] : []),
                   { label: 'Akcje',           field: null         },
                 ] as { label: string; field: string | null }[]).map(({ label, field }, i) =>
                   field ? (
                     <SortableTh key={label} label={label} field={field}
                       sortKey={sortKey} sortDir={sortDir} onSort={handleSort}
-                      style={{ padding: '7px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }} />
+                      style={{ padding: '7px 10px', textAlign: 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }} />
                   ) : (
-                    <th key={label} style={{ padding: '7px 10px', textAlign: i >= 5 ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{label}</th>
+                    <th key={label} style={{ padding: '7px 10px', textAlign: label === 'Akcje' ? 'right' : 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{label}</th>
                   )
                 )}
               </tr>
@@ -1804,21 +1822,25 @@ export default function Dokumenty() {
                     </td>
 
                     {/* Kontrahent */}
-                    <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                      {doc.kontrahent
-                        ? <span style={{ fontSize: 11 }}>
-                            <span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--accent)', fontWeight: 700 }}>{doc.kontrahent.kod}</span>
-                            {' '}<span style={{ color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span>
-                          </span>
-                        : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
-                    </td>
+                    {filter !== 'RW' && filter !== 'PW' && (
+                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                        {doc.kontrahent
+                          ? <span style={{ fontSize: 11 }}>
+                              <span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--accent)', fontWeight: 700 }}>{doc.kontrahent.kod}</span>
+                              {' '}<span style={{ color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span>
+                            </span>
+                          : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
+                      </td>
+                    )}
 
                     {/* ZP */}
-                    <td style={{ padding: '6px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {doc.numer_zlecenia
-                        ? <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, color:'var(--text-code)' }}>{doc.numer_zlecenia}</span>
-                        : <span style={{ color:'var(--text-muted)', fontSize:11 }}>—</span>}
-                    </td>
+                    {filter !== 'PZ' && filter !== 'WZ' && (
+                      <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                        {doc.numer_zlecenia
+                          ? <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, color:'var(--text-code)' }}>{doc.numer_zlecenia}</span>
+                          : <span style={{ color:'var(--text-muted)', fontSize:11 }}>—</span>}
+                      </td>
+                    )}
 
                     {/* Akcje */}
                     <td style={{ padding: '6px 10px' }}>

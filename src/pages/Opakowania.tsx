@@ -182,7 +182,7 @@ export default function Opakowania() {
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ color: "var(--text-primary)" }}>
+    <div className="flex flex-col h-full overflow-hidden animate-view" style={{ color: "var(--text-primary)" }}>
       {/* Toasty */}
       <div style={{ position: "fixed", top: 16, right: 16, zIndex: 999, display: "flex", flexDirection: "column", gap: 8 }}>
         {toasts.map(t => (

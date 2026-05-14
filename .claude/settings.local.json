@@ -163,7 +163,21 @@
       "PowerShell(Start-Process -NoNewWindow -FilePath \"npx\" -ArgumentList \"tsx\",\"server.ts\" -WorkingDirectory \"D:\\\\Apps\\\\ilGelatoMES\" -RedirectStandardOutput \"C:\\\\Temp\\\\server.log\" -RedirectStandardError \"C:\\\\Temp\\\\server_err.log\")",
       "Bash(DATABASE_URL=\"file:./test.db\" npx prisma db push --skip-generate)",
       "PowerShell(Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npx tsx server.ts')",
-      "PowerShell(Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npm run dev')"
+      "PowerShell(Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npm run dev')",
+      "Bash(cd /d \"D:\\\\Apps\\\\ilGelatoMES\")",
+      "PowerShell(Start-Process -NoNewWindow -FilePath \"npx\" -ArgumentList \"tsx\", \"server.ts\" -WorkingDirectory \"D:\\\\Apps\\\\ilGelatoMES\")",
+      "PowerShell(Start-Process -NoNewWindow -FilePath \"cmd.exe\" -ArgumentList \"/c\", \"npx tsx server.ts\" -WorkingDirectory \"D:\\\\Apps\\\\ilGelatoMES\")",
+      "PowerShell(Start-Sleep 5; try { $r = Invoke-WebRequest -Uri \"http://localhost:3001/api/produkcja\" -TimeoutSec 3 -ErrorAction Stop; \"OK: $\\($r.StatusCode\\)\" } catch { \"BRAK: $_\" })",
+      "PowerShell(cmd /c \"taskkill /F /IM node.exe 2>nul\"; Write-Host \"Killed\")",
+      "Bash(cd /d \"D:/Apps/ilGelatoMES\")",
+      "Bash(sqlite3 prisma/prod.db \"SELECT name FROM sqlite_master WHERE type='table' AND name='Dokumenty_Magazynowe'; SELECT name FROM pragma_table_info\\('Dokumenty_Magazynowe'\\) WHERE name='data_sprzedazy';\")",
+      "PowerShell(sqlite3 *)",
+      "PowerShell($env:DATABASE_URL=\"file:./prisma/test.db\"; cd D:\\\\Apps\\\\ilGelatoMES; npx prisma db push --skip-generate 2>&1)",
+      "PowerShell(Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npx tsx server.ts')",
+      "PowerShell(Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npm run dev')",
+      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:3001/api/dokumenty?limit=5\" -TimeoutSec 5 | Select-Object -ExpandProperty Content)",
+      "PowerShell(cd D:\\\\Apps\\\\ilGelatoMES; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npx tsx server.ts 2>&1 | Tee-Object -FilePath \"C:\\\\Temp\\\\server.log\"'; Start-Sleep 4; Invoke-WebRequest -Uri \"http://localhost:3001/api/dokumenty?limit=3\" -TimeoutSec 5 -Headers @{Authorization=\"Bearer test\"} | Select-Object StatusCode, Content)",
+      "PowerShell(cd D:\\\\Apps\\\\ilGelatoMES; $env:DATABASE_URL=\"file:./test.db\"; npx prisma db push --skip-generate --accept-data-loss 2>&1)"
     ]
   },
   "hooks": {

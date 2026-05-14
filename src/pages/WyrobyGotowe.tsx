@@ -117,7 +117,7 @@ export default function WyrobyGotowe() {
 
 
   return (
-    <div className="flex flex-col h-full gap-4">
+    <div className="flex flex-col h-full gap-4 animate-view">
       {/* Nagłówek */}
       <div className="flex items-center justify-between shrink-0">
         <div>

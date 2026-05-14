@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, FileText, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard } from "lucide-react";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
-import { fmtL, fmtDate } from "../utils/fmt";
+import { fmtL, fmtDate, resolveDisplayUnit } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
@@ -1265,11 +1265,15 @@ export default function Produkcja() {
                               </div>
                               {zuzyte.length > 0 && (
                                 <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                                  {zuzyte.map((r: RuchMagazynowy) => (
+                                  {zuzyte.map((r: RuchMagazynowy) => {
+                                    const asort = r.partia?.asortyment;
+                                    const { ilosc, jm } = resolveDisplayUnit(asort, Math.abs(r.ilosc));
+                                    return (
                                     <span key={r.id} className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                      {r.partia?.asortyment?.nazwa}: <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{fmtL(Math.abs(r.ilosc), 3)} {r.partia?.asortyment?.jednostka_miary}</span>
+                                      {asort?.nazwa}: <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{fmtL(ilosc, 3)} {jm}</span>
                                     </span>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>
@@ -1331,15 +1335,19 @@ export default function Produkcja() {
                           );
                         })
                       ) : (
-                        viewZlecenie.ruchy_magazynowe?.filter((r: any) => r.typ_ruchu === "Zuzycie").map((r: any) => (
+                        viewZlecenie.ruchy_magazynowe?.filter((r: any) => r.typ_ruchu === "Zuzycie").map((r: any) => {
+                          const asort = r.partia?.asortyment;
+                          const { ilosc, jm } = resolveDisplayUnit(asort, Math.abs(r.ilosc));
+                          return (
                           <tr key={r.id}>
-                            <td className="font-semibold text-white">{r.partia?.asortyment?.nazwa}</td>
+                            <td className="font-semibold text-white">{asort?.nazwa}</td>
                             <td className="mono text-xs" style={{ color: 'var(--text-code)' }}>{r.partia?.numer_partii}</td>
                             <td className="text-right mono font-bold" style={{ color: 'var(--ok)' }}>
-                              {fmtL(Math.abs(r.ilosc), 3)} <span className="text-[var(--text-muted)] text-xs ml-1">{r.partia?.asortyment?.jednostka_miary}</span>
+                              {fmtL(ilosc, 3)} <span className="text-[var(--text-muted)] text-xs ml-1">{jm}</span>
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -2825,14 +2833,18 @@ export default function Produkcja() {
                             <tbody className="divide-y divide-[var(--border)]/50">
                               {surowce.length === 0
                                 ? <tr><td colSpan={4} className="px-4 py-4 text-center text-[var(--text-muted)] text-sm">Brak danych o zużyciu</td></tr>
-                                : surowce.map((r: any, i: number) => (
+                                : surowce.map((r: any, i: number) => {
+                                  const asort = r.partia?.asortyment;
+                                  const { ilosc, jm } = resolveDisplayUnit(asort, Math.abs(r.ilosc));
+                                  return (
                                   <tr key={i} className="hover:bg-[var(--bg-surface)]/40">
-                                    <td className="px-4 py-2.5 font-medium text-[var(--text-primary)]">{r.partia?.asortyment?.nazwa || "—"}</td>
+                                    <td className="px-4 py-2.5 font-medium text-[var(--text-primary)]">{asort?.nazwa || "—"}</td>
                                     <td className="px-4 py-2.5 mono text-xs text-blue-400">{r.partia?.numer_partii || "—"}</td>
-                                    <td className="px-4 py-2.5 text-right mono font-bold text-white">{fmtL(Math.abs(r.ilosc), 3)}</td>
-                                    <td className="px-4 py-2.5 text-[var(--text-muted)] text-xs">{r.partia?.asortyment?.jednostka_miary || "kg"}</td>
+                                    <td className="px-4 py-2.5 text-right mono font-bold text-white">{fmtL(ilosc, 3)}</td>
+                                    <td className="px-4 py-2.5 text-[var(--text-muted)] text-xs">{jm}</td>
                                   </tr>
-                                ))
+                                  );
+                                })
                               }
                             </tbody>
                           </table>
@@ -2943,18 +2955,22 @@ export default function Produkcja() {
                               <tbody className="divide-y divide-[var(--border)]/50">
                                 {surowce.length === 0
                                   ? <tr><td colSpan={2} className="px-4 py-4 text-center text-[var(--text-muted)] text-sm">Brak danych o zużyciu</td></tr>
-                                  : surowce.map((r: any, i: number) => (
+                                  : surowce.map((r: any, i: number) => {
+                                    const asort = r.partia?.asortyment;
+                                    const { ilosc, jm } = resolveDisplayUnit(asort, Math.abs(r.ilosc));
+                                    return (
                                     <tr key={i} className="hover:bg-[var(--bg-surface)]/40">
                                       <td className="px-4 py-2.5">
-                                        <div className="font-medium text-[var(--text-primary)]">{r.partia?.asortyment?.nazwa || "—"}</div>
+                                        <div className="font-medium text-[var(--text-primary)]">{asort?.nazwa || "—"}</div>
                                         <div className="mono text-xs text-blue-400">{r.partia?.numer_partii || ""}</div>
                                       </td>
                                       <td className="px-4 py-2.5 text-right">
-                                        <span className="mono font-bold text-white">{fmtL(Math.abs(r.ilosc), 3)}</span>
-                                        <span className="text-xs text-[var(--text-muted)] ml-1">{r.partia?.asortyment?.jednostka_miary || "kg"}</span>
+                                        <span className="mono font-bold text-white">{fmtL(ilosc, 3)}</span>
+                                        <span className="text-xs text-[var(--text-muted)] ml-1">{jm}</span>
                                       </td>
                                     </tr>
-                                  ))
+                                    );
+                                  })
                                 }
                               </tbody>
                             </table>
@@ -2999,17 +3015,12 @@ export default function Produkcja() {
                   viewSesjaData.zlecenia.forEach(z => {
                     (z.ruchy_magazynowe || []).filter(r => r.typ_ruchu === "Zuzycie").forEach(r => {
                       const k = r.partia?.asortyment?.nazwa || "?";
-                      const przelicznik = r.partia?.asortyment?.przelicznik_jednostki ?? 0;
-                      const jm_pom = r.partia?.asortyment?.jednostka_pomocnicza;
-                      const use_kg = przelicznik > 0 && !!jm_pom;
-                      const ilosc = use_kg ? Math.abs(r.ilosc) * przelicznik : Math.abs(r.ilosc);
-                      const jm = use_kg ? jm_pom! : (r.partia?.asortyment?.jednostka_miary || "kg");
+                      const asort = r.partia?.asortyment;
+                      const { ilosc, jm } = resolveDisplayUnit(asort, Math.abs(r.ilosc));
                       if (!surowceMap.has(k)) surowceMap.set(k, { nazwa: k, ilosc: 0, jm });
                       surowceMap.get(k)!.ilosc += ilosc;
                     });
                   });
-                  const surowceSesji = [...surowceMap.values()].sort((a, b) => b.ilosc - a.ilosc);
-
                   // Bilans bazy E1→E2 (tylko sesje lodowe)
                   const e1Zp = viewSesjaData.baza;
                   const bazaNazwa = e1Zp?.receptura?.asortyment_docelowy?.nazwa;
@@ -3017,6 +3028,11 @@ export default function Produkcja() {
                   const bazaWyprodukowana = e1Zp?.rzeczywista_ilosc_wyrobu || 0;
                   const bazaZuzytaWE2 = bazaNazwa ? (surowceMap.get(bazaNazwa)?.ilosc || 0) : 0;
                   const bazaPozostala = bazaWyprodukowana - bazaZuzytaWE2;
+
+                  const surowceSesji = [...surowceMap.values()]
+                    .filter(s => s.nazwa !== bazaNazwa)
+                    .sort((a, b) => b.ilosc - a.ilosc);
+
                   // Faktyczne zużycie dodatków = ruchy Zuzycie z E2 z wył. bazy
                   const dodatkiFaktyczne = viewSesjaData.zlecenia
                     .filter(z => z.etap === 2)
