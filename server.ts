@@ -2288,7 +2288,15 @@ async function startServer() {
       const wyroby = wyrobyZp.map(processZlecenie);
 
       const masa_wyrobow_total = wyroby.reduce((s: number, w: any) => s + w.ilosc_kg, 0);
-      const koszt_wyrobow_total = wyroby.reduce((s: number, w: any) => s + w.koszt_total, 0);
+      // Gdy jest etap bazy: koszt = surowce etapu 1 + surowce etapu 2 bez bazy (produkt pośredni),
+      // identycznie jak na wydruku. Bez bazy: suma kosztów wyrobów bez zmian.
+      const bazaKod = bazaZp?.receptura?.asortyment_docelowy?.kod_towaru;
+      const koszt_wyrobow_total = baza
+        ? baza.koszt_surowcow + wyroby.reduce((s: number, w: any) => {
+            const bazaInWyrob = w.surowce.find((sur: any) => sur.kod === bazaKod);
+            return s + w.koszt_total - (bazaInWyrob?.wartosc || 0);
+          }, 0)
+        : wyroby.reduce((s: number, w: any) => s + w.koszt_total, 0);
       const wartosc_sprzedazy_total = wyroby.reduce((s: number, w: any) => s + w.wartosc_sprzedazy, 0);
 
       res.json({
