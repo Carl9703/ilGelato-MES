@@ -228,6 +228,7 @@ model Sesja_Robocza {
   id                  String              @id @default(uuid())
   krok                Int                 @default(1)
   dane_json           String
+  nazwa               String?
   zaktualizowano_dnia DateTime            @updatedAt
   log                 Sesja_Robocza_Log[]
 }

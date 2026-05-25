@@ -177,7 +177,9 @@
       "PowerShell(Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npm run dev')",
       "PowerShell(Invoke-WebRequest -Uri \"http://localhost:3001/api/dokumenty?limit=5\" -TimeoutSec 5 | Select-Object -ExpandProperty Content)",
       "PowerShell(cd D:\\\\Apps\\\\ilGelatoMES; Start-Process powershell -ArgumentList '-NoExit', '-Command', 'Set-Location \"D:\\\\Apps\\\\ilGelatoMES\"; npx tsx server.ts 2>&1 | Tee-Object -FilePath \"C:\\\\Temp\\\\server.log\"'; Start-Sleep 4; Invoke-WebRequest -Uri \"http://localhost:3001/api/dokumenty?limit=3\" -TimeoutSec 5 -Headers @{Authorization=\"Bearer test\"} | Select-Object StatusCode, Content)",
-      "PowerShell(cd D:\\\\Apps\\\\ilGelatoMES; $env:DATABASE_URL=\"file:./test.db\"; npx prisma db push --skip-generate --accept-data-loss 2>&1)"
+      "PowerShell(cd D:\\\\Apps\\\\ilGelatoMES; $env:DATABASE_URL=\"file:./test.db\"; npx prisma db push --skip-generate --accept-data-loss 2>&1)",
+      "Bash(npx prisma *)",
+      "Bash(sqlite3 prisma/test.db \"SELECT id, numer_sesji, status, created_at FROM Sesje_Produkcji_Gelato ORDER BY created_at;\")"
     ]
   },
   "hooks": {

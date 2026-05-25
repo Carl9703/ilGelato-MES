@@ -2430,21 +2430,32 @@ async function startServer() {
     }
   });
 
-  // --- SESJA ROBOCZA (draft wizarda) ---
+  // --- SESJA ROBOCZA (draft wizarda) — obsługa wielu szkiców ---
+  // GET /api/produkcja/sesja-robocza — lista wszystkich szkiców (bez dane_json, tylko metadane)
   app.get("/api/produkcja/sesja-robocza", async (_req, res) => {
     try {
-      const row = await (prisma as any).sesja_Robocza.findFirst({ orderBy: { zaktualizowano_dnia: "desc" } });
-      res.json(row ?? null);
+      const rows = await (prisma as any).sesja_Robocza.findMany({
+        orderBy: { zaktualizowano_dnia: "desc" },
+        select: { id: true, krok: true, nazwa: true, zaktualizowano_dnia: true, dane_json: true },
+      });
+      res.json(rows);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.put("/api/produkcja/sesja-robocza", async (req, res) => {
+  // GET /api/produkcja/sesja-robocza/:id — pobierz konkretny szkic (z danymi)
+  app.get("/api/produkcja/sesja-robocza/:id", async (req, res) => {
     try {
-      const { krok, dane_json, zdarzenie = "auto" } = req.body;
-      const existing = await (prisma as any).sesja_Robocza.findFirst();
-      const row = existing
-        ? await (prisma as any).sesja_Robocza.update({ where: { id: existing.id }, data: { krok, dane_json } })
-        : await (prisma as any).sesja_Robocza.create({ data: { krok, dane_json } });
+      const row = await (prisma as any).sesja_Robocza.findUnique({ where: { id: req.params.id } });
+      if (!row) return res.status(404).json({ error: "Nie znaleziono szkicu" });
+      res.json(row);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/produkcja/sesja-robocza — utwórz nowy szkic
+  app.post("/api/produkcja/sesja-robocza", async (req, res) => {
+    try {
+      const { krok, dane_json, nazwa, zdarzenie = "auto" } = req.body;
+      const row = await (prisma as any).sesja_Robocza.create({ data: { krok, dane_json, nazwa: nazwa ?? null } });
       await (prisma as any).sesja_Robocza_Log.create({
         data: { id_sesji_roboczej: row.id, krok, zdarzenie, dane_json },
       });
@@ -2452,18 +2463,50 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/produkcja/sesja-robocza/log", async (_req, res) => {
+  // PUT /api/produkcja/sesja-robocza/:id — aktualizuj konkretny szkic
+  app.put("/api/produkcja/sesja-robocza/:id", async (req, res) => {
     try {
-      const row = await (prisma as any).sesja_Robocza.findFirst({ orderBy: { zaktualizowano_dnia: "desc" } });
-      if (!row) return res.json([]);
-      const log = await (prisma as any).sesja_Robocza_Log.findMany({
-        where: { id_sesji_roboczej: row.id },
-        orderBy: { utworzono_dnia: "asc" },
+      const { krok, dane_json, nazwa, zdarzenie = "auto" } = req.body;
+      const updateData: any = { krok, dane_json };
+      if (nazwa !== undefined) updateData.nazwa = nazwa;
+      const row = await (prisma as any).sesja_Robocza.update({ where: { id: req.params.id }, data: updateData });
+      await (prisma as any).sesja_Robocza_Log.create({
+        data: { id_sesji_roboczej: row.id, krok, zdarzenie, dane_json },
       });
-      res.json(log);
+      res.json(row);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Backwards-compat: PUT /api/produkcja/sesja-robocza (stary endpoint — aktualizuje pierwszą lub tworzy)
+  app.put("/api/produkcja/sesja-robocza", async (req, res) => {
+    try {
+      const { krok, dane_json, id: sesjaId, zdarzenie = "auto" } = req.body;
+      let row;
+      if (sesjaId) {
+        row = await (prisma as any).sesja_Robocza.update({ where: { id: sesjaId }, data: { krok, dane_json } });
+      } else {
+        const existing = await (prisma as any).sesja_Robocza.findFirst({ orderBy: { zaktualizowano_dnia: "desc" } });
+        row = existing
+          ? await (prisma as any).sesja_Robocza.update({ where: { id: existing.id }, data: { krok, dane_json } })
+          : await (prisma as any).sesja_Robocza.create({ data: { krok, dane_json } });
+      }
+      await (prisma as any).sesja_Robocza_Log.create({
+        data: { id_sesji_roboczej: row.id, krok, zdarzenie, dane_json },
+      });
+      res.json(row);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // DELETE /api/produkcja/sesja-robocza/:id — usuń konkretny szkic
+  app.delete("/api/produkcja/sesja-robocza/:id", async (req, res) => {
+    try {
+      await (prisma as any).sesja_Robocza_Log.deleteMany({ where: { id_sesji_roboczej: req.params.id } });
+      await (prisma as any).sesja_Robocza.delete({ where: { id: req.params.id } });
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // DELETE /api/produkcja/sesja-robocza — usuń wszystkie (stary endpoint)
   app.delete("/api/produkcja/sesja-robocza", async (_req, res) => {
     try {
       await (prisma as any).sesja_Robocza_Log.deleteMany();
@@ -2471,6 +2514,7 @@ async function startServer() {
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
+
 
   // --- SESJA PRODUKCYJNA (wieloetapowa) ---
   app.post("/api/produkcja/sesja", async (req, res) => {

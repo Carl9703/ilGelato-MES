@@ -120,56 +120,73 @@ export default function Produkcja() {
   const [wizWyrobySurowceMap, setWizWyrobySurowceMap] = useState<Record<string, WizSurowiecWyrob[]>>({});
   type WizRealizacjaItem = { rzeczywista_ilosc: string; opakowania: Array<{ id_asortymentu: string; nazwa: string; waga_kg: string }> };
   const [wizRealizacja, setWizRealizacja] = useState<Record<string, WizRealizacjaItem>>({});
-  const [wizDraftInfo, setWizDraftInfo] = useState<{ savedAt: string } | null>(null);
-  const [hasDraft, setHasDraft] = useState(false);
+  const [wizDraftId, setWizDraftId] = useState<string | null>(null);
+  const [wizDraftName, setWizDraftName] = useState<string>("");
+  const [draftsList, setDraftsList] = useState<any[]>([]);
 
   // ── Draft w bazie danych ──────────────────────────────────────────────────
-  const dbSaveDraft = async (krok: number, data: object, zdarzenie = "auto") => {
+  const dbSaveDraft = async (krok: number, data: object, nazwa?: string, zdarzenie = "auto") => {
     try {
-      await fetch("/api/produkcja/sesja-robocza", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ krok, dane_json: JSON.stringify(data), zdarzenie }),
-      });
+      const payload: any = { krok, dane_json: JSON.stringify(data), zdarzenie };
+      if (nazwa !== undefined) payload.nazwa = nazwa;
+      
+      if (wizDraftId) {
+        await fetch(`/api/produkcja/sesja-robocza/${wizDraftId}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        const res = await fetch("/api/produkcja/sesja-robocza", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const row = await res.json();
+          setWizDraftId(row.id);
+        }
+      }
+      fetchDraftsList();
     } catch { /* ignoruj błędy zapisu draftu */ }
   };
 
   const dbClearDraft = async () => {
-    try { await fetch("/api/produkcja/sesja-robocza", { method: "DELETE" }); } catch { /* ignoruj */ }
+    if (!wizDraftId) return;
+    try { 
+      await fetch(`/api/produkcja/sesja-robocza/${wizDraftId}`, { method: "DELETE" }); 
+      setWizDraftId(null);
+      fetchDraftsList();
+    } catch { /* ignoruj */ }
   };
 
   const saveDraft = () => {
+    const name = wizDraftName || `Szkic z ${new Date().toLocaleDateString("pl-PL")} ${new Date().toLocaleTimeString("pl-PL").slice(0,5)}`;
+    setWizDraftName(name);
+
     const draft = {
       wizTyp, wizStep, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc,
       wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja,
       savedAt: new Date().toISOString(),
     };
-    dbSaveDraft(wizStep, draft, "zapisano_szkic");
+    dbSaveDraft(wizStep, draft, name, "zapisano_szkic");
     setShowWizard(false);
   };
 
-  const openWizardWithDraftCheck = async () => {
-    try {
-      const res = await fetch("/api/produkcja/sesja-robocza");
-      if (res.ok) {
-        const row = await res.json();
-        if (row?.dane_json) {
-          const draft = JSON.parse(row.dane_json);
-          setWizDraftInfo({ savedAt: draft.savedAt ?? row.zaktualizowano_dnia });
-          return;
-        }
-      }
-    } catch { /* brak draftu */ }
-    wizReset(); fetchData(); setShowWizard(true);
+  const startNewWizard = () => {
+    wizReset(); 
+    fetchData(); 
+    setShowWizard(true);
   };
 
-  const restoreDraft = async () => {
+  const restoreDraft = async (draftId: string) => {
     try {
-      const res = await fetch("/api/produkcja/sesja-robocza");
+      const res = await fetch(`/api/produkcja/sesja-robocza/${draftId}`);
       if (!res.ok) return;
       const row = await res.json();
       if (!row?.dane_json) return;
       const draft = JSON.parse(row.dane_json);
+      
+      setWizDraftId(row.id);
+      setWizDraftName(row.nazwa || "");
       setWizTyp(draft.wizTyp ?? "lody");
       setWizStep(draft.wizStep);
       setWizBazaRecId(draft.wizBazaRecId);
@@ -178,16 +195,24 @@ export default function Produkcja() {
       setWizBazaSurowce(draft.wizBazaSurowce);
       setWizWyroby(draft.wizWyroby);
       setWizWyrobySurowceMap(draft.wizWyrobySurowceMap);
-      setWizRealizacja(draft.wizRealizacja);
-      setWizDraftInfo(null);
-      fetchData();
+      setWizRealizacja(draft.wizRealizacja ?? {});
       setShowWizard(true);
+      
       if (draft.wizStep >= 3 && dostepneOpakowania.length === 0) {
         fetch("/api/asortyment").then(r => r.json())
           .then((items: any[]) => setDostepneOpakowania(items.filter((a: any) => a.typ_asortymentu === "Opakowanie" && a.czy_aktywne)))
           .catch(() => {});
       }
     } catch { /* ignoruj */ }
+  };
+
+  const deleteDraft = async (draftId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!window.confirm("Czy na pewno chcesz usunąć ten szkic?")) return;
+    try {
+      await fetch(`/api/produkcja/sesja-robocza/${draftId}`, { method: "DELETE" });
+      fetchDraftsList();
+    } catch {}
   };
 
   // Alias dla starego clearDraft
@@ -213,9 +238,16 @@ export default function Produkcja() {
     } catch {} finally { setPreviewDocLoading(false); }
   };
 
+  const fetchDraftsList = async () => {
+    try {
+      const res = await fetch("/api/produkcja/sesja-robocza");
+      if (res.ok) setDraftsList(await res.json());
+    } catch {}
+  };
+
   useEffect(() => {
     fetchData();
-    fetch("/api/produkcja/sesja-robocza").then(r => r.json()).then(row => setHasDraft(!!row?.dane_json)).catch(() => {});
+    fetchDraftsList();
   }, []);
 
   useEffect(() => {
@@ -429,10 +461,12 @@ export default function Produkcja() {
   React.useEffect(() => {
     if (wizStep !== 3 || Object.keys(wizRealizacja).length === 0) return;
     const state = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
-    dbSaveDraft(3, state, "zmiana_realizacji");
+    dbSaveDraft(3, state, wizDraftName || undefined, "zmiana_realizacji");
   }, [wizRealizacja]);
 
   const wizReset = () => {
+    setWizDraftId(null);
+    setWizDraftName("");
     setWizTyp("");
     setWizStep(1);
     setWizBazaRecId(""); setWizBazaIlosc(""); setWizBazaRzeczywistaIlosc("");
@@ -596,8 +630,7 @@ export default function Produkcja() {
         }
       }
       const stateStep2 = { wizTyp, wizStep: 2, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
-      dbSaveDraft(2, stateStep2, "przejscie_kroku");
-      setHasDraft(true);
+      dbSaveDraft(2, stateStep2, wizDraftName || undefined, "przejscie_kroku");
       setWizStep(2);
     } else if (wizStep === 2) {
       if (wizWyroby.length === 0) { showToast("Dodaj co najmniej jeden wyrób gotowy", "error"); return; }
@@ -606,19 +639,23 @@ export default function Produkcja() {
         if (isNaN(porcje) || porcje <= 0) { showToast("Wszystkie wyroby muszą mieć liczbę porcji > 0", "error"); return; }
       }
       if (wizTyp === "lody" && !wizBazaOk) { showToast(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`, "error"); return; }
-      // Inicjalizuj krok 3
-      const init: Record<string, WizRealizacjaItem> = {};
+      // Inicjalizuj krok 3 — zachowaj istniejące dane realizacji (user mógł już wpisać coś i cofnąć)
       const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
+      const init: Record<string, WizRealizacjaItem> = {};
       for (const w of wizWyroby) {
-        init[w._key] = {
-           rzeczywista_ilosc: "",
-           opakowania: pozzetti ? [{ id_asortymentu: pozzetti.id, nazwa: pozzetti.nazwa, waga_kg: "" }] : []
-        };
+        // Zachowaj istniejące dane jeśli już były uzupełnione
+        if (wizRealizacja[w._key] && (wizRealizacja[w._key].opakowania.length > 0 || wizRealizacja[w._key].rzeczywista_ilosc)) {
+          init[w._key] = wizRealizacja[w._key];
+        } else {
+          init[w._key] = {
+            rzeczywista_ilosc: "",
+            opakowania: pozzetti ? [{ id_asortymentu: pozzetti.id, nazwa: pozzetti.nazwa, waga_kg: "" }] : []
+          };
+        }
       }
       setWizRealizacja(init);
       const stateStep3 = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja: init, savedAt: new Date().toISOString() };
-      dbSaveDraft(3, stateStep3, "przejscie_kroku");
-      setHasDraft(true);
+      dbSaveDraft(3, stateStep3, wizDraftName || undefined, "przejscie_kroku");
       setWizStep(3);
     }
   };
@@ -768,11 +805,10 @@ export default function Produkcja() {
         </div>
         <div className="flex items-center gap-2">
           {pageTab === "sesje" && (
-            <button onClick={openWizardWithDraftCheck}
+            <button onClick={startNewWizard}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
               style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-accent)' }}>
               <Zap className="w-4 h-4" /> Nowa sesja
-              {hasDraft && <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" title="Zapisany szkic" />}
             </button>
           )}
           {pageTab === "rozliczenie" && (
@@ -1006,7 +1042,20 @@ export default function Produkcja() {
                 if (z.status === "W_toku") sessionsMap[sid].status = "W_toku";
               });
 
-              type SessionRow = { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalMasa: number; status: string };
+              draftsList.forEach(d => {
+                sessionsMap[`draft-${d.id}`] = {
+                  id: `draft-${d.id}`,
+                  numer_sesji: d.nazwa || "Szkic bez nazwy",
+                  data: d.zaktualizowano_dnia,
+                  baza: null,
+                  wyroby: [],
+                  totalMasa: 0,
+                  status: "Szkic w toku",
+                  isDraft: true,
+                };
+              });
+
+              type SessionRow = { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalMasa: number; status: string; isDraft?: boolean };
               const sessions = sortBy<SessionRow>(
                 Object.values(sessionsMap) as SessionRow[],
                 s => {
@@ -1038,7 +1087,7 @@ export default function Produkcja() {
                   </thead>
                   <tbody>
                     {sessions.map(s => (
-                      <tr key={s.id} className="cursor-pointer hover:bg-[var(--bg-panel)]" onClick={() => setViewSesjaId(s.id)}>
+                      <tr key={s.id} className="cursor-pointer hover:bg-[var(--bg-panel)]" onClick={() => s.isDraft ? restoreDraft(s.id.replace("draft-", "")) : setViewSesjaId(s.id)}>
                         <td className="mono font-bold text-white">{s.numer_sesji}</td>
                         <td>
                           {s.baza ? (
@@ -1068,13 +1117,23 @@ export default function Produkcja() {
                         </td>
                         <td className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{fmtDate(s.data)}</td>
                         <td className="text-right" onClick={e => e.stopPropagation()}>
-                          <button
-                            onClick={() => setViewSesjaId(s.id)}
-                            className="p-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-white transition-colors"
-                            title="Dashboard Sesji (Raport)"
-                          >
-                            <LayoutDashboard className="w-4 h-4" />
-                          </button>
+                          {s.isDraft ? (
+                            <button
+                              onClick={e => deleteDraft(s.id.replace("draft-", ""), e)}
+                              className="p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
+                              title="Usuń szkic"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setViewSesjaId(s.id)}
+                              className="p-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-white transition-colors"
+                              title="Dashboard Sesji (Raport)"
+                            >
+                              <LayoutDashboard className="w-4 h-4" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1625,39 +1684,7 @@ export default function Produkcja() {
         </div>
       )}
 
-      {/* Modal: przywróć zapisany szkic sesji */}
-      {wizDraftInfo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[var(--bg-panel)] rounded-2xl shadow-2xl w-full max-w-sm border border-[var(--border)] p-6 flex flex-col gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.3)' }}>
-                <Save className="w-5 h-5 text-amber-400" />
-              </div>
-              <div>
-                <h3 className="text-white font-bold text-sm">Niezakończona sesja</h3>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  Zapisano: {new Date(wizDraftInfo.savedAt).toLocaleString("pl-PL")}
-                </p>
-              </div>
-            </div>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Znaleziono zapisany szkic sesji produkcyjnej. Chcesz kontynuować od miejsca, w którym skończyłeś?
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => { clearDraft(); setWizDraftInfo(null); wizReset(); fetchData(); setShowWizard(true); }}
-                className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                Zacznij od nowa
-              </button>
-              <button onClick={restoreDraft}
-                className="px-4 py-2 rounded-lg text-sm font-bold text-white transition-colors"
-                style={{ background: 'var(--accent)' }}>
-                Kontynuuj sesję
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* ═══ WIZARD SESJI PRODUKCYJNEJ ═══════════════════════════════════════ */}
       {showWizard && (() => {
@@ -2099,7 +2126,7 @@ export default function Produkcja() {
                           if (wizTyp === "sorbety") return kodGrupy === "GEL-SOR";
                           if (wizTyp === "lody") return kodGrupy !== "GEL-SOR";
                           return true;
-                        }).map(r => (
+                        }).sort((a, b) => a.asortyment_docelowy.nazwa.localeCompare(b.asortyment_docelowy.nazwa, 'pl')).map(r => (
                           <option key={r.id} value={r.id}>{r.asortyment_docelowy.nazwa} v{r.numer_wersji}</option>
                         ))}
                       </select>

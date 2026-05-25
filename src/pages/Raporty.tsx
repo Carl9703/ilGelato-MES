@@ -69,7 +69,23 @@ function fmt(val: number) {
   return val.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-type ActiveReport = "sprzedaz" | "stany_bez_cen" | "stany_ceny_sprzedazy" | "stany_wartosci" | "kalkulator_fs";
+type WyrobGotowyRow = {
+  id_partii: string;
+  numer_partii: string;
+  kod_towaru: string;
+  nazwa: string;
+  jednostka_miary: string;
+  opakowanie: string | null;
+  id_asortymentu_opakowania: string | null;
+  waga_jednostkowa: number | null;
+  ilosc_szt: number | null;
+  ilosc_kg: number;
+  data_produkcji: string | null;
+  termin_waznosci: string | null;
+  status_partii: string;
+};
+
+type ActiveReport = "sprzedaz" | "stany_bez_cen" | "stany_ceny_sprzedazy" | "stany_wartosci" | "wyroby_opakowania" | "kalkulator_fs";
 
 export default function Raporty() {
   const today = new Date();
@@ -94,6 +110,11 @@ export default function Raporty() {
   const [stanyTypFilter, setStanyTypFilter] = useState<string>("all");
   const [stanySearch, setStanySearch] = useState("");
   const [tylkoZZapasem, setTylkoZZapasem] = useState(true);
+
+  // -- Wyroby gotowe z opakowaniami --
+  const [wyrobyData, setWyrobyData] = useState<WyrobGotowyRow[] | null>(null);
+  const [wyrobyLoading, setWyrobyLoading] = useState(false);
+  const [wyrobySearch, setWyrobySearch] = useState("");
 
   // -- Kalkulator FS --
   const [fsOd, setFsOd] = useState(firstOfYear);
@@ -125,6 +146,15 @@ export default function Raporty() {
     } catch {} finally { setStanyLoading(false); }
   };
 
+  const fetchWyroby = async (force = false) => {
+    if (wyrobyData && !force) return;
+    setWyrobyLoading(true);
+    try {
+      const res = await fetch("/api/wyroby-gotowe/stan");
+      if (res.ok) setWyrobyData(await res.json());
+    } catch {} finally { setWyrobyLoading(false); }
+  };
+
   const fetchFsRaport = async () => {
     setFsLoading(true);
     setSelectedWz(new Set());
@@ -141,6 +171,7 @@ export default function Raporty() {
 
   useEffect(() => {
     if (activeReport === "stany_bez_cen" || activeReport === "stany_ceny_sprzedazy" || activeReport === "stany_wartosci") fetchStany();
+    if (activeReport === "wyroby_opakowania") fetchWyroby();
     if (activeReport === "kalkulator_fs" && !fsRaportData) fetchFsRaport();
   }, [activeReport]);
 
@@ -399,6 +430,7 @@ export default function Raporty() {
     { id: "stany_bez_cen", label: "Stany mag. — ilościowy", icon: <Package className="w-4 h-4" /> },
     { id: "stany_ceny_sprzedazy", label: "Stany mag. — ceny sprzedaży", icon: <DollarSign className="w-4 h-4" /> },
     { id: "stany_wartosci", label: "Stany mag. — wartości zakupu", icon: <Layers className="w-4 h-4" /> },
+    { id: "wyroby_opakowania", label: "Wyroby gotowe — opakowania", icon: <Package className="w-4 h-4" /> },
     { id: "kalkulator_fs", label: "Kalkulator FS", icon: <Receipt className="w-4 h-4" /> },
   ];
 
@@ -770,6 +802,187 @@ export default function Raporty() {
           </div>
         </>
       )}
+
+      {/* ── WYROBY GOTOWE — PODZIAŁ NA OPAKOWANIA ── */}
+      {activeReport === "wyroby_opakowania" && (() => {
+        const q = wyrobySearch.toLowerCase();
+        const filtered = (wyrobyData ?? []).filter(r =>
+          !q || r.nazwa.toLowerCase().includes(q) || r.kod_towaru.toLowerCase().includes(q)
+        );
+
+        // Grupuj per produkt
+        type Grupa = {
+          kod_towaru: string;
+          nazwa: string;
+          jednostka_miary: string;
+          totalKg: number;
+          totalSzt: number;
+          rows: WyrobGotowyRow[];
+        };
+        const grupy: Record<string, Grupa> = {};
+        for (const r of filtered) {
+          if (!grupy[r.nazwa]) {
+            grupy[r.nazwa] = { kod_towaru: r.kod_towaru, nazwa: r.nazwa, jednostka_miary: r.jednostka_miary, totalKg: 0, totalSzt: 0, rows: [] };
+          }
+          grupy[r.nazwa].totalKg += r.ilosc_kg;
+          grupy[r.nazwa].totalSzt += r.ilosc_szt ?? 0;
+          grupy[r.nazwa].rows.push(r);
+        }
+        const grupySorted = Object.values(grupy).sort((a, b) => a.nazwa.localeCompare(b.nazwa, 'pl'));
+        const grandTotalKg = Math.round(grupySorted.reduce((s, g) => s + g.totalKg, 0) * 1000) / 1000;
+        const grandTotalSzt = grupySorted.reduce((s, g) => s + g.totalSzt, 0);
+
+        const exportWyroby = () => printReport({
+          title: "Wyroby gotowe — podział na opakowania",
+          sections: [{
+            columns: [
+              { label: "Kod" },
+              { label: "Wyrób / Opakowanie" },
+              { label: "Waga/szt." },
+              { label: "Ilość szt.", align: "right" },
+              { label: "Ilość kg", align: "right", bold: true },
+            ],
+            rows: grupySorted.flatMap(g => [
+              [g.kod_towaru, g.nazwa, "", fmtL(g.totalSzt, 0), fmtL(g.totalKg, 3)],
+              ...g.rows.map(r => [
+                "",
+                `  └ ${r.opakowanie ?? "bez opakowania"}`,
+                r.waga_jednostkowa ? `${r.waga_jednostkowa.toFixed(3)} kg` : "—",
+                r.ilosc_szt != null ? String(r.ilosc_szt) : "—",
+                fmtL(r.ilosc_kg, 3),
+              ]),
+            ]),
+            totalRow: [`RAZEM (${grupySorted.length} prod.)`, null, null, grandTotalSzt > 0 ? fmtL(grandTotalSzt, 0) : "—", fmtL(grandTotalKg, 3)],
+          }],
+        });
+
+        return (
+          <>
+            {/* Pasek filtru */}
+            <div
+              className="flex flex-wrap items-center gap-3 px-4 py-3 rounded-xl shrink-0"
+              style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+            >
+              <input
+                type="text"
+                placeholder="Szukaj produktu…"
+                value={wyrobySearch}
+                onChange={e => setWyrobySearch(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--bg-app)", border: "1px solid var(--border)", color: "var(--text-primary)", width: 200 }}
+              />
+              <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+                {grupySorted.length} produktów · {grandTotalKg.toFixed(3)} kg łącznie
+              </span>
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={() => { setWyrobyData(null); fetchWyroby(true); }}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect"
+                  style={{ background: 'rgba(6,182,212,0.15)', color: 'var(--accent)', border: '1px solid rgba(6,182,212,0.35)' }}
+                >
+                  <TrendingUp className="w-3.5 h-3.5" /> Odśwież
+                </button>
+                <button
+                  onClick={exportWyroby}
+                  disabled={grupySorted.length === 0}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all btn-hover-effect disabled:opacity-40"
+                  style={{ background: 'rgba(168,85,247,0.15)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.35)' }}
+                >
+                  <Printer className="w-3.5 h-3.5" /> Eksportuj PDF
+                </button>
+              </div>
+            </div>
+
+            <div className="mes-panel rounded overflow-hidden flex-1 min-h-0 overflow-y-auto">
+              {wyrobyLoading ? <Spinner.Page /> : grupySorted.length === 0 ? (
+                <div className="p-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Brak wyrobów gotowych w magazynie.</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
+                      {["Kod", "Wyrób gotowy / Opakowanie", "Masa/szt.", "Ilość szt.", "Ilość kg"].map((h, i) => (
+                        <th key={h} style={{
+                          padding: "8px 12px", textAlign: i >= 2 ? "right" : "left",
+                          fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                          letterSpacing: "0.08em", color: "var(--text-muted)",
+                        }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {grupySorted.map(g => (
+                      <React.Fragment key={g.nazwa}>
+                        {/* Wiersz nagłówka produktu */}
+                        <tr style={{ background: "rgba(6,182,212,0.06)", borderTop: "1px solid var(--border)" }}>
+                          <td style={{ padding: "7px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--accent)" }}>{g.kod_towaru}</td>
+                          <td style={{ padding: "7px 12px", fontWeight: 700, color: "var(--text-primary)" }}>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#4ade8018', color: '#4ade80' }}>WG</span>
+                              {g.nazwa}
+                            </div>
+                          </td>
+                          <td style={{ padding: "7px 12px", textAlign: "right", color: "var(--text-muted)" }}>—</td>
+                          <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: g.totalSzt > 0 ? "var(--text-primary)" : "var(--text-muted)" }}>
+                            {g.totalSzt > 0 ? g.totalSzt : "—"}
+                          </td>
+                          <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#4ade80" }}>
+                            {g.totalKg.toFixed(3)} kg
+                          </td>
+                        </tr>
+                        {/* Wiersze opakowań */}
+                        {g.rows.map((r, idx) => (
+                          <tr key={`${r.id_partii}_${r.opakowanie ?? ''}_${idx}`}
+                              style={{ borderBottom: "1px solid var(--border-dim)" }}
+                              onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                          >
+                            <td style={{ padding: "5px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 10, color: "var(--text-muted)" }}></td>
+                            <td style={{ padding: "5px 12px 5px 24px", color: "var(--text-secondary)" }}>
+                              <div className="flex items-center gap-2">
+                                <span style={{ color: "var(--border)", marginRight: 2 }}>└</span>
+                                {r.opakowanie ? (
+                                  <span className="text-[10px] font-bold px-1 py-0.5 rounded mr-1" style={{ background: '#c084fc18', color: '#c084fc' }}>OPA</span>
+                                ) : null}
+                                {r.opakowanie ?? <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>bez opakowania</span>}
+                                {r.numer_partii && (
+                                  <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>· {r.numer_partii}</span>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{ padding: "5px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--text-muted)" }}>
+                              {r.waga_jednostkowa ? `${r.waga_jednostkowa.toFixed(3)} kg` : "—"}
+                            </td>
+                            <td style={{ padding: "5px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", color: "var(--text-primary)" }}>
+                              {r.ilosc_szt != null ? r.ilosc_szt : "—"}
+                            </td>
+                            <td style={{ padding: "5px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 500, color: "var(--ok)" }}>
+                              {r.ilosc_kg.toFixed(3)} kg
+                            </td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid var(--border)", background: "var(--bg-surface)" }}>
+                      <td colSpan={2} style={{ padding: "8px 12px", fontWeight: 700, color: "var(--text-muted)", fontSize: 12 }}>
+                        RAZEM ({grupySorted.length} produktów)
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right" }} />
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--text-primary)" }}>
+                        {grandTotalSzt > 0 ? grandTotalSzt : "—"}
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#4ade80" }}>
+                        {grandTotalKg.toFixed(3)} kg
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* ── STANY MAGAZYNOWE — CENY SPRZEDAŻY (NETTO) ── */}
       {activeReport === "stany_ceny_sprzedazy" && (

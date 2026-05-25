@@ -31,6 +31,12 @@ npx tsx server.ts                     # uruchom serwer ponownie
 ```
 `pkill` nie działa na Windows bash — używaj `cmd //c "taskkill /F /IM node.exe"`.
 
+**Push do test.db** (PowerShell):
+```powershell
+$env:DATABASE_URL="file:./test.db"; npx prisma db push --skip-generate
+```
+Ścieżka `file:./test.db` jest **względem katalogu schematu** (`prisma/`), nie roota projektu. Błędna ścieżka `file:./prisma/test.db` tworzy `prisma/prisma/test.db` (nowy pusty plik).
+
 ---
 
 ## Stack techniczny
@@ -90,7 +96,7 @@ docs/                   — dokumentacja domenowa (PL)
 | `Grupy_Towarowe`          | Hierarchia grup towarowych (drzewo)                   |
 | `Partie_Magazynowe`       | Partie/LOTy z datami i statusem                       |
 | `Ruchy_Magazynowe`        | Dziennik ruchów (każda transakcja magazynowa)         |
-| `Dokumenty_Magazynowe`    | Nagłówki dokumentów PZ/WZ + pozycje w `pozycje_json` |
+| `Dokumenty_Magazynowe`    | Nagłówki dokumentów PZ/WZ + pozycje w `pozycje_json`; WZ ma opcjonalne `data_dostawy` |
 | `Kontrahenci`             | Słownik dostawców i odbiorców                         |
 | `Receptury`               | Receptury z wersjami i parametrami produkcji          |
 | `Skladniki_Receptury`     | Pozycje BOM (składniki → receptury)                   |
@@ -150,6 +156,7 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 - Każdy produkt ma jednostkę główną (`JM`) i opcjonalną pomocniczą (`JM_pomocnicza`)
 - Przelicznik: 1 JM = X JM_pomocnicza
 - Kalkulacje zawsze w JM głównej
+- Wyświetlanie ilości: `resolveDisplayUnit(asortyment, ilosc_raw)` w `src/utils/fmt.ts` — obsługuje konwersję na kg gdy `JM_pomocnicza = "kg"`. Przy obliczaniu kosztu (wartosc) zawsze używaj `ilosc_raw`, nie przeliczonej ilości.
 
 **Koszty i ceny**
 - Cena ważona z PZ/PW (weighted average)
@@ -202,6 +209,9 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 - Komponenty stron są samowystarczalne (data fetching + UI w jednym pliku)
 - Duże pliki stron (Asortyment, Produkcja > 1500 linii) — normalne dla projektu
 - Motyw ciemny z CSS variables: `--bg-app`, `--accent`, `--ok`, `--warn`, itp.
+- Shared helpers w `src/utils/fmt.ts`: `fmtL`, `fmtDate`, `fmtFull`, `resolveDisplayUnit`
+- `isCostDoc = isPW || isRW || isPZ` — flaga używana w `DocumentPreviewModal` i `printDoc.ts` dla sekcji kosztowych
+- Każda strona powinna mieć `animate-view` na głównym divie (fade-in przy nawigacji)
 
 **Asortyment.tsx — dwie ścieżki zapisu**
 - `handleSubmit` — modal tworzenia/edycji (wywoływany przez `openNew`/`openEdit`)
