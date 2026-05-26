@@ -2519,7 +2519,7 @@ async function startServer() {
   // --- SESJA PRODUKCYJNA (wieloetapowa) ---
   app.post("/api/produkcja/sesja", async (req, res) => {
     try {
-      const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby } = req.body;
+      const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby, data_produkcji } = req.body;
       // wyroby: [{ id_receptury, ilosc, surowce: [{ id_partii, ilosc }] }]
       const isSorbety = !id_receptury_bazy;
       if (!isSorbety && !(parseFloat(ilosc_bazy) > 0)) throw new Error("Podaj recepturę i ilość bazy");
@@ -2530,7 +2530,7 @@ async function startServer() {
 
       const result = await prisma.$transaction(async (tx) => {
         const numer_sesji = await generateSesjaNumber(tx);
-        const sesja = await tx.sesje_Produkcji.create({ data: { numer_sesji } });
+        const sesja = await tx.sesje_Produkcji.create({ data: { numer_sesji, data_produkcji: data_produkcji ? new Date(data_produkcji) : null } });
 
         let partiaBazy: any = null;
         let cenaBazy = 0;

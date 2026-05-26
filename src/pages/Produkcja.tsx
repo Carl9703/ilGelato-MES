@@ -83,6 +83,7 @@ export default function Produkcja() {
       id: viewSesjaId,
       numer_sesji: items[0].sesja?.numer_sesji || "S-?",
       utworzono_dnia: items[0].utworzono_dnia,
+      data_produkcji: (items[0].sesja as any)?.data_produkcji ?? null,
       status,
       baza: items.find(z => z.etap === 1),
       wyroby: items.filter(z => z.etap === 2),
@@ -123,6 +124,7 @@ export default function Produkcja() {
   const [wizDraftId, setWizDraftId] = useState<string | null>(null);
   const [wizDraftName, setWizDraftName] = useState<string>("");
   const [draftsList, setDraftsList] = useState<any[]>([]);
+  const [wizDataProdukcji, setWizDataProdukcji] = useState<string>(new Date().toISOString().split('T')[0]);
 
   // ── Draft w bazie danych ──────────────────────────────────────────────────
   const dbSaveDraft = async (krok: number, data: object, nazwa?: string, zdarzenie = "auto") => {
@@ -165,6 +167,7 @@ export default function Produkcja() {
     const draft = {
       wizTyp, wizStep, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc,
       wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja,
+      dataProdukcji: wizDataProdukcji,
       savedAt: new Date().toISOString(),
     };
     dbSaveDraft(wizStep, draft, name, "zapisano_szkic");
@@ -196,6 +199,7 @@ export default function Produkcja() {
       setWizWyroby(draft.wizWyroby);
       setWizWyrobySurowceMap(draft.wizWyrobySurowceMap);
       setWizRealizacja(draft.wizRealizacja ?? {});
+      setWizDataProdukcji(draft.dataProdukcji ?? new Date().toISOString().split('T')[0]);
       setShowWizard(true);
       
       if (draft.wizStep >= 3 && dostepneOpakowania.length === 0) {
@@ -460,7 +464,7 @@ export default function Produkcja() {
   // Auto-zapis kroku 3 po każdej zmianie wizRealizacja
   React.useEffect(() => {
     if (wizStep !== 3 || Object.keys(wizRealizacja).length === 0) return;
-    const state = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
+    const state = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, dataProdukcji: wizDataProdukcji, savedAt: new Date().toISOString() };
     dbSaveDraft(3, state, wizDraftName || undefined, "zmiana_realizacji");
   }, [wizRealizacja]);
 
@@ -474,6 +478,7 @@ export default function Produkcja() {
     setWizWyroby([]); setWizAddRecId("");
     setWizWyrobySurowceMap({});
     setWizRealizacja({});
+    setWizDataProdukcji(new Date().toISOString().split('T')[0]);
   };
 
   const wizPolproduktAsortId = receptury.find(r => r.id === wizBazaRecId)?.asortyment_docelowy.id;
@@ -629,7 +634,7 @@ export default function Produkcja() {
            }
         }
       }
-      const stateStep2 = { wizTyp, wizStep: 2, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, savedAt: new Date().toISOString() };
+      const stateStep2 = { wizTyp, wizStep: 2, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, dataProdukcji: wizDataProdukcji, savedAt: new Date().toISOString() };
       dbSaveDraft(2, stateStep2, wizDraftName || undefined, "przejscie_kroku");
       setWizStep(2);
     } else if (wizStep === 2) {
@@ -654,7 +659,7 @@ export default function Produkcja() {
         }
       }
       setWizRealizacja(init);
-      const stateStep3 = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja: init, savedAt: new Date().toISOString() };
+      const stateStep3 = { wizTyp, wizStep: 3, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja: init, dataProdukcji: wizDataProdukcji, savedAt: new Date().toISOString() };
       dbSaveDraft(3, stateStep3, wizDraftName || undefined, "przejscie_kroku");
       setWizStep(3);
     }
@@ -722,7 +727,7 @@ export default function Produkcja() {
           .filter(x => x.id_partii && x.id_partii !== "__etap1__" && x.ilosc > 0);
       }
       const res = await fetch("/api/produkcja/sesja", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, data_produkcji: wizDataProdukcji || undefined }),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
       const data = await res.json();
@@ -1020,7 +1025,7 @@ export default function Produkcja() {
         <div className="space-y-4">
           <div className="mes-panel rounded overflow-hidden">
             {(() => {
-              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalMasa: number; status: string }> = {};
+              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalMasa: number; status: string; isDraft?: boolean }> = {};
               zlecenia.forEach(z => {
                 const sid = z.id_sesji || `indiv-${z.id}`;
                 if (!sessionsMap[sid]) {
@@ -1862,6 +1867,23 @@ export default function Produkcja() {
 
                 {/* Kontekst kroku */}
                 <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+                  {/* Data produkcji — widoczna na każdym kroku */}
+                  {wizTyp !== "" && (
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Data produkcji</div>
+                      <input
+                        type="date"
+                        value={wizDataProdukcji}
+                        onChange={e => {
+                          setWizDataProdukcji(e.target.value);
+                          const state = { wizTyp, wizStep, wizBazaRecId, wizBazaIlosc, wizBazaRzeczywistaIlosc, wizBazaSurowce, wizWyroby, wizWyrobySurowceMap, wizRealizacja, dataProdukcji: e.target.value, savedAt: new Date().toISOString() };
+                          dbSaveDraft(wizStep, state, wizDraftName || undefined, "zmiana_daty");
+                        }}
+                        className="w-full rounded px-2 py-1.5 text-sm font-mono outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                      />
+                    </div>
+                  )}
                   {wizTyp === "" && (
                     <div style={{ color: 'var(--text-muted)' }}>Wybierz typ produkcji aby kontynuować.</div>
                   )}
@@ -2734,6 +2756,12 @@ export default function Produkcja() {
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Data</div>
                     <div className="font-medium text-white">{new Date(viewSesjaData.utworzono_dnia).toLocaleString()}</div>
                   </div>
+                  {viewSesjaData.data_produkcji && (
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Data produkcji</div>
+                      <div className="font-medium text-white">{fmtDate(viewSesjaData.data_produkcji)}</div>
+                    </div>
+                  )}
                   <div>
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Wyroby</div>
                     <div className="font-mono font-medium text-white">{viewSesjaData.wyroby.length} pozycji</div>

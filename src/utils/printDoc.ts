@@ -395,6 +395,7 @@ tbody tr:last-child td{border-bottom:none}
   <div class="doc-ref">
     <div class="doc-ref-num">${sesja.numer_sesji}</div>
     <div class="doc-ref-date">Data: ${new Date(sesja.utworzono_dnia).toLocaleString('pl-PL')}</div>
+    ${sesja.data_produkcji ? `<div class="doc-ref-date">Data produkcji: ${fmt(sesja.data_produkcji)}</div>` : ''}
     <div class="doc-ref-date">Status: ${sesja.status}</div>
   </div>
 </div>

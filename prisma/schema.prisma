@@ -249,6 +249,7 @@ model Sesje_Produkcji {
   czy_aktywne         Boolean                @default(true)
   utworzono_dnia      DateTime               @default(now())
   zaktualizowano_dnia DateTime               @updatedAt
+  data_produkcji      DateTime?
   zlecenia            Zlecenia_Produkcyjne[]
 }
 
