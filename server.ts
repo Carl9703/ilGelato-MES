@@ -954,6 +954,44 @@ async function startServer() {
     }
   });
 
+  app.put("/api/dokumenty/:ref", async (req, res) => {
+    try {
+      const { ref } = req.params;
+      const userId = (req as any).userId;
+
+      // Pobierz dokument
+      const doc = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      if (!doc) return res.status(404).json({ error: "Dokument nie istnieje" });
+      if (doc.status !== "Bufor") return res.status(400).json({ error: "Można edytować tylko dokumenty w statusie Bufor" });
+      if (doc.typ === "PW") return res.status(400).json({ error: "Dokumenty PW nie podlegają ręcznej edycji" });
+
+      const { pozycje, referencja_zewnetrzna, id_kontrahenta, data_dostawy } = req.body;
+
+      if (!pozycje || pozycje.length === 0) return res.status(400).json({ error: "Lista pozycji nie może być pusta" });
+
+      // Walidacja specyficzna dla typu
+      if (doc.typ === "WZ" && !id_kontrahenta) return res.status(400).json({ error: "Kontrahent jest wymagany dla dokumentu WZ" });
+
+      await prisma.$transaction(async (tx) => {
+        // Nadpisz pozycje_json
+        const updateData: any = {
+          pozycje_json: JSON.stringify(pozycje),
+          numer_zewnetrzny: referencja_zewnetrzna || null,
+        };
+        if (doc.typ === "WZ") {
+          updateData.id_kontrahenta = id_kontrahenta;
+          updateData.data_dostawy = data_dostawy ? new Date(data_dostawy) : null;
+        }
+        await tx.dokumenty_Magazynowe.update({ where: { referencja: ref }, data: updateData });
+      });
+
+      const updated = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/dokumenty/:ref/zatwierdz", async (req, res) => {
     try {
       const ref = decodeURIComponent(req.params.ref);
@@ -1570,6 +1608,78 @@ async function startServer() {
 
   // --- DOKUMENTY ---
   // WAŻNE: szczegóły dokumentu MUSZĄ być przed /:typ
+
+  // Dane do edycji — surowe pozycje z pozycje_json (nie przetworzone jak w podglądzie)
+  app.get("/api/dokumenty/edit/:referencja", async (req, res) => {
+    try {
+      const referencja = decodeURIComponent(req.params.referencja);
+      const header = await prisma.dokumenty_Magazynowe.findUnique({
+        where: { referencja },
+        include: { kontrahent: true }
+      });
+      if (!header) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (header.status !== "Bufor") return res.status(400).json({ error: "Można edytować tylko dokumenty w statusie Bufor" });
+
+      // Pobierz ruchy z pełnymi danymi partii i asortymentu
+      const ruchy = await prisma.ruchy_Magazynowe.findMany({
+        where: { referencja_dokumentu: referencja },
+        include: { partia: { include: { asortyment: true } } },
+        orderBy: { utworzono_dnia: 'asc' }
+      });
+
+      // Parsuj pozycje_json — zawiera oryginalne dane (sztuki, ceny) przed rozwinięciem
+      let pozycjeJson: any[] = [];
+      if (header.pozycje_json) {
+        try { pozycjeJson = JSON.parse(header.pozycje_json); } catch {}
+      }
+
+      // Zbuduj mapę id_partii -> dane z pozycje_json
+      const jsonByPartia = new Map<string, any>();
+      for (const p of pozycjeJson) {
+        if (p.id_partii) jsonByPartia.set(p.id_partii, p);
+      }
+
+      // Scal ruchy (unikalne partie) z danymi z pozycje_json
+      const seen = new Set<string>();
+      const pozycje = [];
+      for (const r of ruchy) {
+        if (seen.has(r.id_partii)) continue;
+        seen.add(r.id_partii);
+        const json = jsonByPartia.get(r.id_partii) || {};
+        const ilosc_kg = Math.abs(r.ilosc);
+        // Dla WZ z opakowaniami: ilosc w kg z ruchu, sztuki z pozycje_json
+        pozycje.push({
+          id_partii: r.id_partii,
+          id_asortymentu: r.partia.id_asortymentu,
+          typ_asortymentu: r.partia.asortyment.typ_asortymentu,
+          asortyment: r.partia.asortyment.nazwa,
+          kod_towaru: r.partia.asortyment.kod_towaru,
+          jednostka: r.partia.asortyment.jednostka_miary,
+          numer_partii: r.partia.numer_partii,
+          ilosc: ilosc_kg,
+          sztuki: json.sztuki || {},
+          cena_netto: json.cena_netto ?? null,
+          stawka_vat: json.stawka_vat ?? null,
+          cena_jednostkowa: r.cena_jednostkowa ?? null,
+          data_produkcji: r.partia.data_produkcji,
+          termin_waznosci: r.partia.termin_waznosci,
+        });
+      }
+
+      res.json({
+        referencja,
+        typ: header.typ,
+        status: header.status,
+        numer_zewnetrzny: (header as any).numer_zewnetrzny || null,
+        data_dostawy: (header as any).data_dostawy || null,
+        kontrahent: header.kontrahent ? { id: header.kontrahent.id, kod: header.kontrahent.kod, nazwa: header.kontrahent.nazwa } : null,
+        pozycje,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/dokumenty/podglad/:referencja", async (req, res) => {
     try {
       const { referencja } = req.params;
@@ -1692,6 +1802,9 @@ async function startServer() {
             const wartosc_netto = cenaNetto != null && iloscKg > 0 ? Math.round(cenaNetto * iloscKg * 100) / 100 : null;
             const wartosc_brutto = cenaBrutto != null && iloscKg > 0 ? Math.round(cenaBrutto * iloscKg * 100) / 100 : null;
             pozycje.push({
+              id_partii: r.id_partii,
+              id_asortymentu: r.partia.id_asortymentu,
+              typ_asortymentu: r.partia.asortyment.typ_asortymentu,
               asortyment: nazwaOp,
               wyrob: r.partia.asortyment.nazwa,
               kod_towaru: r.partia.asortyment.kod_towaru,
@@ -1722,6 +1835,9 @@ async function startServer() {
           const wartosc_netto2 = cenaNetto2 != null ? Math.round(cenaNetto2 * ilosc * 100) / 100 : null;
           const wartosc_brutto2 = cenaBrutto2 != null ? Math.round(cenaBrutto2 * ilosc * 100) / 100 : null;
           pozycje.push({
+            id_partii: r.id_partii,
+            id_asortymentu: r.partia.id_asortymentu,
+            typ_asortymentu: r.partia.asortyment.typ_asortymentu,
             asortyment: r.partia.asortyment.nazwa,
             wyrob: null,
             kod_towaru: r.partia.asortyment.kod_towaru,

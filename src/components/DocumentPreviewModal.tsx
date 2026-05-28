@@ -1,5 +1,5 @@
 import React from "react";
-import { FileText, Trash2, X, CheckCircle, Ban, Tag, Clock, Printer, ArrowRightCircle, ArrowDownCircle, Factory } from "lucide-react";
+import { FileText, Trash2, X, CheckCircle, Ban, Tag, Clock, Printer, ArrowRightCircle, ArrowDownCircle, Factory, Pencil } from "lucide-react";
 import { fmtL, fmtDate, fmtFull } from "../utils/fmt";
 import { printDocument, computeVatSummary } from "../utils/printDoc";
 import { Spinner } from "./Spinner";
@@ -34,6 +34,7 @@ type Props = {
   onZatwierdz?: (ref: string) => void;
   onAnuluj?: (ref: string) => void;
   onUsun?: (ref: string) => void;
+  onEdit?: (ref: string) => void;
   onPrintLabels?: (ref: string) => void;
   actionLoading?: string | null;
 };
@@ -41,7 +42,7 @@ type Props = {
 export default function DocumentPreviewModal({
   docRef, docData, loading, onClose,
   zIndex = 1070,
-  onZatwierdz, onAnuluj, onUsun, onPrintLabels, actionLoading,
+  onZatwierdz, onAnuluj, onUsun, onEdit, onPrintLabels, actionLoading,
 }: Props) {
   const isWZ = docData?.typ === "WZ";
   const isPW = docData?.typ === "PW";
@@ -219,6 +220,13 @@ export default function DocumentPreviewModal({
                     className="btn w-full justify-center font-bold text-sm"
                     style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>
                     <CheckCircle className="w-4 h-4" /> Zatwierdź dokument
+                  </button>
+                )}
+                {onEdit && (docData.typ === "PZ" || docData.typ === "WZ" || docData.typ === "RW") && docData.status === "Bufor" && (
+                  <button onClick={() => onEdit(docRef)} disabled={actionLoading === docRef}
+                    className="btn w-full justify-center text-sm"
+                    style={{ background: 'rgba(99,102,241,0.15)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.35)' }}>
+                    <Pencil className="w-4 h-4" /> Edytuj dokument
                   </button>
                 )}
                 {onAnuluj && (docData.typ === "PZ" || docData.typ === "WZ" || docData.typ === "RW") && docData.status === "Zatwierdzony" && (

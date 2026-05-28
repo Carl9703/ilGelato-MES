@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   FileText, Printer, Search, Tag, X, Plus, PackageOpen,
   ArrowRightCircle, AlertCircle, Save, Eye, Trash2, ChevronDown, ChevronUp, Copy,
-  CheckCircle, Ban, Clock, MinusCircle
+  CheckCircle, Ban, Clock, MinusCircle, Pencil
 } from "lucide-react";
 import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelektor";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
@@ -163,6 +163,9 @@ export default function Dokumenty() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ type: 'anuluj' | 'usun'; ref: string } | null>(null);
 
+  // Tryb edycji
+  const [editDocRef, setEditDocRef] = useState<string | null>(null);
+
   const openDocPreview = async (ref: string) => {
     setPreviewDocRef(ref);
     setPreviewDocData(null);
@@ -236,9 +239,9 @@ export default function Dokumenty() {
       if (e.key !== 'Escape') return;
       if (previewDocRef) { setPreviewDocRef(null); return; }
       if (showSelektor) { setShowSelektor(false); return; }
-      if (showPz) { setShowPz(false);  return; }
-      if (showWz) { setShowWz(false);  return; }
-      if (showRw) { setShowRw(false);  return; }
+      if (showPz) { setShowPz(false); setEditDocRef(null); return; }
+      if (showWz) { setShowWz(false); setEditDocRef(null); return; }
+      if (showRw) { setShowRw(false); setEditDocRef(null); return; }
       if (showEtykiety) { setShowEtykiety(false); return; }
     };
     window.addEventListener('keydown', handler);
@@ -351,6 +354,21 @@ export default function Dokumenty() {
         data_produkcji: r.data_produkcji || null,
         termin_waznosci: r.termin_waznosci || null,
       }));
+
+      if (editDocRef) {
+        const res = await fetch(`/api/dokumenty/${encodeURIComponent(editDocRef)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pozycje, referencja_zewnetrzna: pzReferencja || undefined }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+        showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        setShowPz(false);
+        setEditDocRef(null);
+        fetchDokumenty();
+        return;
+      }
+
       const res = await fetch("/api/magazyn/pz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -501,6 +519,21 @@ export default function Dokumenty() {
           cena_brutto: brutto != null ? Math.round(brutto * 10000) / 10000 : null,
         };
       });
+
+      if (editDocRef) {
+        const res = await fetch(`/api/dokumenty/${encodeURIComponent(editDocRef)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pozycje: items, referencja_zewnetrzna: wzReferencja || undefined, id_kontrahenta: wzKontrahentId, data_dostawy: wzDataDostawy || undefined }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+        showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        setShowWz(false);
+        setEditDocRef(null);
+        fetchDokumenty();
+        return;
+      }
+
       const res = await fetch("/api/magazyn/wz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -590,6 +623,21 @@ export default function Dokumenty() {
     setRwSaving(true);
     try {
       const items = rwRows.map(r => ({ id_partii: r.id_partii, ilosc: parseFloat(r.ilosc) }));
+
+      if (editDocRef) {
+        const res = await fetch(`/api/dokumenty/${encodeURIComponent(editDocRef)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pozycje: items }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+        showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        setShowRw(false);
+        setEditDocRef(null);
+        fetchDokumenty();
+        return;
+      }
+
       const res = await fetch("/api/magazyn/rw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -657,8 +705,152 @@ export default function Dokumenty() {
     setShowPz(true);
   };
 
-  const handlePrintDoc = async (doc: Dokument) => {
-    try {
+  const openEditModal = async (doc: Dokument) => {
+    setPreviewDocRef(null);
+    setEditDocRef(doc.referencja);
+
+    // Pobierz surowe dane dokumentu do edycji (nie przetworzone jak w podglądzie)
+    const res = await fetch(`/api/dokumenty/edit/${encodeURIComponent(doc.referencja)}`);
+    if (!res.ok) { showToast("Nie udało się załadować dokumentu", "error"); setEditDocRef(null); return; }
+    const data = await res.json();
+
+    if (doc.typ === "PZ") {
+      const rows: PzRow[] = (data.pozycje || []).map((p: any) => ({
+        _key: genKey(),
+        id_asortymentu: p.id_asortymentu || "",
+        nazwa: p.asortyment,
+        jednostka_miary: p.jednostka,
+        numer_partii: p.numer_partii,
+        ilosc: String(p.ilosc),
+        cena_jednostkowa: p.cena_jednostkowa != null ? String(p.cena_jednostkowa) : "",
+        data_produkcji: p.data_produkcji ? p.data_produkcji.split("T")[0] : "",
+        termin_waznosci: p.termin_waznosci ? p.termin_waznosci.split("T")[0] : "",
+        _open: false,
+        _autoPartia: false,
+      }));
+      setPzRows(rows);
+      setPzReferencja(data.numer_zewnetrzny || "");
+      setNextPzNumber(""); // nie generuj nowego numeru
+      setShowPz(true);
+    } else if (doc.typ === "WZ") {
+      // Załaduj kontrahentów jeśli nie ma
+      if (kontrahenci.length === 0) {
+        const kr = await fetch("/api/kontrahenci");
+        if (kr.ok) setKontrahenci(await kr.json());
+      }
+      setWzKontrahentId(data.kontrahent?.id || "");
+      setWzDataDostawy(data.data_dostawy ? data.data_dostawy.split("T")[0] : new Date().toISOString().slice(0, 10));
+      setWzReferencja(data.numer_zewnetrzny || "");
+
+      // Buduj wiersze WZ — dla każdej pozycji załaduj dostępne partie
+      // p.sztuki to obiekt { "Nazwa (X kg)": count } z pozycje_json — konwertujemy po załadowaniu partii
+      const rows: WzRow[] = (data.pozycje || []).map((p: any) => ({
+        _key: genKey(),
+        id_asortymentu: p.id_asortymentu || "",
+        nazwa: p.asortyment,
+        jednostka_miary: p.jednostka,
+        typ_asortymentu: p.typ_asortymentu || "",
+        id_partii: p.id_partii || "",
+        ilosc: String(p.ilosc),
+        cena_netto: p.cena_netto != null ? String(p.cena_netto) : "",
+        stawka_vat: p.stawka_vat != null ? String(p.stawka_vat) : "",
+        sztuki: {},          // wypełniane po załadowaniu partii (konwersja kluczy label→id_op_waga)
+        _sztukiRaw: p.sztuki || {},  // tymczasowe: { "Nazwa (X kg)": count }
+        dostepnePartie: [],
+        loadingPartie: true,
+      } as any));
+      setWzRows(rows);
+      setShowWz(true);
+
+      // Załaduj partie dla każdej pozycji (tryb edycji — uwzględnij też aktualnie przypisaną partię)
+      for (const row of rows) {
+        if (!row.id_asortymentu) continue;
+        try {
+          const ar = await fetch(`/api/asortyment/${row.id_asortymentu}`);
+          if (ar.ok) {
+            const detail = await ar.json();
+            // W trybie edycji: pokaż partie z dostepne > 0 PLUS aktualnie przypisaną partię
+            // (może mieć dostepne = 0 bo ruchy są nieaktywne w buforze)
+            const currentIdPartii = row.id_partii;
+            const allZasoby: any[] = detail.zasoby || [];
+            const partie: PartiaDostepna[] = allZasoby
+              .filter((z: any) => z.dostepne > 0 || z.id_partii === currentIdPartii)
+              .map((z: any) => ({
+                id: z.id_partii,
+                numer_partii: z.numer_partii,
+                asortyment: { nazwa: row.nazwa, jednostka_miary: row.jednostka_miary },
+                stan: z.dostepne,
+                termin_waznosci: z.termin_waznosci,
+                opakowania: z.opakowania || null,
+              }));
+
+            // Konwertuj _sztukiRaw { "Nazwa (X kg)": count } → { "id_asortymentu_waga_kg": count }
+            // używając danych opakowania z wybranej partii
+            const selectedPartia = partie.find(p => p.id === currentIdPartii);
+            const sztukiRaw: Record<string, number> = (row as any)._sztukiRaw || {};
+            let sztuki: Record<string, number> = {};
+            if (selectedPartia?.opakowania && Object.keys(sztukiRaw).length > 0) {
+              // Zbuduj mapę "Nazwa (X kg)" → "id_asortymentu_waga_kg"
+              const labelToKey: Record<string, string> = {};
+              for (const op of selectedPartia.opakowania) {
+                const label = `${op.nazwa} (${op.waga_kg} kg)`;
+                const key = `${op.id_asortymentu}_${op.waga_kg}`;
+                if (!labelToKey[label]) labelToKey[label] = key;
+              }
+              for (const [label, count] of Object.entries(sztukiRaw)) {
+                const key = labelToKey[label];
+                if (key) sztuki[key] = (sztuki[key] || 0) + count;
+              }
+            }
+
+            setWzRows(prev => prev.map(r => r._key === row._key ? { ...r, dostepnePartie: partie, sztuki, loadingPartie: false } : r));
+          }
+        } catch {
+          setWzRows(prev => prev.map(r => r._key === row._key ? { ...r, loadingPartie: false } : r));
+        }
+      }
+    } else if (doc.typ === "RW") {
+      const rows: RwRow[] = (data.pozycje || []).map((p: any) => ({
+        _key: genKey(),
+        id_asortymentu: p.id_asortymentu || "",
+        nazwa: p.asortyment,
+        jednostka_miary: p.jednostka,
+        id_partii: p.id_partii || "",
+        ilosc: String(p.ilosc),
+        dostepnePartie: [],
+        loadingPartie: true,
+      }));
+      setRwRows(rows);
+      setShowRw(true);
+
+      for (const row of rows) {
+        if (!row.id_asortymentu) continue;
+        try {
+          const ar = await fetch(`/api/asortyment/${row.id_asortymentu}`);
+          if (ar.ok) {
+            const detail = await ar.json();
+            const currentIdPartii = row.id_partii;
+            const allZasoby: any[] = detail.zasoby || [];
+            const partie: PartiaDostepna[] = allZasoby
+              .filter((z: any) => z.dostepne > 0 || z.id_partii === currentIdPartii)
+              .map((z: any) => ({
+                id: z.id_partii,
+                numer_partii: z.numer_partii,
+                asortyment: { nazwa: row.nazwa, jednostka_miary: row.jednostka_miary },
+                stan: z.dostepne,
+                termin_waznosci: z.termin_waznosci,
+                opakowania: null,
+              }));
+            setRwRows(prev => prev.map(r => r._key === row._key ? { ...r, dostepnePartie: partie, loadingPartie: false } : r));
+          }
+        } catch {
+          setRwRows(prev => prev.map(r => r._key === row._key ? { ...r, loadingPartie: false } : r));
+        }
+      }
+    }
+  };
+
+  const handlePrintDoc = async (doc: Dokument) => {    try {
       const res = await fetch(`/api/dokumenty/podglad/${encodeURIComponent(doc.referencja)}`);
       if (res.ok) {
         printDocument(await res.json());
@@ -862,11 +1054,11 @@ export default function Dokumenty() {
                       <PackageOpen className="w-5 h-5 text-emerald-400" />
                     </div>
                     <div>
-                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(74,222,128,0.6)' }}>Nowy dokument</div>
-                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>PZ</div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(74,222,128,0.6)' }}>{editDocRef ? 'Edycja dokumentu' : 'Nowy dokument'}</div>
+                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{editDocRef || 'PZ'}</div>
                     </div>
                   </div>
-                  <button type="button" onClick={() => setShowPz(false)}
+                  <button type="button" onClick={() => { setShowPz(false); setEditDocRef(null); }}
                     className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)] mt-0.5 shrink-0"
                     style={{ color: 'var(--text-muted)' }}>
                     <X className="w-4 h-4" />
@@ -934,7 +1126,7 @@ export default function Dokumenty() {
                       {pzSaving ? <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
                       Bufor
                     </button>
-                    <button type="button" onClick={() => setShowPz(false)} disabled={pzSaving}
+                    <button type="button" onClick={() => { setShowPz(false); setEditDocRef(null); }} disabled={pzSaving}
                       className="btn btn-ghost w-full justify-center">
                       Anuluj
                     </button>
@@ -1093,11 +1285,11 @@ export default function Dokumenty() {
                       <ArrowRightCircle className="w-5 h-5 text-orange-400" />
                     </div>
                     <div>
-                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(251,146,60,0.6)' }}>Nowy dokument</div>
-                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>WZ</div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(251,146,60,0.6)' }}>{editDocRef ? 'Edycja dokumentu' : 'Nowy dokument'}</div>
+                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{editDocRef || 'WZ'}</div>
                     </div>
                   </div>
-                  <button type="button" onClick={() => setShowWz(false)}
+                  <button type="button" onClick={() => { setShowWz(false); setEditDocRef(null); }}
                     className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)] mt-0.5 shrink-0"
                     style={{ color: 'var(--text-muted)' }}>
                     <X className="w-4 h-4" />
@@ -1228,7 +1420,7 @@ export default function Dokumenty() {
                       {wzSaving ? <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
                       Bufor
                     </button>
-                    <button type="button" onClick={() => setShowWz(false)} disabled={wzSaving}
+                    <button type="button" onClick={() => { setShowWz(false); setEditDocRef(null); }} disabled={wzSaving}
                       className="btn btn-ghost w-full justify-center">
                       Anuluj
                     </button>
@@ -1455,11 +1647,11 @@ export default function Dokumenty() {
                       <MinusCircle className="w-5 h-5 text-red-400" />
                     </div>
                     <div>
-                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(252,165,165,0.6)' }}>Nowy dokument</div>
-                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>RW</div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: 'rgba(252,165,165,0.6)' }}>{editDocRef ? 'Edycja dokumentu' : 'Nowy dokument'}</div>
+                      <div className="text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{editDocRef || 'RW'}</div>
                     </div>
                   </div>
-                  <button type="button" onClick={() => setShowRw(false)}
+                  <button type="button" onClick={() => { setShowRw(false); setEditDocRef(null); }}
                     className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)] mt-0.5 shrink-0"
                     style={{ color: 'var(--text-muted)' }}>
                     <X className="w-4 h-4" />
@@ -1516,7 +1708,7 @@ export default function Dokumenty() {
                   {rwSaving ? <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
                   Bufor
                 </button>
-                <button type="button" onClick={() => setShowRw(false)} disabled={rwSaving}
+                <button type="button" onClick={() => { setShowRw(false); setEditDocRef(null); }} disabled={rwSaving}
                   className="btn btn-ghost w-full justify-center">
                   Anuluj
                 </button>
@@ -1654,6 +1846,10 @@ export default function Dokumenty() {
           loading={previewDocLoading}
           onClose={() => setPreviewDocRef(null)}
           zIndex={60}
+          onEdit={(ref) => {
+            const doc = dokumenty.find(d => d.referencja === ref);
+            if (doc) openEditModal(doc);
+          }}
           onZatwierdz={handleZatwierdz}
           onAnuluj={handleAnuluj}
           onUsun={handleUsun}
@@ -1845,6 +2041,14 @@ export default function Dokumenty() {
                     {/* Akcje */}
                     <td style={{ padding: '6px 10px' }}>
                       <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                        {doc.status === 'Bufor' && doc.typ !== 'PW' && (
+                          <button onClick={e => { e.stopPropagation(); openEditModal(doc); }}
+                            className="p-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors"
+                            title="Edytuj dokument"
+                            style={{ color: 'var(--accent)' }}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {canApprove && (
                           <button onClick={e => handleZatwierdz(doc.referencja, e)} title="Zatwierdź"
                             disabled={isLoading}
