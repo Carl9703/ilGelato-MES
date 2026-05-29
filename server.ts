@@ -473,6 +473,21 @@ async function startServer() {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Oblicza ilości zarezerwowane przez dokumenty WZ w buforze per id_partii
+  async function getBuforWzByPartia(partieIds?: string[]): Promise<Map<string, number>> {
+    const buforRefs = (await prisma.dokumenty_Magazynowe.findMany({
+      where: { status: "Bufor", typ: "WZ" },
+      select: { referencja: true }
+    })).map(d => d.referencja);
+    if (buforRefs.length === 0) return new Map();
+    const where: any = { referencja_dokumentu: { in: buforRefs }, czy_aktywne: false, typ_ruchu: "WZ" };
+    if (partieIds) where.id_partii = { in: partieIds };
+    const ruchy = await prisma.ruchy_Magazynowe.findMany({ where, select: { id_partii: true, ilosc: true } });
+    const map = new Map<string, number>();
+    for (const r of ruchy) map.set(r.id_partii, (map.get(r.id_partii) || 0) + Math.abs(r.ilosc));
+    return map;
+  }
+
   // --- KARTOTEKI (Asortyment) ---
   app.get("/api/asortyment", async (req, res) => {
     try {
@@ -496,6 +511,27 @@ async function startServer() {
         orderBy: { nazwa: "asc" },
       });
 
+      // Nieaktywne ruchy WZ z dokumentów w buforze = dodatkowe rezerwacje per partia
+      const buforWzRuchy = await prisma.ruchy_Magazynowe.findMany({
+        where: {
+          czy_aktywne: false,
+          typ_ruchu: "WZ",
+          partia: { czy_aktywne: true },
+          referencja_dokumentu: {
+            in: (await prisma.dokumenty_Magazynowe.findMany({
+              where: { status: "Bufor", typ: "WZ" },
+              select: { referencja: true }
+            })).map(d => d.referencja)
+          }
+        },
+        select: { id_partii: true, ilosc: true }
+      });
+      // Mapa id_partii -> suma zarezerwowana przez bufor WZ
+      const buforByPartia = new Map<string, number>();
+      for (const r of buforWzRuchy) {
+        buforByPartia.set(r.id_partii, (buforByPartia.get(r.id_partii) || 0) + Math.abs(r.ilosc));
+      }
+
       const items = dbItems.map(item => {
         let ilosc = 0;
         let batchReservations = 0;
@@ -512,6 +548,7 @@ async function startServer() {
           }
 
           batchReservations += partia.rezerwacje.reduce((sum, rez) => sum + rez.ilosc_zarezerwowana, 0);
+          batchReservations += buforByPartia.get(partia.id) || 0;
         });
 
         const rezerwacje = batchReservations + globalReservations;
@@ -1928,10 +1965,13 @@ async function startServer() {
               ]
             });
 
-            // Obliczamy realny stan każdej partii pomniejszony o aktywne rezerwacje
+            // Obliczamy realny stan każdej partii pomniejszony o aktywne rezerwacje + bufor WZ
+            const partieIds1 = partie.map(p => p.id);
+            const buforWz1 = await getBuforWzByPartia(partieIds1);
             const sugestie = partie.map(p => {
               const stan = p.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0)
-                         - p.rezerwacje.reduce((sum, r) => sum + r.ilosc_zarezerwowana, 0);
+                         - p.rezerwacje.reduce((sum, r) => sum + r.ilosc_zarezerwowana, 0)
+                         - (buforWz1.get(p.id) || 0);
               return {
                 id: p.id,
                 numer_partii: p.numer_partii,
@@ -2493,12 +2533,14 @@ async function startServer() {
             ]
           });
 
+          const buforWz2 = await getBuforWzByPartia(partie.map(p => p.id));
           const sugestie = partie.map(p => ({
             id: p.id,
             numer_partii: p.numer_partii,
             termin_waznosci: p.termin_waznosci,
             stan: p.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0)
                 - p.rezerwacje.reduce((sum, r) => sum + r.ilosc_zarezerwowana, 0)
+                - (buforWz2.get(p.id) || 0)
           })).filter(p => p.stan > 0);
 
           return { ...s, sugerowane_partie: sugestie };
@@ -3197,12 +3239,8 @@ async function startServer() {
         },
         orderBy: [{ termin_waznosci: "asc" }, { utworzono_dnia: "asc" }],
       });
+      const buforWz3 = await getBuforWzByPartia(partie.map(p => p.id));
       const result = partie.map(p => ({
-        id: p.id,
-        numer_partii: p.numer_partii,
-        termin_waznosci: p.termin_waznosci,
-        stan: p.ruchy_magazynowe.reduce((s: number, r: any) => s + r.ilosc, 0)
-             - p.rezerwacje.reduce((s: number, r: any) => s + r.ilosc_zarezerwowana, 0),
       })).filter(p => p.stan > 0.001);
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -3411,9 +3449,23 @@ async function startServer() {
       }
 
       // ZASOBY (per partia)
+      // Nieaktywne ruchy WZ z buforów = dodatkowe rezerwacje
+      const buforWzRefs = (await prisma.dokumenty_Magazynowe.findMany({
+        where: { status: "Bufor", typ: "WZ" }, select: { referencja: true }
+      })).map(d => d.referencja);
+      const buforWzRuchy = buforWzRefs.length > 0 ? await prisma.ruchy_Magazynowe.findMany({
+        where: { id_partii: { in: partieIds }, referencja_dokumentu: { in: buforWzRefs }, czy_aktywne: false },
+        select: { id_partii: true, ilosc: true, referencja_dokumentu: true }
+      }) : [];
+      const buforByPartia = new Map<string, number>();
+      for (const r of buforWzRuchy) {
+        buforByPartia.set(r.id_partii, (buforByPartia.get(r.id_partii) || 0) + Math.abs(r.ilosc));
+      }
+
       const zasoby = partie.map(p => {
         const stan = p.ruchy_magazynowe.reduce((s, r) => s + r.ilosc, 0);
-        const zarezerwowane = p.rezerwacje.reduce((s, r) => s + r.ilosc_zarezerwowana, 0);
+        const zarezerwowane = p.rezerwacje.reduce((s, r) => s + r.ilosc_zarezerwowana, 0)
+          + (buforByPartia.get(p.id) || 0);
 
         // Cena z pierwszego przyjęcia (PZ) lub PW
         const pzDoc = p.ruchy_magazynowe.find(r => (r.typ_ruchu === "PZ" || r.typ_ruchu === "Przyjecie_Z_Produkcji") && r.ilosc > 0);
