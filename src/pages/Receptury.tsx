@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Save, X, BookOpen, Trash2, Edit2, Calculator } from "lucide-react";
+import { Plus, Save, X, BookOpen, Trash2, Edit2, Calculator, Search } from "lucide-react";
 import { fmtL } from "../utils/fmt";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
@@ -39,6 +39,7 @@ export default function Receptury() {
   const [skladniki, setSkladniki] = useState<{ id_asortymentu_skladnika: string; ilosc_wymagana: string; czy_pomocnicza: boolean }[]>([]);
 
   const [showArchived, setShowArchived] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState("produkt");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
@@ -244,6 +245,32 @@ export default function Receptury() {
             <Plus className="w-4 h-4" />Nowa receptura
           </button>
         </div>
+      </div>
+
+      {/* WYSZUKIWARKA */}
+      <div className="relative shrink-0">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+        <input
+          type="text"
+          placeholder="Szukaj receptury po nazwie produktu, kodzie lub składniku..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full pl-10 pr-4 py-2.5 text-sm rounded-lg outline-none transition-all"
+          style={{
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border)',
+            color: 'var(--text-primary)'
+          }}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-[var(--bg-hover)] transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* ===== KARTA RECEPTURY ===== */}
@@ -664,56 +691,93 @@ export default function Receptury() {
               </tr>
             </thead>
             <tbody>
-              {sortBy<Receptura>(
-                (Object.values(
+              {(() => {
+                // Grupuj receptury po produkcie i wybierz najnowszą wersję
+                const latestVersions = (Object.values(
                   receptury.reduce<Record<string, Receptura[]>>((acc, r) => {
                     const pid = r.asortyment_docelowy.id;
                     if (!acc[pid]) acc[pid] = [];
                     acc[pid].push(r);
                     return acc;
                   }, {})
-                ) as Receptura[][]).map(versions => [...versions].sort((a, b) => b.numer_wersji - a.numer_wersji)[0]),
-                v => {
-                  switch (sortKey) {
-                    case 'kod':       return v.asortyment_docelowy.kod_towaru;
-                    case 'wersja':    return v.numer_wersji;
-                    case 'skladniki': return v.skladniki.length;
-                    case 'trwalosc':  return v.dni_trwalosci ?? -1;
-                    case 'status':    return v.czy_aktywne ? 0 : 1;
-                    default:          return v.asortyment_docelowy.nazwa;
-                  }
-                },
-                sortDir
-              ).map(v => {
-                const sorted = [...receptury.filter(r => r.asortyment_docelowy.id === v.asortyment_docelowy.id)].sort((a, b) => b.numer_wersji - a.numer_wersji);
-                return (
-                  <tr key={v.id} onClick={() => openView(v)} className={`cursor-pointer ${v.czy_aktywne ? '' : 'opacity-40'}`}>
-                    <td style={{ padding: 0, width: 3 }}>
-                      <div style={{ width: 3, height: 36, background: v.czy_aktywne ? 'var(--accent)' : '#64748b', opacity: 0.7 }} />
-                    </td>
-                    <td className="font-medium text-white">{v.asortyment_docelowy.nazwa}</td>
-                    <td className="mono" style={{ color: 'var(--text-code)' }}>{v.asortyment_docelowy.kod_towaru}</td>
-                    <td>
-                      <div className="flex items-center gap-1.5">
-                        <span className="mono font-bold" style={{ color: 'var(--text-primary)' }}>v{v.numer_wersji}</span>
-                        {sorted.length > 1 && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.15)', color: 'rgb(129,140,248)' }}>
-                            {sorted.length} wersje
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ color: 'var(--text-secondary)' }}>{v.skladniki.length}</td>
-                    <td className="mono" style={{ color: 'var(--text-secondary)' }}>{v.dni_trwalosci ? `${v.dni_trwalosci} dni` : '—'}</td>
-                    <td>
-                      {v.czy_aktywne
-                        ? <span className="badge badge-ok">Aktywna</span>
-                        : <span className="badge badge-neutral">Archiwalna</span>
-                      }
-                    </td>
-                  </tr>
+                ) as Receptura[][]).map(versions => [...versions].sort((a, b) => b.numer_wersji - a.numer_wersji)[0]);
+
+                // Filtruj według wyszukiwania
+                const filtered = searchQuery.trim() === "" 
+                  ? latestVersions
+                  : latestVersions.filter(r => {
+                      const q = searchQuery.toLowerCase();
+                      const matchesName = r.asortyment_docelowy.nazwa.toLowerCase().includes(q);
+                      const matchesCode = r.asortyment_docelowy.kod_towaru.toLowerCase().includes(q);
+                      const matchesIngredient = r.skladniki.some(s => 
+                        s.asortyment_skladnika.nazwa.toLowerCase().includes(q) ||
+                        s.asortyment_skladnika.kod_towaru.toLowerCase().includes(q)
+                      );
+                      return matchesName || matchesCode || matchesIngredient;
+                    });
+
+                // Sortuj
+                const sorted = sortBy<Receptura>(
+                  filtered,
+                  v => {
+                    switch (sortKey) {
+                      case 'kod':       return v.asortyment_docelowy.kod_towaru;
+                      case 'wersja':    return v.numer_wersji;
+                      case 'skladniki': return v.skladniki.length;
+                      case 'trwalosc':  return v.dni_trwalosci ?? -1;
+                      case 'status':    return v.czy_aktywne ? 0 : 1;
+                      default:          return v.asortyment_docelowy.nazwa;
+                    }
+                  },
+                  sortDir
                 );
-              })}
+
+                if (sorted.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={7} className="text-center py-12">
+                        <div className="flex flex-col items-center gap-2">
+                          <Search className="w-8 h-8 opacity-30" style={{ color: 'var(--text-muted)' }} />
+                          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                            Nie znaleziono receptur pasujących do "{searchQuery}"
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return sorted.map(v => {
+                  const sorted = [...receptury.filter(r => r.asortyment_docelowy.id === v.asortyment_docelowy.id)].sort((a, b) => b.numer_wersji - a.numer_wersji);
+                  return (
+                    <tr key={v.id} onClick={() => openView(v)} className={`cursor-pointer ${v.czy_aktywne ? '' : 'opacity-40'}`}>
+                      <td style={{ padding: 0, width: 3 }}>
+                        <div style={{ width: 3, height: 36, background: v.czy_aktywne ? 'var(--accent)' : '#64748b', opacity: 0.7 }} />
+                      </td>
+                      <td className="font-medium text-white">{v.asortyment_docelowy.nazwa}</td>
+                      <td className="mono" style={{ color: 'var(--text-code)' }}>{v.asortyment_docelowy.kod_towaru}</td>
+                      <td>
+                        <div className="flex items-center gap-1.5">
+                          <span className="mono font-bold" style={{ color: 'var(--text-primary)' }}>v{v.numer_wersji}</span>
+                          {sorted.length > 1 && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.15)', color: 'rgb(129,140,248)' }}>
+                              {sorted.length} wersje
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{v.skladniki.length}</td>
+                      <td className="mono" style={{ color: 'var(--text-secondary)' }}>{v.dni_trwalosci ? `${v.dni_trwalosci} dni` : '—'}</td>
+                      <td>
+                        {v.czy_aktywne
+                          ? <span className="badge badge-ok">Aktywna</span>
+                          : <span className="badge badge-neutral">Archiwalna</span>
+                        }
+                      </td>
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
         )}
