@@ -23,18 +23,20 @@ process.stdin.on('end', async () => {
     const page = await browser.newPage();
     await page.goto(`file:///${tmpFile.replace(/\\/g, '/')}`, {
       waitUntil: 'domcontentloaded',
-      timeout: 15000,
+      timeout: 60000,
     });
 
     const pdf = await page.pdf({
       format: 'A4',
       margin: { top: '14mm', right: '14mm', bottom: '12mm', left: '14mm' },
       printBackground: true,
+      timeout: 60000,
     });
 
     await browser.close();
-    process.stdout.write(pdf);
-    process.exit(0);
+    process.stdout.write(pdf, () => {
+      process.exit(0);
+    });
   } catch (err) {
     process.stderr.write(String(err));
     process.exit(1);
