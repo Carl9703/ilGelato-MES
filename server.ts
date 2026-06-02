@@ -8,6 +8,7 @@ import path from "path";
 import QRCode from "qrcode";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import { generateDocumentHTML, generatePDF } from "./server-pdf";
 
 const JWT_SECRET = process.env.JWT_SECRET || "ilgelato-dev-secret-2025-change-in-prod";
 const JWT_EXPIRES = "12h";
@@ -189,11 +190,16 @@ async function startServer() {
 
   function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
     const auth = req.headers["authorization"];
-    if (!auth?.startsWith("Bearer ")) {
+    // Dla endpointów PDF: fallback na query param ?token= (przeglądarka nie wysyła nagłówków przy window.open)
+    const tokenFromQuery = typeof req.query.token === "string" ? req.query.token : null;
+    const isPdfEndpoint = req.path.endsWith("/pdf");
+    const rawToken = auth?.startsWith("Bearer ") ? auth.slice(7) : (isPdfEndpoint && tokenFromQuery ? tokenFromQuery : null);
+
+    if (!rawToken) {
       return res.status(401).json({ error: "Wymagane logowanie" });
     }
     try {
-      const payload = jwt.verify(auth.slice(7), JWT_SECRET) as { userId: string; login: string; baza: "prod" | "test" };
+      const payload = jwt.verify(rawToken, JWT_SECRET) as { userId: string; login: string; baza: "prod" | "test" };
       (req as any).userId = payload.userId;
       (req as any).userLogin = payload.login;
       (req as any).baza = payload.baza;
@@ -1980,6 +1986,219 @@ async function startServer() {
       });
     } catch (error) {
       res.status(500).json({ error: "Błąd pobierania dokumentu" });
+    }
+  });
+
+  // Ogólny endpoint PDF (dla wszystkich innych wydruków i raportów przesyłanych jako HTML)
+  app.post("/api/pdf/generate", async (req, res) => {
+    try {
+      const { html, filename = 'wydruk' } = req.body;
+      if (!html) {
+        return res.status(400).json({ error: "Brak kodu HTML" });
+      }
+
+      const pdfBuffer = await generatePDF(html);
+      res.contentType('application/pdf');
+      const safeFilename = encodeURIComponent(filename).replace(/['()]/g, escape).replace(/\*/g, '%2A');
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${safeFilename}.pdf`);
+      res.send(pdfBuffer);
+    } catch (error) {
+      console.error('Ogólny błąd generowania PDF:', error);
+      res.status(500).json({ error: "Błąd generowania PDF" });
+    }
+  });
+
+  // PDF endpoint - referencja może zawierać slashe (np. WZ-4/05/26), używamy wildcard
+  app.get("/api/dokumenty/*/pdf", async (req, res) => {
+    try {
+      // Wyciągnij referencję z pełnej ścieżki: /api/dokumenty/WZ-4/05/26/pdf -> WZ-4/05/26
+      const referencja = decodeURIComponent(req.path.replace(/^\/api\/dokumenty\//, '').replace(/\/pdf$/, ''));
+
+      // Pobierz nagłówek (jeśli istnieje) — zwłaszcza dla PZ/WZ
+      const header = await prisma.dokumenty_Magazynowe.findUnique({
+        where: { referencja },
+        include: { uzytkownik_utworzenia: true, uzytkownik_zatwierdzenia: true, uzytkownik_anulowania: true, kontrahent: true }
+      });
+
+      // Pobierz wszystkie ruchy (włącznie z nieaktywnymi dla BUFOR)
+      const ruchy = await prisma.ruchy_Magazynowe.findMany({
+        where: { referencja_dokumentu: referencja },
+        include: {
+          partia: { include: { asortyment: true } },
+          zlecenie: true,
+          uzytkownik: true
+        },
+        orderBy: { utworzono_dnia: 'asc' }
+      });
+
+      if (ruchy.length === 0 && !header) {
+        return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      }
+
+      const firstRuch = ruchy[0];
+      const status = header?.status || "Zatwierdzony";
+
+      // Parse sztuki + ceny z pozycje_json
+      let sztukiByPartia: Record<string, Record<string, number>> = {};
+      let cenyByPartia: Record<string, { cena_brutto: number | null; cena_netto: number | null; stawka_vat: number | null }> = {};
+      if (header?.pozycje_json) {
+        try {
+          const parsed = JSON.parse(header.pozycje_json) as { id_partii: string; sztuki?: Record<string, number>; cena_brutto?: number | null; cena_netto?: number | null; stawka_vat?: number | null }[];
+          parsed.forEach(p => {
+            sztukiByPartia[p.id_partii] = p.sztuki || {};
+            cenyByPartia[p.id_partii] = { cena_brutto: p.cena_brutto ?? null, cena_netto: p.cena_netto ?? null, stawka_vat: p.stawka_vat ?? null };
+          });
+        } catch {}
+      }
+
+      const allOpIds = new Set<string>();
+      for (const r of ruchy) {
+        if (r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.partia.opakowania_json) {
+          try {
+            const ops = JSON.parse(r.partia.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
+            ops.forEach(o => { if (o.id_asortymentu) allOpIds.add(o.id_asortymentu); });
+          } catch {}
+        }
+      }
+      const opNazwy = await prisma.asortyment.findMany({ where: { id: { in: [...allOpIds] } }, select: { id: true, nazwa: true } });
+      const opNazwyMap: Record<string, string> = {};
+      opNazwy.forEach(a => opNazwyMap[a.id] = a.nazwa);
+
+      // Dla PW: przelicz koszt/kg z bieżących cena_zakupu składników (tak jak zakładka Koszty)
+      const kosztyPerKgByZlecenie: Record<string, number> = {};
+      const pwRuchyIds = [...new Set(ruchy.filter(r => r.typ_ruchu === 'Przyjecie_Z_Produkcji' && r.id_zlecenia).map(r => r.id_zlecenia as string))];
+      if (pwRuchyIds.length > 0) {
+        const zuzycieRuchy = await prisma.ruchy_Magazynowe.findMany({
+          where: { id_zlecenia: { in: pwRuchyIds }, typ_ruchu: 'Zuzycie', czy_aktywne: true },
+          include: { partia: { include: { asortyment: true } } },
+        });
+        for (const zlId of pwRuchyIds) {
+          const zuzycie = zuzycieRuchy.filter(r => r.id_zlecenia === zlId);
+          const totalKoszt = zuzycie.reduce((sum, r) => {
+            const cenaZakupu = (r.partia.asortyment as any).cena_zakupu ?? 0;
+            return sum + Math.abs(r.ilosc) * cenaZakupu;
+          }, 0);
+          const pwRuch = ruchy.find(r => r.id_zlecenia === zlId && r.typ_ruchu === 'Przyjecie_Z_Produkcji');
+          const iloscWyrobu = pwRuch ? pwRuch.ilosc : 0;
+          kosztyPerKgByZlecenie[zlId] = iloscWyrobu > 0 ? totalKoszt / iloscWyrobu : 0;
+        }
+      }
+
+      const pozycje: any[] = [];
+      for (const r of ruchy) {
+        const ilosc = Math.abs(r.ilosc);
+        const cena = r.typ_ruchu === 'Przyjecie_Z_Produkcji'
+          ? (r.id_zlecenia ? (kosztyPerKgByZlecenie[r.id_zlecenia] ?? r.cena_jednostkowa ?? 0) : (r.cena_jednostkowa ?? 0))
+          : r.typ_ruchu === 'PZ'
+          ? (r.cena_jednostkowa ?? (r.partia.asortyment as any).cena_zakupu ?? 0)
+          : ((r.partia.asortyment as any).cena_zakupu ?? 0);
+        let sztuki = sztukiByPartia[r.id_partii] || {};
+
+        if (r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.partia.opakowania_json) {
+          try {
+            const parsedOp = JSON.parse(r.partia.opakowania_json) as { id_asortymentu: string; waga_kg: number }[];
+            sztuki = {};
+            parsedOp.forEach(op => {
+               const nazwa = opNazwyMap[op.id_asortymentu] || "Opakowanie";
+               const k = `${nazwa} (${op.waga_kg} kg)`;
+               sztuki[k] = (sztuki[k] || 0) + 1;
+            });
+          } catch {}
+        }
+
+        const hasOp = Object.keys(sztuki).length > 0;
+
+        // Fallback do kartoteki gdy pozycje_json nie ma cen (stare dokumenty)
+        const katCenaNetto: number | null = (r.partia.asortyment as any).cena_sprzedazy ?? null;
+        const katVat: number | null = (r.partia.asortyment as any).stawka_vat ?? null;
+
+        if (hasOp) {
+          // Rozwiń każde opakowanie jako osobną pozycję
+          for (const [label, szt] of Object.entries(sztuki) as [string, number][]) {
+            if (szt <= 0) continue;
+            const match = label.match(/^(.*)\s+\((\d+(?:\.\d+)?)\s*kg\)$/);
+            const nazwaOp = match ? match[1] : label;
+            const wagaKg = match ? parseFloat(match[2]) : 0;
+            const iloscKg = Math.round(szt * wagaKg * 1000) / 1000;
+            const wartosc = iloscKg * cena;
+            const ceny = cenyByPartia[r.id_partii];
+            const cenaNetto = ceny?.cena_netto ?? katCenaNetto;
+            const stawkaVat = ceny?.stawka_vat ?? katVat;
+            const cenaBrutto = ceny?.cena_brutto ?? (cenaNetto != null && stawkaVat != null ? Math.round(cenaNetto * (1 + stawkaVat / 100) * 10000) / 10000 : null);
+            const wartosc_netto = cenaNetto != null && iloscKg > 0 ? Math.round(cenaNetto * iloscKg * 100) / 100 : null;
+            const wartosc_brutto = cenaBrutto != null && iloscKg > 0 ? Math.round(cenaBrutto * iloscKg * 100) / 100 : null;
+            pozycje.push({
+              asortyment: nazwaOp,
+              wyrob: r.partia.asortyment.nazwa,
+              kod_towaru: r.partia.asortyment.kod_towaru,
+              numer_partii: r.partia.numer_partii,
+              ilosc: szt,
+              jednostka: "szt.",
+              ilosc_kg: iloscKg,
+              cena_jednostkowa: cena > 0 ? cena : null,
+              wartosc,
+              cena_netto: cenaNetto,
+              cena_brutto: cenaBrutto,
+              stawka_vat: stawkaVat,
+              wartosc_netto,
+              wartosc_brutto,
+            });
+          }
+        } else {
+          const wartosc = ilosc * cena;
+          const ceny2 = cenyByPartia[r.id_partii];
+          const cenaNetto2 = ceny2?.cena_netto ?? katCenaNetto;
+          const stawkaVat2 = ceny2?.stawka_vat ?? katVat;
+          const cenaBrutto2 = ceny2?.cena_brutto ?? (cenaNetto2 != null && stawkaVat2 != null ? Math.round(cenaNetto2 * (1 + stawkaVat2 / 100) * 10000) / 10000 : null);
+          const wartosc_netto2 = cenaNetto2 != null ? Math.round(cenaNetto2 * ilosc * 100) / 100 : null;
+          const wartosc_brutto2 = cenaBrutto2 != null ? Math.round(cenaBrutto2 * ilosc * 100) / 100 : null;
+          pozycje.push({
+            asortyment: r.partia.asortyment.nazwa,
+            wyrob: null,
+            kod_towaru: r.partia.asortyment.kod_towaru,
+            numer_partii: r.partia.numer_partii,
+            ilosc,
+            jednostka: r.partia.asortyment.jednostka_miary,
+            ilosc_kg: null,
+            cena_jednostkowa: cena > 0 ? cena : null,
+            wartosc,
+            cena_netto: cenaNetto2,
+            cena_brutto: cenaBrutto2,
+            stawka_vat: stawkaVat2,
+            wartosc_netto: wartosc_netto2,
+            wartosc_brutto: wartosc_brutto2,
+          });
+        }
+      }
+
+      const typDok = firstRuch
+        ? (firstRuch.typ_ruchu === "Zuzycie" || firstRuch.typ_ruchu === "Strata" ? "RW" : firstRuch.typ_ruchu === "Przyjecie_Z_Produkcji" ? "PW" : firstRuch.typ_ruchu)
+        : header!.typ;
+
+      const docData = {
+        referencja,
+        typ: typDok,
+        status,
+        data: header?.utworzono_dnia || firstRuch?.utworzono_dnia,
+        uzytkownik: header?.uzytkownik_utworzenia?.login || firstRuch?.uzytkownik?.login || "system",
+        data_zatwierdzenia: header?.data_zatwierdzenia || null,
+        numer_zlecenia: firstRuch?.zlecenie?.numer_zlecenia || null,
+        data_dostawy: (header as any)?.data_dostawy || null,
+        kontrahent: header?.kontrahent ? { kod: header.kontrahent.kod, nazwa: header.kontrahent.nazwa } : null,
+        pozycje,
+      };
+
+      // Generuj HTML i PDF
+      const html = generateDocumentHTML(docData);
+      const pdfBuffer = await generatePDF(html);
+
+      res.contentType('application/pdf');
+      const safeRef = encodeURIComponent(referencja).replace(/['()]/g, escape).replace(/\*/g, '%2A');
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${safeRef}.pdf`);
+      res.send(pdfBuffer);
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      res.status(500).json({ error: "Błąd generowania PDF" });
     }
   });
 

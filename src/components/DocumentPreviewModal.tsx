@@ -1,5 +1,5 @@
 import React from "react";
-import { FileText, Trash2, X, CheckCircle, Ban, Tag, Clock, Printer, ArrowRightCircle, ArrowDownCircle, Factory, Pencil } from "lucide-react";
+import { FileText, Trash2, X, CheckCircle, Ban, Tag, Clock, Printer, ArrowRightCircle, ArrowDownCircle, Factory, Pencil, Download } from "lucide-react";
 import { fmtL, fmtDate, fmtFull } from "../utils/fmt";
 import { printDocument, computeVatSummary } from "../utils/printDoc";
 import { Spinner } from "./Spinner";
@@ -250,6 +250,11 @@ export default function DocumentPreviewModal({
                     <Tag className="w-4 h-4" /> Drukuj etykiety
                   </button>
                 )}
+                <button onClick={() => { const t = localStorage.getItem('mes-token'); window.open(`/api/dokumenty/${docRef}/pdf${t ? `?token=${encodeURIComponent(t)}` : ''}`, '_blank'); }}
+                  className="btn w-full justify-center text-sm"
+                  style={{ background: 'rgba(59,130,246,0.1)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
+                  <Download className="w-4 h-4" /> Pobierz PDF
+                </button>
                 <button onClick={() => printDocument(docData)}
                   className="btn w-full justify-center text-sm"
                   style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)' }}>

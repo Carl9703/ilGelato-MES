@@ -1,5 +1,28 @@
 import { fmtL, fmtDate as fmt, fmtFull, resolveDisplayUnit } from './fmt';
 
+export async function downloadPdfFromHtml(html: string, filename: string) {
+  try {
+    const token = localStorage.getItem('mes-token');
+    const res = await fetch('/api/pdf/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ html, filename })
+    });
+    
+    if (!res.ok) throw new Error('Błąd generowania PDF');
+    
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  } catch (err) {
+    console.error('Błąd drukowania:', err);
+    alert('Błąd podczas generowania wydruku.');
+  }
+}
+
 const docTypeLabel: Record<string, string> = {
   PZ: 'Przyjęcie Zewnętrzne',
   PW: 'Przyjęcie Wewnętrzne',
@@ -31,7 +54,7 @@ export function computeVatSummary(docData: any) {
   return { totalNetto, totalVat, totalBrutto, groups };
 }
 
-export function printDocument(docData: any): void {
+export async function printDocument(docData: any): Promise<void> {
   if (!docData) return;
 
   const pozycje: any[] = docData.pozycje || [];
@@ -142,8 +165,8 @@ export function printDocument(docData: any): void {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{font-family:'Segoe UI',system-ui,Arial,sans-serif;font-size:11px;color:#000;background:#fff}
-body{padding:14mm 14mm 12mm}
-@page{size:A4 portrait;margin:0}
+body{padding:0}
+@page{size:A4 portrait;margin:14mm 14mm 12mm 14mm}
 
 .doc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
 .doc-type{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:4px}
@@ -235,23 +258,10 @@ ${vatBlock}
 
 </body></html>`;
 
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:0';
-  document.body.appendChild(iframe);
-  const doc = iframe.contentDocument!;
-  doc.open();
-  doc.write(html);
-  doc.close();
-  const trigger = () => {
-    iframe.contentWindow!.focus();
-    iframe.contentWindow!.print();
-    setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 1000);
-  };
-  if (doc.readyState === 'complete') setTimeout(trigger, 150);
-  else iframe.onload = trigger;
+  await downloadPdfFromHtml(html, docData.referencja || 'dokument');
 }
 
-export function printSesja(sesja: any): void {
+export async function printSesja(sesja: any): Promise<void> {
   if (!sesja) return;
 
   const wyroby: any[] = sesja.wyroby || [];
@@ -355,8 +365,8 @@ export function printSesja(sesja: any): void {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{font-family:'Segoe UI',system-ui,Arial,sans-serif;font-size:11px;color:#000;background:#fff}
-body{padding:14mm 14mm 12mm}
-@page{size:A4 portrait;margin:0}
+body{padding:0}
+@page{size:A4 portrait;margin:14mm 14mm 12mm 14mm}
 .doc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
 .doc-type{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:4px}
 .doc-name{font-size:22px;font-weight:900;letter-spacing:-.5px;color:#000;line-height:1}
@@ -435,23 +445,10 @@ ${surowce.length > 0 ? `<div class="section">Zużyte surowce (cała sesja)</div>
 
 </body></html>`;
 
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:0';
-  document.body.appendChild(iframe);
-  const iDoc = iframe.contentDocument!;
-  iDoc.open();
-  iDoc.write(html);
-  iDoc.close();
-  const trigger = () => {
-    iframe.contentWindow!.focus();
-    iframe.contentWindow!.print();
-    setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 1000);
-  };
-  if (iDoc.readyState === 'complete') setTimeout(trigger, 150);
-  else iframe.onload = trigger;
+  await downloadPdfFromHtml(html, `Sesja_${sesja.numer_sesji || 'raport'}`);
 }
 
-export function printZP(z: any): void {
+export async function printZP(z: any): Promise<void> {
   if (!z) return;
   const f = (d: string | null) => d ? new Date(d).toLocaleDateString('pl-PL') : '—';
   const statusLabel: Record<string, string> = { Planowane: 'Planowane', W_toku: 'W toku', Zrealizowane: 'Zrealizowane', Anulowane: 'Anulowane' };
@@ -515,8 +512,8 @@ export function printZP(z: any): void {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{font-family:'Segoe UI',system-ui,Arial,sans-serif;font-size:11px;color:#000;background:#fff}
-body{padding:14mm 14mm 12mm}
-@page{size:A4 portrait;margin:0}
+body{padding:0}
+@page{size:A4 portrait;margin:14mm 14mm 12mm 14mm}
 .doc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
 .doc-type{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:4px}
 .doc-name{font-size:22px;font-weight:900;letter-spacing:-.5px;color:#000;line-height:1}
@@ -598,18 +595,5 @@ ${opBlock}
 
 </body></html>`;
 
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:0';
-  document.body.appendChild(iframe);
-  const iDoc = iframe.contentDocument!;
-  iDoc.open();
-  iDoc.write(html);
-  iDoc.close();
-  const trigger = () => {
-    iframe.contentWindow!.focus();
-    iframe.contentWindow!.print();
-    setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 1000);
-  };
-  if (iDoc.readyState === 'complete') setTimeout(trigger, 150);
-  else iframe.onload = trigger;
+  await downloadPdfFromHtml(html, z.numer_zlecenia || 'ZP-TEMP');
 }

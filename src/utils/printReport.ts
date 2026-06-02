@@ -1,3 +1,5 @@
+import { downloadPdfFromHtml } from './printDoc';
+
 export interface PrintColumn {
   label: string;
   align?: 'left' | 'right' | 'center';
@@ -20,8 +22,8 @@ export interface PrintReportOptions {
 const CSS = `
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{font-family:'Segoe UI',system-ui,Arial,sans-serif;font-size:11px;color:#000;background:#fff}
-body{padding:14mm 14mm 12mm}
-@page{size:A4 landscape;margin:0}
+body{padding:0}
+@page{size:A4 landscape;margin:14mm 14mm 12mm 14mm}
 .doc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
 .doc-type{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:4px}
 .doc-name{font-size:22px;font-weight:900;letter-spacing:-.5px;color:#000;line-height:1}
@@ -101,20 +103,7 @@ ${sectionsHtml}
 </body></html>`;
 }
 
-export function printReport(opts: PrintReportOptions): void {
+export async function printReport(opts: PrintReportOptions): Promise<void> {
   const html = buildHtml(opts);
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:0';
-  document.body.appendChild(iframe);
-  const doc = iframe.contentDocument!;
-  doc.open();
-  doc.write(html);
-  doc.close();
-  const trigger = () => {
-    iframe.contentWindow!.focus();
-    iframe.contentWindow!.print();
-    setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 1000);
-  };
-  if (doc.readyState === 'complete') setTimeout(trigger, 150);
-  else iframe.onload = trigger;
+  await downloadPdfFromHtml(html, opts.title || 'Raport');
 }
