@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Package, RefreshCw, Search, Pencil, X, Check } from "lucide-react";
-import { fmtDate } from "../utils/fmt";
+import { fmtDate, fmtL } from "../utils/fmt";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 
@@ -147,7 +147,7 @@ export default function WyrobyGotowe() {
         <div className="rounded-lg p-4" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
           <div className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>Łącznie masa</div>
           <div className="text-2xl font-bold text-white">
-            {totalKg.toFixed(2)} <span className="text-sm font-normal" style={{ color: "var(--text-muted)" }}>kg</span>
+            {fmtL(totalKg, 3)} <span className="text-sm font-normal" style={{ color: "var(--text-muted)" }}>kg</span>
           </div>
         </div>
         <div className="rounded-lg p-4" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
@@ -211,7 +211,7 @@ export default function WyrobyGotowe() {
                   <td className="px-4 py-2.5 font-medium" style={{ color: "var(--text-primary)" }}>{row.nazwa}</td>
                   <td className="px-4 py-2.5" style={{ color: "var(--text-secondary)" }}>{row.opakowanie ?? "—"}</td>
                   <td className="px-4 py-2.5 text-right font-mono text-xs" style={{ color: "var(--text-muted)" }}>
-                    {row.waga_jednostkowa ? `${row.waga_jednostkowa.toFixed(2)} kg` : "—"}
+                    {row.waga_jednostkowa ? `${fmtL(row.waga_jednostkowa, 3)} kg` : "—"}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums font-mono" style={{ color: "var(--text-primary)" }}>
                     {row.ilosc_szt != null ? row.ilosc_szt : "—"}
@@ -256,7 +256,7 @@ export default function WyrobyGotowe() {
             <div className="rounded-lg p-3 space-y-1" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
               <div className="text-[10px] font-black uppercase text-[var(--text-muted)]">Aktualne opakowanie</div>
               <div className="font-medium text-white">{changeModal.row.opakowanie}</div>
-              <div className="text-xs text-[var(--text-muted)]">{changeModal.row.waga_jednostkowa?.toFixed(2)} kg/szt · {changeModal.row.ilosc_szt} szt. w partii</div>
+              <div className="text-xs text-[var(--text-muted)]">{changeModal.row.waga_jednostkowa ? fmtL(changeModal.row.waga_jednostkowa, 3) : '0'} kg/szt · {changeModal.row.ilosc_szt} szt. w partii</div>
             </div>
 
             {/* Nowe opakowanie */}
