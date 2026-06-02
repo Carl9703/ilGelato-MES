@@ -362,7 +362,13 @@ export default function Dokumenty() {
           body: JSON.stringify({ pozycje, referencja_zewnetrzna: pzReferencja || undefined }),
         });
         if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
-        showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        if (autoZatwierdz) {
+          const res2 = await fetch(`/api/dokumenty/${encodeURIComponent(editDocRef)}/zatwierdz`, { method: "POST" });
+          if (!res2.ok) throw new Error((await res2.json()).error || "Błąd zatwierdzenia");
+          showToast(`Dokument ${editDocRef} zaktualizowany i zatwierdzony.`, "ok");
+        } else {
+          showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        }
         setShowPz(false);
         setEditDocRef(null);
         fetchDokumenty();
@@ -527,7 +533,13 @@ export default function Dokumenty() {
           body: JSON.stringify({ pozycje: items, referencja_zewnetrzna: wzReferencja || undefined, id_kontrahenta: wzKontrahentId, data_dostawy: wzDataDostawy || undefined }),
         });
         if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
-        showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        if (autoZatwierdz) {
+          const res2 = await fetch(`/api/dokumenty/${encodeURIComponent(editDocRef)}/zatwierdz`, { method: "POST" });
+          if (!res2.ok) throw new Error((await res2.json()).error || "Błąd zatwierdzenia");
+          showToast(`Dokument ${editDocRef} zaktualizowany i zatwierdzony.`, "ok");
+        } else {
+          showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        }
         setShowWz(false);
         setEditDocRef(null);
         fetchDokumenty();
@@ -631,7 +643,13 @@ export default function Dokumenty() {
           body: JSON.stringify({ pozycje: items }),
         });
         if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
-        showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        if (autoZatwierdz) {
+          const res2 = await fetch(`/api/dokumenty/${encodeURIComponent(editDocRef)}/zatwierdz`, { method: "POST" });
+          if (!res2.ok) throw new Error((await res2.json()).error || "Błąd zatwierdzenia");
+          showToast(`Dokument ${editDocRef} zaktualizowany i zatwierdzony.`, "ok");
+        } else {
+          showToast(`Dokument ${editDocRef} zaktualizowany.`, "ok");
+        }
         setShowRw(false);
         setEditDocRef(null);
         fetchDokumenty();

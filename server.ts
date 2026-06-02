@@ -1020,6 +1020,67 @@ async function startServer() {
           updateData.data_dostawy = data_dostawy ? new Date(data_dostawy) : null;
         }
         await tx.dokumenty_Magazynowe.update({ where: { referencja: ref }, data: updateData });
+
+        // Usuń stare ruchy i utwórz nowe (bufor — nieaktywne)
+        await tx.ruchy_Magazynowe.deleteMany({ where: { referencja_dokumentu: ref } });
+
+        const user = await tx.uzytkownicy.findFirst();
+        if (!user) throw new Error("Brak użytkownika w systemie");
+
+        if (doc.typ === "WZ") {
+          for (const item of pozycje) {
+            const { id_partii, ilosc } = item;
+            const parsedIlosc = parseFloat(ilosc);
+            if (!id_partii || isNaN(parsedIlosc) || parsedIlosc <= 0) throw new Error("Nieprawidłowe dane pozycji WZ");
+            const partia = await tx.partie_Magazynowe.findUnique({ where: { id: id_partii } });
+            if (!partia) throw new Error(`Partia ${id_partii} nie istnieje`);
+            // Cena ważona z aktywnych ruchów przyjęcia
+            const pzRuchy = await tx.ruchy_Magazynowe.findMany({
+              where: { id_partii, cena_jednostkowa: { not: null }, ilosc: { gt: 0 }, czy_aktywne: true }
+            });
+            let cena_jednostkowa: number | null = null;
+            if (pzRuchy.length > 0) {
+              const totalIlosc = pzRuchy.reduce((s, r) => s + r.ilosc, 0);
+              const totalWartosc = pzRuchy.reduce((s, r) => s + r.ilosc * (r.cena_jednostkowa || 0), 0);
+              if (totalIlosc > 0) cena_jednostkowa = totalWartosc / totalIlosc;
+            }
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii, typ_ruchu: "WZ", ilosc: -parsedIlosc, cena_jednostkowa, referencja_dokumentu: ref, id_uzytkownika: user.id, czy_aktywne: false },
+            });
+          }
+        } else if (doc.typ === "RW") {
+          for (const item of pozycje) {
+            const { id_partii, ilosc } = item;
+            const parsedIlosc = parseFloat(ilosc);
+            if (!id_partii || isNaN(parsedIlosc) || parsedIlosc <= 0) throw new Error("Nieprawidłowe dane pozycji RW");
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii, typ_ruchu: "Zuzycie", ilosc: -parsedIlosc, referencja_dokumentu: ref, id_uzytkownika: user.id, czy_aktywne: false },
+            });
+          }
+        } else if (doc.typ === "PZ") {
+          for (const item of pozycje) {
+            const { id_asortymentu, numer_partii, ilosc, cena_jednostkowa, data_produkcji, termin_waznosci } = item;
+            const parsedIlosc = parseFloat(ilosc);
+            if (!numer_partii || isNaN(parsedIlosc) || parsedIlosc <= 0) throw new Error("Nieprawidłowe dane pozycji PZ");
+            // Znajdź lub utwórz partię (tak jak w POST /api/magazyn/pz)
+            let partia = await tx.partie_Magazynowe.findUnique({ where: { numer_partii } });
+            if (!partia) {
+              if (!id_asortymentu) throw new Error(`Brak ID asortymentu dla partii ${numer_partii}`);
+              partia = await tx.partie_Magazynowe.create({
+                data: {
+                  id_asortymentu,
+                  numer_partii,
+                  data_produkcji: data_produkcji ? new Date(data_produkcji) : null,
+                  termin_waznosci: termin_waznosci ? new Date(termin_waznosci) : null,
+                  status_partii: "Dostepna",
+                },
+              });
+            }
+            await tx.ruchy_Magazynowe.create({
+              data: { id_partii: partia.id, typ_ruchu: "PZ", ilosc: parsedIlosc, cena_jednostkowa: cena_jednostkowa ?? null, referencja_dokumentu: ref, id_uzytkownika: user.id, czy_aktywne: false },
+            });
+          }
+        }
       });
 
       const updated = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
