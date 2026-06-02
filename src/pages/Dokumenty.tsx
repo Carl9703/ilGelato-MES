@@ -1538,7 +1538,7 @@ export default function Dokumenty() {
                                       <option value="">— wybierz —</option>
                                       {row.dostepnePartie.map(p => (
                                         <option key={p.id} value={p.id}>
-                                          {p.numer_partii} · dost. {fmtL(p.stan, 2)} {row.jednostka_miary}
+                                          {p.numer_partii} · dost. {fmtL(p.stan, 3)} {row.jednostka_miary}
                                           {p.termin_waznosci ? ` · ww: ${fmt(p.termin_waznosci)}` : ""}
                                         </option>
                                       ))}
@@ -1804,7 +1804,7 @@ export default function Dokumenty() {
                                   <option value="">— wybierz —</option>
                                   {row.dostepnePartie.map(p => (
                                     <option key={p.id} value={p.id}>
-                                      {p.numer_partii} · dost. {fmtL(p.stan, 2)} {row.jednostka_miary}
+                                      {p.numer_partii} · dost. {fmtL(p.stan, 3)} {row.jednostka_miary}
                                       {p.termin_waznosci ? ` · ww: ${fmt(p.termin_waznosci)}` : ""}
                                     </option>
                                   ))}

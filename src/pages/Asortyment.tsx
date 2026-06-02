@@ -316,7 +316,7 @@ export default function Asortyment() {
     } catch (err: any) { showToast(err.message, "error"); }
   };
 
-  const fillZero = (n: number) => fmtL(n, 2);
+  const fillZero = (n: number) => fmtL(n, 3);
   const fmtDateTime = (d: string) => new Date(d).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
   const allGrupyIds = (g: GrupaTowarowa): string[] => [g.id, ...(g.podgrupy?.map(sg => sg.id) ?? [])];
@@ -1088,7 +1088,7 @@ export default function Asortyment() {
                     <td className={`text-right mono font-medium ${a.rezerwacje > 0 ? 'text-amber-400' : ''}`} style={a.rezerwacje <= 0 ? { color: 'var(--text-muted)' } : {}}>
                       {fillZero(a.rezerwacje)}
                     </td>
-                    <td className={`text-right mono font-medium ${(a.ilosc - a.rezerwacje) > 0 ? 'text-emerald-400' : ''}`} style={(a.ilosc - a.rezerwacje) <= 0 ? { color: 'var(--text-muted)' } : {}}>
+                    <td className={`text-right mono font-medium ${(a.ilosc - a.rezerwacje) > 0.001 ? 'text-emerald-400' : ''}`} style={(a.ilosc - a.rezerwacje) <= 0.001 ? { color: 'var(--text-muted)' } : {}}>
                       {fillZero(a.ilosc - a.rezerwacje)}
                     </td>
                     <td className="text-right mono font-medium" style={{ color: a.cena_zakupu != null ? 'var(--accent)' : 'var(--text-muted)' }}>
