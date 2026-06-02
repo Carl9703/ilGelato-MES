@@ -7,6 +7,7 @@ RUN apk add --no-cache python3 make g++
 
 COPY package*.json ./
 COPY prisma ./prisma/
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 RUN npm ci
 RUN npx prisma generate
 
@@ -24,11 +25,13 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 FROM node:22-alpine AS backend
 WORKDIR /app
 
-# Native build tools required by better-sqlite3
-RUN apk add --no-cache python3 make g++
+# Native build tools and Chromium with fonts for Puppeteer
+RUN apk add --no-cache python3 make g++ chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 COPY package*.json ./
 COPY prisma ./prisma/
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 RUN npm ci
 RUN npx prisma generate
 
