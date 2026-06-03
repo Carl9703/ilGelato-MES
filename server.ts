@@ -3520,8 +3520,17 @@ async function startServer() {
         orderBy: [{ termin_waznosci: "asc" }, { utworzono_dnia: "asc" }],
       });
       const buforWz3 = await getBuforWzByPartia(partie.map(p => p.id));
-      const result = partie.map(p => ({
-      })).filter(p => p.stan > 0.001);
+      const result = partie.map(p => {
+        const stan = p.ruchy_magazynowe.reduce((sum, r) => sum + r.ilosc, 0)
+                   - p.rezerwacje.reduce((sum, r) => sum + r.ilosc_zarezerwowana, 0)
+                   - (buforWz3.get(p.id) || 0);
+        return {
+          id: p.id,
+          numer_partii: p.numer_partii,
+          termin_waznosci: p.termin_waznosci,
+          stan: stan
+        };
+      }).filter(p => p.stan > 0.001);
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
