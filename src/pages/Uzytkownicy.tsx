@@ -16,6 +16,9 @@ export default function Uzytkownicy() {
   const [showAdd, setShowAdd] = useState(false);
   const [newLogin, setNewLogin] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  
+  const [editingLoginId, setEditingLoginId] = useState<string | null>(null);
+  const [editLoginValue, setEditLoginValue] = useState("");
 
   const fetchUsers = async () => {
     try {
@@ -55,6 +58,30 @@ export default function Uzytkownicy() {
       setShowAdd(false);
       setNewLogin("");
       setNewPassword("");
+      fetchUsers();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
+
+  const handleEditLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLoginId) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/auth/users/${editingLoginId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ login: editLoginValue })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Błąd podczas zmiany loginu");
+      
+      setEditingLoginId(null);
+      setEditLoginValue("");
       fetchUsers();
     } catch (e: any) {
       alert(e.message);
@@ -117,6 +144,12 @@ export default function Uzytkownicy() {
             
             <div className="flex gap-2">
               <button
+                onClick={() => { setEditingLoginId(u.id); setEditLoginValue(u.login); }}
+                className="text-[10px] font-bold px-2 py-1 rounded border border-slate-500/30 text-slate-300 hover:bg-slate-500/20 transition-colors"
+              >
+                Edytuj login
+              </button>
+              <button
                 onClick={() => handleToggleActive(u.id, u.czy_aktywne)}
                 className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${u.czy_aktywne ? 'border-orange-500/30 text-orange-400 hover:bg-orange-500/10' : 'border-green-500/30 text-green-400 hover:bg-green-500/10'}`}
               >
@@ -178,6 +211,45 @@ export default function Uzytkownicy() {
                   className="px-3 py-1.5 rounded text-xs font-bold bg-orange-500 text-white hover:bg-orange-600 shadow-lg"
                 >
                   Utwórz konto
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editingLoginId && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-app)] border border-[var(--border)] rounded-xl w-full max-w-sm overflow-hidden shadow-2xl">
+            <div className="px-4 py-3 border-b border-[var(--border)] flex justify-between items-center bg-[var(--bg-panel)]">
+              <h3 className="font-bold text-white text-sm">Edytuj login</h3>
+            </div>
+            <form onSubmit={handleEditLoginSubmit} className="p-4 flex flex-col gap-3">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Nowy login</label>
+                <input
+                  autoFocus
+                  required
+                  value={editLoginValue}
+                  onChange={e => setEditLoginValue(e.target.value)}
+                  className="w-full bg-[var(--bg-input)] border border-[var(--border)] text-white rounded px-2.5 py-1.5 outline-none focus:border-orange-500 text-sm"
+                  placeholder="Login"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end mt-4">
+                <button
+                  type="button"
+                  onClick={() => setEditingLoginId(null)}
+                  className="px-3 py-1.5 rounded text-xs font-semibold text-slate-400 hover:bg-[var(--bg-panel)]"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded text-xs font-bold bg-orange-500 text-white hover:bg-orange-600 shadow-lg"
+                >
+                  Zapisz
                 </button>
               </div>
             </form>

@@ -112,9 +112,18 @@ router.post("/users", async (req, res) => {
 });
 
 router.put("/users/:id", async (req, res) => {
-  const { haslo, czy_aktywne } = req.body;
+  const { login, haslo, czy_aktywne } = req.body;
   try {
     const updateData: any = {};
+    
+    if (login) {
+      const existing = await prisma.uzytkownicy.findUnique({ where: { login } });
+      if (existing && existing.id !== req.params.id) {
+        return res.status(400).json({ error: "Ten login jest już zajęty przez innego użytkownika" });
+      }
+      updateData.login = login;
+    }
+    
     if (haslo) {
       if (haslo.length < 4) return res.status(400).json({ error: "Hasło musi mieć co najmniej 4 znaki" });
       updateData.haslo = await bcrypt.hash(haslo, 10);
