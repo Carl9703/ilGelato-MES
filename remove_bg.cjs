@@ -1,6 +1,7 @@
 const { Jimp } = require('jimp');
+const path = require('path');
 
-Jimp.read('d:/mes/public/logo.jpg')
+Jimp.read(path.join(__dirname, 'public', 'logo.jpg'))
   .then(image => {
     image.scan(0, 0, image.bitmap.width, image.bitmap.height, function(x, y, idx) {
       const r = this.bitmap.data[idx + 0];
@@ -18,7 +19,7 @@ Jimp.read('d:/mes/public/logo.jpg')
     const size = Math.max(image.bitmap.width, image.bitmap.height);
     image.contain({ w: size, h: size });
     
-    image.write('d:/mes/public/logo.png', () => {
+    image.write(path.join(__dirname, 'public', 'logo.png'), () => {
       console.log('Ukończono! Logo jest kwadratowe.');
     });
   })

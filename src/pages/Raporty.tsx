@@ -89,8 +89,14 @@ type ActiveReport = "sprzedaz" | "stany_bez_cen" | "stany_ceny_sprzedazy" | "sta
 
 export default function Raporty() {
   const today = new Date();
-  const firstOfYear = new Date(today.getFullYear(), 0, 1).toISOString().slice(0, 10);
-  const todayStr = today.toISOString().slice(0, 10);
+  const toLocalDateStr = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  };
+  const firstOfYear = toLocalDateStr(new Date(today.getFullYear(), 0, 1));
+  const todayStr = toLocalDateStr(today);
 
   const [activeReport, setActiveReport] = useState<ActiveReport>("sprzedaz");
 
@@ -268,7 +274,7 @@ export default function Raporty() {
             "Lody gelato",
             fmtL(fsSumaKg, 3),
             "kg",
-            `${fsSredniaCena.toFixed(4)} zł`,
+            `${fsSredniaCena.toFixed(2)} zł`,
             `${fsVatRate}%`,
             `${fmt(fsWartoscNetto)} zł`,
             `${fmt(fsKwotaVat)} zł`,
@@ -1240,7 +1246,7 @@ export default function Raporty() {
                       <tbody>
                         {[
                           { label: "Ilość", value: `${fmtL(fsSumaKg, 3)} kg`, color: "var(--text-primary)", bold: true },
-                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(4)} zł`, color: "var(--text-secondary)", bold: false },
+                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(2)} zł`, color: "var(--text-secondary)", bold: false },
                           { label: "Wartość netto", value: `${fmt(fsWartoscNetto)} zł`, color: "var(--ok)", bold: true },
                           { label: `VAT ${fsVatRate}%`, value: `${fmt(fsKwotaVat)} zł`, color: "var(--warn)", bold: false },
                         ].map(row => (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Save, X, Package, ArrowLeft, History, FileText, Search, FileSpreadsheet } from "lucide-react";
-import { fmtL, fmtDate } from "../utils/fmt";
+import { fmtL, fmtDate, clampDecimals } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
 import ImportAsortymentuModal from "../components/ImportAsortymentuModal";
@@ -166,7 +166,7 @@ export default function Asortyment() {
       setSkladnikiOpisForm({ producent: (a as any).producent || "", zrodlo_danych: (a as any).zrodlo_danych || "", skladniki_opis: (a as any).skladniki_opis || "", moze_zawierac: (a as any).moze_zawierac || "" });
     }).catch(() => {});
     fetch(`/api/asortyment/${a.id}/ceny`).then(r => r.json()).then(d => {
-      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? String(d.cena_sprzedazy) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "5", cena_zakupu: d?.cena_zakupu != null ? String(d.cena_zakupu) : "" });
+      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? Number(d.cena_sprzedazy).toFixed(2) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "5", cena_zakupu: d?.cena_zakupu != null ? Number(d.cena_zakupu).toFixed(2) : "" });
     }).catch(() => {});
   };
 
@@ -198,6 +198,15 @@ export default function Asortyment() {
     try {
       const r = await fetch(`/api/asortyment/${selectedItem.id}/ceny`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cenyForm) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Błąd zapisu cen");
+      
+      const updatedCeny = await r.json();
+      const mergedItem = { ...selectedItem, ...updatedCeny };
+      setSelectedItem(mergedItem);
+      if (detailData) {
+        setDetailData(prev => prev ? { ...prev, ogolne: mergedItem } : null);
+      }
+      fetchAll();
+
       showToast("Ceny zapisane!", "ok");
     } catch (e: any) { showToast(e.message || "Błąd zapisu", "error"); } finally { setCenySaving(false); }
   };
@@ -562,7 +571,7 @@ export default function Asortyment() {
                         <input
                           type="number" step="any" min="0"
                           value={odzywczeForm[key] ?? ""}
-                          onChange={e => setOdzywczeForm(f => ({ ...f, [key]: e.target.value }))}
+                          onChange={e => setOdzywczeForm(f => ({ ...f, [key]: clampDecimals(e.target.value, 3) }))}
                           className="w-24 text-right rounded px-2 py-1 text-sm font-mono outline-none focus:ring-1"
                           style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                           placeholder="—"
@@ -668,7 +677,7 @@ export default function Asortyment() {
                       <input
                         type="number" step="0.01" min="0"
                         value={cenyForm.cena_zakupu}
-                        onChange={e => setCenyForm(f => ({ ...f, cena_zakupu: e.target.value }))}
+                        onChange={e => setCenyForm(f => ({ ...f, cena_zakupu: clampDecimals(e.target.value, 2) }))}
                         className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
                         style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                         placeholder="0.00"
@@ -683,7 +692,7 @@ export default function Asortyment() {
                         <input
                           type="number" step="0.01" min="0"
                           value={cenyForm.cena_sprzedazy}
-                          onChange={e => setCenyForm(f => ({ ...f, cena_sprzedazy: e.target.value }))}
+                          onChange={e => setCenyForm(f => ({ ...f, cena_sprzedazy: clampDecimals(e.target.value, 2) }))}
                           className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
                           style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                           placeholder="0.00"
@@ -1092,10 +1101,10 @@ export default function Asortyment() {
                       {fillZero(a.ilosc - a.rezerwacje)}
                     </td>
                     <td className="text-right mono font-medium" style={{ color: a.cena_zakupu != null ? 'var(--accent)' : 'var(--text-muted)' }}>
-                      {a.cena_zakupu != null ? `${fillZero(a.cena_zakupu)} zł` : '—'}
+                      {a.cena_zakupu != null ? `${fmtL(a.cena_zakupu, 2)} zł` : '—'}
                     </td>
                     <td className="text-right mono font-medium" style={{ color: a.cena_sprzedazy != null ? 'var(--ok)' : 'var(--text-muted)' }}>
-                      {a.cena_sprzedazy != null ? `${fillZero(a.cena_sprzedazy)} zł` : '—'}
+                      {a.cena_sprzedazy != null ? `${fmtL(a.cena_sprzedazy, 2)} zł` : '—'}
                     </td>
                   </tr>
                 ))}

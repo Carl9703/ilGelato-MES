@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, FileText, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard } from "lucide-react";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
-import { fmtL, fmtDate, resolveDisplayUnit } from "../utils/fmt";
+import { fmtL, fmtDate, resolveDisplayUnit, clampDecimals } from "../utils/fmt";
 import ConfirmModal from "../components/ConfirmModal";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
@@ -891,7 +891,7 @@ export default function Produkcja() {
                           <input
                             type="number" min="0" step="any"
                             value={planIlosci[r.id] || ""}
-                            onChange={e => setPlanIlosci(prev => ({ ...prev, [r.id]: e.target.value }))}
+                            onChange={e => setPlanIlosci(prev => ({ ...prev, [r.id]: clampDecimals(e.target.value, 3) }))}
                             placeholder="0"
                             className="w-24 text-right rounded px-2 py-1 text-sm font-mono outline-none focus:ring-1"
                             style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
@@ -1497,7 +1497,7 @@ export default function Produkcja() {
                             min="0.001"
                             step="any"
                             value={editIlosc}
-                            onChange={e => setEditIlosc(e.target.value)}
+                            onChange={e => setEditIlosc(clampDecimals(e.target.value, 3))}
                             onKeyDown={e => { if (e.key === "Enter") handleSaveEdit(); }}
                             className="w-20 bg-[var(--bg-panel)] border border-[var(--border)] focus:border-blue-500 rounded-lg px-2 py-1 text-white font-mono text-sm text-right focus:outline-none"
                           />
@@ -1752,7 +1752,7 @@ export default function Produkcja() {
                                   </select>
                                   <input type="number" step="0.001" value={zp.ilosc}
                                     onChange={e => {
-                                       let val = parseFloat(e.target.value);
+                                       let val = parseFloat(clampDecimals(e.target.value, 3));
                                        if(isNaN(val)) val = 0;
                                        setter((prev: any[]) => prev.map((x: any) => {
                                           if (x.id_asortymentu !== s.id_asortymentu) return x;
@@ -2063,7 +2063,7 @@ export default function Produkcja() {
                       <div className="w-32 space-y-1">
                         <label className="text-[var(--text-secondary)] text-xs font-semibold uppercase tracking-wider">Ilość (plan)</label>
                         <div className="relative">
-                          <input type="text" value={wizBazaIlosc} onChange={e => setWizBazaIlosc(e.target.value)} placeholder="0"
+                          <input type="text" value={wizBazaIlosc} onChange={e => setWizBazaIlosc(clampDecimals(e.target.value, 3))} placeholder="0"
                             className="w-full rounded px-3 py-2 pr-10 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>{bazaRec?.asortyment_docelowy.jednostka_miary}</span>
                         </div>
@@ -2071,7 +2071,7 @@ export default function Produkcja() {
                       <div className="w-32 space-y-1">
                         <label className="text-[var(--text-secondary)] text-xs font-semibold uppercase tracking-wider">Ilość (rzeczyw.)</label>
                         <div className="relative">
-                          <input type="text" value={wizBazaRzeczywistaIlosc} onChange={e => setWizBazaRzeczywistaIlosc(e.target.value)} placeholder={wizBazaIlosc || "0"}
+                          <input type="text" value={wizBazaRzeczywistaIlosc} onChange={e => setWizBazaRzeczywistaIlosc(clampDecimals(e.target.value, 3))} placeholder={wizBazaIlosc || "0"}
                             className="w-full rounded px-3 py-2 pr-10 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>{bazaRec?.asortyment_docelowy.jednostka_miary}</span>
                         </div>
@@ -2384,7 +2384,7 @@ export default function Produkcja() {
                                       </select>
                                       <div className="relative">
                                         <input type="text" value={op.waga_kg} placeholder="0.00"
-                                          onChange={e => setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, waga_kg: e.target.value } : x) }))}
+                                          onChange={e => setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, waga_kg: clampDecimals(e.target.value, 3) } : x) }))}
                                           className="w-20 text-right rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-[var(--accent)] pr-6"
                                           style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                                         <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>kg</span>
@@ -2503,7 +2503,7 @@ export default function Produkcja() {
                             <div className="relative">
                               <input
                                 type="text" value={op.waga_kg} placeholder="0.00"
-                                onChange={e => setOpakowaniaWpisy(prev => prev.map((x, i) => i === idx ? { ...x, waga_kg: e.target.value } : x))}
+                                onChange={e => setOpakowaniaWpisy(prev => prev.map((x, i) => i === idx ? { ...x, waga_kg: clampDecimals(e.target.value, 3) } : x))}
                                 className="w-24 text-right rounded px-2 py-1.5 text-sm font-mono outline-none focus:ring-1 pr-7"
                                 style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                               />
@@ -2671,7 +2671,7 @@ export default function Produkcja() {
                                    className="w-28 bg-[var(--bg-input)] border border-[var(--border-dim)] text-blue-300 rounded-lg px-3 py-2 text-right font-mono font-bold outline-none focus:border-blue-500 transition-colors"
                                    value={currentAllocation || ""}
                                    onChange={(e) => {
-                                     const val = parseFloat(e.target.value.replace(",", "."));
+                                     const val = parseFloat(clampDecimals(e.target.value, 3).replace(",", "."));
                                      const newZuzyte = { ...zuzytePartie };
                                      const list = [...(newZuzyte[activePicker.ingredId] || [])];
                                      const idx = list.findIndex(x => x.id_partii === p.id);

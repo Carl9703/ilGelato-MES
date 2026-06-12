@@ -55,6 +55,12 @@ model Dokumenty_Magazynowe {
   uzytkownik_zatwierdzenia     Uzytkownicy?          @relation("DokumentZatwierdzony", fields: [id_uzytkownika_zatwierdzenia], references: [id])
   uzytkownik_utworzenia        Uzytkownicy           @relation("DokumentUtworzony", fields: [id_uzytkownika_utworzenia], references: [id])
   opakowania_wz                Opakowania_Wyrobowe[]
+
+  @@index([id_uzytkownika_utworzenia])
+  @@index([id_uzytkownika_zatwierdzenia])
+  @@index([id_uzytkownika_anulowania])
+  @@index([id_kontrahenta])
+  @@index([status])
 }
 
 model Asortyment {
@@ -88,6 +94,9 @@ model Asortyment {
   ruchy_opakowan           Ruchy_Opakowan_Zwrotnych[]
   skladniki_receptury      Skladniki_Receptury[]      @relation("AsortymentSkladnika")
   wartosci_odzywcze        Wartosci_Odzywcze?
+
+  @@index([id_grupy])
+  @@index([typ_asortymentu])
 }
 
 model Grupy_Towarowe {
@@ -100,8 +109,10 @@ model Grupy_Towarowe {
   utworzono_dnia      DateTime         @default(now())
   zaktualizowano_dnia DateTime         @updatedAt
   asortyment          Asortyment[]
-  grupa_nadrzedna     Grupy_Towarowe?  @relation("GrupyHierarchia", fields: [id_grupy_nadrzednej], references: [id])
+  grupa_nadrzedna     Grupy_Towarowe?  @relation("GrupyHierarchia", fields: [id_grupy_nadrzednej], references: [id], onDelete: SetNull)
   podgrupy            Grupy_Towarowe[] @relation("GrupyHierarchia")
+
+  @@index([id_grupy_nadrzednej])
 }
 
 model Wartosci_Odzywcze {
@@ -119,7 +130,7 @@ model Wartosci_Odzywcze {
   sol                 Float?
   utworzono_dnia      DateTime   @default(now())
   zaktualizowano_dnia DateTime   @updatedAt
-  asortyment          Asortyment @relation(fields: [id_asortymentu], references: [id])
+  asortyment          Asortyment @relation(fields: [id_asortymentu], references: [id], onDelete: Cascade)
 }
 
 model Alergeny_Asortymentu {
@@ -141,7 +152,7 @@ model Alergeny_Asortymentu {
   mieczaki            Boolean    @default(false)
   utworzono_dnia      DateTime   @default(now())
   zaktualizowano_dnia DateTime   @updatedAt
-  asortyment          Asortyment @relation(fields: [id_asortymentu], references: [id])
+  asortyment          Asortyment @relation(fields: [id_asortymentu], references: [id], onDelete: Cascade)
 }
 
 model Partie_Magazynowe {
@@ -188,6 +199,8 @@ model Ruchy_Magazynowe {
   @@index([referencja_dokumentu])
   @@index([id_zlecenia])
   @@index([czy_aktywne])
+  @@index([id_uzytkownika])
+  @@index([typ_ruchu])
 }
 
 model Receptury {
@@ -219,9 +232,10 @@ model Skladniki_Receptury {
   utworzono_dnia           DateTime   @default(now())
   zaktualizowano_dnia      DateTime   @updatedAt
   asortyment_skladnika     Asortyment @relation("AsortymentSkladnika", fields: [id_asortymentu_skladnika], references: [id])
-  receptura                Receptury  @relation(fields: [id_receptury], references: [id])
+  receptura                Receptury  @relation(fields: [id_receptury], references: [id], onDelete: Cascade)
 
   @@index([id_receptury])
+  @@index([id_asortymentu_skladnika])
 }
 
 model Sesja_Robocza {
@@ -240,7 +254,7 @@ model Sesja_Robocza_Log {
   zdarzenie         String
   dane_json         String
   utworzono_dnia    DateTime      @default(now())
-  sesja_robocza     Sesja_Robocza @relation(fields: [id_sesji_roboczej], references: [id])
+  sesja_robocza     Sesja_Robocza @relation(fields: [id_sesji_roboczej], references: [id], onDelete: Cascade)
 }
 
 model Sesje_Produkcji {
@@ -268,8 +282,12 @@ model Zlecenia_Produkcyjne {
   zaktualizowano_dnia      DateTime                @updatedAt
   rezerwacje               Rezerwacje_Magazynowe[]
   ruchy_magazynowe         Ruchy_Magazynowe[]
-  sesja                    Sesje_Produkcji?        @relation(fields: [id_sesji], references: [id])
+  sesja                    Sesje_Produkcji?        @relation(fields: [id_sesji], references: [id], onDelete: SetNull)
   receptura                Receptury               @relation(fields: [id_receptury], references: [id])
+
+  @@index([id_receptury])
+  @@index([id_sesji])
+  @@index([status])
 }
 
 model Rezerwacje_Magazynowe {
@@ -327,9 +345,13 @@ model Pozycje_Sesji_Gelato {
   utworzono_dnia      DateTime               @default(now())
   zaktualizowano_dnia DateTime               @updatedAt
   opakowania          Opakowania_Wyrobowe[]
-  partia_bazy         Partie_Magazynowe?     @relation(fields: [id_partii_bazy], references: [id])
+  partia_bazy         Partie_Magazynowe?     @relation(fields: [id_partii_bazy], references: [id], onDelete: SetNull)
   receptura           Receptury              @relation(fields: [id_receptury], references: [id])
-  sesja               Sesje_Produkcji_Gelato @relation(fields: [id_sesji], references: [id])
+  sesja               Sesje_Produkcji_Gelato @relation(fields: [id_sesji], references: [id], onDelete: Cascade)
+
+  @@index([id_sesji])
+  @@index([id_receptury])
+  @@index([id_partii_bazy])
 }
 
 model Opakowania_Wyrobowe {
@@ -354,6 +376,13 @@ model Opakowania_Wyrobowe {
   asortyment          Asortyment             @relation(fields: [id_asortymentu], references: [id])
   pozycja_sesji       Pozycje_Sesji_Gelato?  @relation(fields: [id_pozycji_sesji], references: [id])
   sesja               Sesje_Produkcji_Gelato @relation(fields: [id_sesji], references: [id])
+
+  @@index([id_sesji])
+  @@index([id_pozycji_sesji])
+  @@index([id_asortymentu])
+  @@index([id_typu_opakowania])
+  @@index([id_partii_bazy])
+  @@index([id_dokumentu_wz])
 }
 
 model Ruchy_Opakowan_Zwrotnych {

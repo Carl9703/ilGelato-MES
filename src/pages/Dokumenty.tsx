@@ -8,7 +8,7 @@ import AsortymentSelektor, { WybranyTowar } from "../components/AsortymentSelekt
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
-import { fmtL, fmtDate, fmtFull } from "../utils/fmt";
+import { fmtL, fmtDate, fmtFull, clampDecimals } from "../utils/fmt";
 import { printDocument } from "../utils/printDoc";
 import ConfirmModal from "../components/ConfirmModal";
 import { Spinner } from "../components/Spinner";
@@ -308,7 +308,7 @@ export default function Dokumenty() {
         jednostka_miary: w.jednostka_miary,
         numer_partii: prefix ? `${prefix}-${startIdx + i}` : "",
         ilosc: w.ilosc || "",
-        cena_jednostkowa: w.cena_zakupu != null ? String(w.cena_zakupu) : "",
+        cena_jednostkowa: w.cena_zakupu != null ? Number(w.cena_zakupu).toFixed(2) : "",
         data_produkcji: "",
         termin_waznosci: "",
         _open: true,
@@ -1226,7 +1226,7 @@ export default function Dokumenty() {
                               </label>
                               <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
                                 <input type="number" step="0.001" min="0" value={row.ilosc}
-                                  onChange={e => updatePzRow(row._key, "ilosc", e.target.value)}
+                                  onChange={e => updatePzRow(row._key, "ilosc", clampDecimals(e.target.value, 3))}
                                   placeholder="0"
                                   className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono font-bold bg-transparent outline-none text-right"
                                   style={{ color: '#4ade80' }}
@@ -1240,7 +1240,7 @@ export default function Dokumenty() {
                               <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena jedn.</label>
                               <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
                                 <input type="number" step="0.01" min="0" value={row.cena_jednostkowa}
-                                  onChange={e => updatePzRow(row._key, "cena_jednostkowa", e.target.value)}
+                                  onChange={e => updatePzRow(row._key, "cena_jednostkowa", clampDecimals(e.target.value, 2))}
                                   placeholder="—"
                                   className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
                                   style={{ color: 'var(--text-primary)' }}
@@ -1514,7 +1514,7 @@ export default function Dokumenty() {
 
                             {/* Główna siatka pól */}
                             <div className="p-3">
-                              <div className="grid gap-1.5 grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr]">
+                              <div className="grid gap-1.5 grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr]">
 
                                 {/* Partia */}
                                 <div>
@@ -1546,6 +1546,28 @@ export default function Dokumenty() {
                                   )}
                                 </div>
 
+                                {/* Ilość */}
+                                <div>
+                                  <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Ilość</label>
+                                  {typy_opakowan.length > 0 ? (
+                                    <div className="rounded px-2 py-1 text-[11px] font-mono text-right h-7 flex items-center justify-end" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                                      {fmtL(ilosc, 3)} <span className="text-[9px] ml-0.5 opacity-60">{row.jednostka_miary}</span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
+                                      <input
+                                        type="number" step="0.001" min="0"
+                                        value={row.ilosc}
+                                        onChange={e => updateWzRow(row._key, "ilosc", clampDecimals(e.target.value, 3))}
+                                        className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
+                                        style={{ color: 'var(--text-primary)' }}
+                                        placeholder="0.000"
+                                      />
+                                      <span className="px-1 text-[9px] font-semibold border-l shrink-0" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>{row.jednostka_miary}</span>
+                                    </div>
+                                  )}
+                                </div>
+
                                 {/* Cena netto */}
                                     <div>
                                       <label className="block text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Cena netto</label>
@@ -1553,7 +1575,7 @@ export default function Dokumenty() {
                                         <input
                                           type="number" step="0.01" min="0"
                                           value={row.cena_netto}
-                                          onChange={e => updateWzRow(row._key, "cena_netto", e.target.value)}
+                                          onChange={e => updateWzRow(row._key, "cena_netto", clampDecimals(e.target.value, 2))}
                                           className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono bg-transparent outline-none text-right"
                                           style={{ color: 'var(--text-primary)' }}
                                           placeholder="0.00"
@@ -1619,7 +1641,7 @@ export default function Dokumenty() {
                                             value={row.sztuki[opKey] ?? ""}
                                             placeholder="0"
                                             className="w-14 bg-[var(--bg-app)] border border-[var(--border)] text-white rounded px-1.5 py-1 font-mono text-xs outline-none focus:border-orange-500 text-right"
-                                            onChange={e => updateWzSztuki(row._key, opKey, parseFloat(e.target.value) || 0, selectedPartia!.opakowania!)}
+                                            onChange={e => updateWzSztuki(row._key, opKey, parseInt(e.target.value) || 0, selectedPartia!.opakowania!)}
                                           />
                                           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>/{op.count} szt.</span>
                                         </div>
@@ -1823,7 +1845,7 @@ export default function Dokumenty() {
                               </label>
                               <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
                                 <input type="number" step="0.001" min="0.001" value={row.ilosc}
-                                  onChange={e => updateRwRow(row._key, "ilosc", e.target.value)}
+                                  onChange={e => updateRwRow(row._key, "ilosc", clampDecimals(e.target.value, 3))}
                                   placeholder="0"
                                   className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono font-bold bg-transparent outline-none text-right"
                                   style={{ color: '#f87171' }}

@@ -78,7 +78,7 @@ export function generateDocumentHTML(docData: any): string {
       <td class="r mono">${num(p.wartosc_netto)} zł</td>
       <td class="r mono total">${num(p.wartosc_brutto)} zł</td>
     ` : isCostDoc ? `
-      <td class="r mono">${p.cena_jednostkowa != null && p.cena_jednostkowa > 0 ? num(p.cena_jednostkowa, 4) + ' zł' : '—'}</td>
+      <td class="r mono">${p.cena_jednostkowa != null && p.cena_jednostkowa > 0 ? num(p.cena_jednostkowa) + ' zł' : '—'}</td>
       <td class="r mono total">${p.wartosc != null && p.wartosc > 0 ? num(p.wartosc) + ' zł' : '—'}</td>
     ` : '';
     const iloscKg = p.ilosc_kg != null ? `<span class="sub">${fmtL(p.ilosc_kg, 3)} kg</span>` : '';

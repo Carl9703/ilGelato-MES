@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Settings, Tag, KeyRound } from "lucide-react";
 import GrupyTowarowe from "./GrupyTowarowe";
 import ZmianaHasla from "./ZmianaHasla";
+import Uzytkownicy from "./Uzytkownicy";
+import { Users } from "lucide-react";
 
 type Tab = {
   id: string;
@@ -22,6 +24,12 @@ const tabs: Tab[] = [
     label: "Zmiana hasła",
     icon: KeyRound,
     component: <ZmianaHasla />,
+  },
+  {
+    id: "uzytkownicy",
+    label: "Użytkownicy",
+    icon: Users,
+    component: <Uzytkownicy />,
   },
 ];
 

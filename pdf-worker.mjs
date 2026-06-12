@@ -5,16 +5,19 @@ import { writeFileSync, unlinkSync, readFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 
+import crypto from 'crypto';
+
 const chunks = [];
 process.stdin.on('data', chunk => chunks.push(chunk));
 process.stdin.on('end', async () => {
   const html = Buffer.concat(chunks).toString('utf-8');
-  const tmpFile = path.join(os.tmpdir(), `mes-pdf-${Date.now()}.html`);
+  const tmpFile = path.join(os.tmpdir(), `mes-pdf-${crypto.randomUUID()}.html`);
   
+  let browser;
   try {
     writeFileSync(tmpFile, html, 'utf-8');
 
-    const browser = await puppeteer.launch({
+    browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
@@ -33,7 +36,6 @@ process.stdin.on('end', async () => {
       timeout: 60000,
     });
 
-    await browser.close();
     process.stdout.write(pdf, () => {
       process.exit(0);
     });
@@ -41,6 +43,7 @@ process.stdin.on('end', async () => {
     process.stderr.write(String(err));
     process.exit(1);
   } finally {
+    try { if (browser) await browser.close(); } catch {}
     try { unlinkSync(tmpFile); } catch {}
   }
 });

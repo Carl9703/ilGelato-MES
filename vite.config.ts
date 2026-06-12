@@ -7,9 +7,6 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
@@ -23,7 +20,10 @@ export default defineConfig(({mode}) => {
         ignored: ['**/*.txt', '**/*.log', '**/*.json', '**/node_modules/**', '**/prisma/*.db', '**/prisma/*.db-shm', '**/prisma/*.db-wal'],
       },
       proxy: {
-        '/api': 'http://localhost:3001',
+        '/api': {
+          target: 'http://127.0.0.1:3001',
+          changeOrigin: true
+        }
       },
     },
   };

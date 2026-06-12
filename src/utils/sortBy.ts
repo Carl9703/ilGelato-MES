@@ -9,8 +9,8 @@ export function sortBy<T>(
     const av = accessor(a);
     const bv = accessor(b);
     if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
+    if (av == null) return dir === 'asc' ? 1 : -1;
+    if (bv == null) return dir === 'asc' ? -1 : 1;
     let cmp: number;
     if (typeof av === 'number' && typeof bv === 'number') {
       cmp = av - bv;

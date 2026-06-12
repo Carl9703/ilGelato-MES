@@ -11,13 +11,9 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.startsWith("/api/")) {
     const token = localStorage.getItem("mes-token");
     if (token) {
-      init = {
-        ...init,
-        headers: {
-          ...(init?.headers || {}),
-          Authorization: `Bearer ${token}`,
-        },
-      };
+      const headers = new Headers(init?.headers);
+      headers.set('Authorization', `Bearer ${token}`);
+      init = { ...init, headers };
     }
   }
   return _origFetch(input, init);

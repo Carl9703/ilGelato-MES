@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Save, X, BookOpen, Trash2, Edit2, Calculator, Search } from "lucide-react";
-import { fmtL } from "../utils/fmt";
+import { fmtL, fmtDate, fmtFull, resolveDisplayUnit, clampDecimals } from "../utils/fmt";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
 import { EmptyState } from "../components/EmptyState";
@@ -349,7 +349,7 @@ export default function Receptury() {
                   <div>
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Rozmiar wsadu</div>
                     <div className="font-mono font-medium text-white">
-                      {kartaReceptura.wielkosc_produkcji ?? 1} {kartaReceptura.asortyment_docelowy.jednostka_miary}
+                      {fmtL(kartaReceptura.wielkosc_produkcji ?? 1, 3)} {kartaReceptura.asortyment_docelowy.jednostka_miary}
                     </div>
                   </div>
 
@@ -401,7 +401,7 @@ export default function Receptury() {
                     </div>
                     <div className="text-sm font-mono font-bold px-2 py-2 rounded"
                       style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)', opacity: 0.7 }}>
-                      {parseFloat(wielkoscProdukcji) || 0}
+                      {fmtL(parseFloat(wielkoscProdukcji) || 0, 3)}
                     </div>
                   </div>
                 </div>
@@ -552,7 +552,7 @@ export default function Receptury() {
                                   </td>
                                   <td>
                                     <input type="text" value={s.ilosc_wymagana} placeholder="0"
-                                      onChange={e => { const v=e.target.value.replace(",","."); setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], ilosc_wymagana:v}; return n; }); }}
+                                      onChange={e => { const v=clampDecimals(e.target.value.replace(",","."), 3); setSkladniki(prev => { const n=[...prev]; n[idx]={...n[idx], ilosc_wymagana:v}; return n; }); }}
                                       className="text-xs font-mono font-bold text-right outline-none w-full"
                                       style={{ background:'var(--bg-input)', border:'1px solid var(--border)', borderRadius:4, color:'#4ade80', padding:'4px 6px' }} />
                                   </td>
@@ -616,14 +616,14 @@ export default function Receptury() {
                         <div>
                           <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Wielkość produkcji (JM)</label>
                           <input type="number" step="any" min="0.001" value={kalcWielkosc}
-                            onChange={e => setKalcWielkosc(e.target.value)}
+                            onChange={e => setKalcWielkosc(clampDecimals(e.target.value, 3))}
                             className="w-28 rounded px-3 py-2 text-sm font-mono outline-none"
                             style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                         </div>
                         <div>
                           <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Narzut (%)</label>
                           <input type="number" step="0.1" min="0" value={kalcNarzut}
-                            onChange={e => setKalcNarzut(e.target.value)}
+                            onChange={e => setKalcNarzut(clampDecimals(e.target.value, 2))}
                             className="w-24 rounded px-3 py-2 text-sm font-mono outline-none"
                             style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                         </div>

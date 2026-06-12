@@ -1,4 +1,4 @@
-import { fmtL, fmtDate as fmt, fmtFull, resolveDisplayUnit } from './fmt';
+import { fmtL, fmtDate as fmt, fmtFull, resolveDisplayUnit, esc, round2, round3 } from './fmt';
 
 export async function downloadPdfFromHtml(html: string, filename: string) {
   try {
@@ -43,12 +43,12 @@ export function computeVatSummary(docData: any) {
     const netto = p.wartosc_netto;
     const brutto = p.wartosc_brutto;
     const vatKwota = brutto - netto;
-    totalNetto += netto; totalVat += vatKwota; totalBrutto += brutto;
+    totalNetto = round2(totalNetto + netto); totalVat = round2(totalVat + vatKwota); totalBrutto = round2(totalBrutto + brutto);
     const key = p.stawka_vat != null ? String(p.stawka_vat) : '?';
     if (!groups[key]) groups[key] = { netto: 0, vat: 0, brutto: 0 };
-    groups[key].netto += netto;
-    groups[key].vat += vatKwota;
-    groups[key].brutto += brutto;
+    groups[key].netto = round2(groups[key].netto + netto);
+    groups[key].vat = round2(groups[key].vat + vatKwota);
+    groups[key].brutto = round2(groups[key].brutto + brutto);
   }
   if (!hasAnyPrices) return null;
   return { totalNetto, totalVat, totalBrutto, groups };
@@ -74,25 +74,25 @@ export async function printDocument(docData: any): Promise<void> {
       <td class="r mono">${num(p.wartosc_netto)} zł</td>
       <td class="r mono total">${num(p.wartosc_brutto)} zł</td>
     ` : isCostDoc ? `
-      <td class="r mono">${p.cena_jednostkowa != null && p.cena_jednostkowa > 0 ? num(p.cena_jednostkowa, 4) + ' zł' : '—'}</td>
+      <td class="r mono">${p.cena_jednostkowa != null && p.cena_jednostkowa > 0 ? num(p.cena_jednostkowa) + ' zł' : '—'}</td>
       <td class="r mono total">${p.wartosc != null && p.wartosc > 0 ? num(p.wartosc) + ' zł' : '—'}</td>
     ` : '';
     const iloscKg = p.ilosc_kg != null ? `<span class="sub">${fmtL(p.ilosc_kg, 3)} kg</span>` : '';
     if (hasOp) {
       return `<tr>
         <td class="c lp">${i + 1}</td>
-        <td><b>${p.wyrob || p.asortyment}</b>${p.wyrob ? `<span class="sub">${p.asortyment}</span>` : ''}</td>
-        <td class="mono small">${p.numer_partii}</td>
-        <td class="r mono b">${fmtL(p.ilosc, p.jednostka === 'szt.' ? 0 : 3)} ${p.jednostka}${iloscKg}</td>
+        <td><b>${esc(p.wyrob || p.asortyment)}</b>${p.wyrob ? `<span class="sub">${esc(p.asortyment)}</span>` : ''}</td>
+        <td class="mono small">${esc(p.numer_partii)}</td>
+        <td class="r mono b">${fmtL(p.ilosc, p.jednostka === 'szt.' ? 0 : 3)} ${esc(p.jednostka)}${iloscKg}</td>
         ${pricecols}
       </tr>`;
     }
     return `<tr>
       <td class="c lp">${i + 1}</td>
-      <td class="mono small">${p.kod_towaru || ''}</td>
-      <td><b>${p.asortyment}</b></td>
-      <td class="mono small">${p.numer_partii}</td>
-      <td class="r mono b">${fmtL(p.ilosc, 3)} ${p.jednostka}</td>
+      <td class="mono small">${esc(p.kod_towaru || '')}</td>
+      <td><b>${esc(p.asortyment)}</b></td>
+      <td class="mono small">${esc(p.numer_partii)}</td>
+      <td class="r mono b">${fmtL(p.ilosc, 3)} ${esc(p.jednostka)}</td>
       ${pricecols}
     </tr>`;
   }).join('');
@@ -109,12 +109,12 @@ export async function printDocument(docData: any): Promise<void> {
   const sumaMap: Record<string, number> = {};
   pozycje.forEach((p: any) => {
     const key = p.wyrob || p.asortyment;
-    sumaMap[key] = (sumaMap[key] || 0) + (p.ilosc_kg ?? (p.jednostka === 'kg' ? p.ilosc : 0));
+    sumaMap[key] = round3((sumaMap[key] || 0) + (p.ilosc_kg ?? (p.jednostka === 'kg' ? p.ilosc : 0)));
   });
   const wagaRows = Object.entries(sumaMap)
-    .map(([n, kg]) => `<tr><td>${n}</td><td class="r mono b">${fmtL(kg, 3)} kg</td></tr>`)
+    .map(([n, kg]) => `<tr><td>${esc(n)}</td><td class="r mono b">${fmtL(kg, 3)} kg</td></tr>`)
     .join('');
-  const totalKg = Object.values(sumaMap).reduce((s, v) => s + v, 0);
+  const totalKg = round3(Object.values(sumaMap).reduce((s, v) => s + v, 0));
 
   let costBlock = '';
   if (isCostDoc) {
@@ -211,13 +211,13 @@ tbody tr:last-child td{border-bottom:none}
 <div class="doc-top">
   <div>
     <div class="doc-type">${docData.typ} &mdash; Dokument magazynowy</div>
-    <div class="doc-name">${docTypeLabel[docData.typ] ?? docData.typ}</div>
+    <div class="doc-name">${esc(docTypeLabel[docData.typ] ?? docData.typ)}</div>
     <div class="doc-org">ilGelato MES &middot; Magazyn główny</div>
   </div>
   <div class="doc-ref">
-    <div class="doc-ref-num">${docData.referencja}</div>
+    <div class="doc-ref-num">${esc(docData.referencja)}</div>
     <div class="doc-ref-date">Wystawiono: ${fmtFull(docData.data)}</div>
-    <div class="doc-ref-date">Wystawił: ${docData.uzytkownik}</div>
+    <div class="doc-ref-date">Wystawił: ${esc(docData.uzytkownik)}</div>
     ${docData.data_zatwierdzenia ? `<div class="doc-ref-date">Zatwierdzono: ${fmtFull(docData.data_zatwierdzenia)}</div>` : ''}
   </div>
 </div>

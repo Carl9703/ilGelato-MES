@@ -25,3 +25,7 @@ res_output.txt
 routes.txt
 all_*.json
 metadata.json
+
+prisma/*.db-shm
+prisma/*.db-wal
+scratch/

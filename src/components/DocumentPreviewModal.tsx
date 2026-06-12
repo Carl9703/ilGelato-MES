@@ -250,15 +250,24 @@ export default function DocumentPreviewModal({
                     <Tag className="w-4 h-4" /> Drukuj etykiety
                   </button>
                 )}
-                <button onClick={() => { const t = localStorage.getItem('mes-token'); window.open(`/api/dokumenty/${docRef}/pdf${t ? `?token=${encodeURIComponent(t)}` : ''}`, '_blank'); }}
+                <button onClick={async () => {
+                  try {
+                    const res = await fetch('/api/auth/pdf-token', {
+                      headers: { 'Authorization': `Bearer ${localStorage.getItem('mes-token')}` }
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      window.open(`/api/dokumenty/${docRef}/pdf?token=${encodeURIComponent(data.token)}`, '_blank');
+                    } else {
+                      alert('Nie udało się pobrać tokena dla PDF');
+                    }
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
                   className="btn w-full justify-center text-sm"
                   style={{ background: 'rgba(59,130,246,0.1)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
-                  <Download className="w-4 h-4" /> Pobierz PDF
-                </button>
-                <button onClick={() => printDocument(docData)}
-                  className="btn w-full justify-center text-sm"
-                  style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)' }}>
-                  <Printer className="w-4 h-4" /> Drukuj dokument
+                  <Download className="w-4 h-4" /> Pobierz / Drukuj (PDF)
                 </button>
               </div>
             )}
@@ -356,7 +365,7 @@ export default function DocumentPreviewModal({
                             <td className="text-right font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
                               {poz.cena_netto != null ? (
                                 <span>
-                                  {poz.cena_netto.toFixed(4)} zł
+                                  {poz.cena_netto.toFixed(2)} zł
                                   {poz.cena_z_kartoteki && <span className="ml-1 text-[9px] font-sans" style={{ color: 'var(--text-muted)' }}>(katalog)</span>}
                                 </span>
                               ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
@@ -379,7 +388,7 @@ export default function DocumentPreviewModal({
                           <>
                             <td className="text-right font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
                               {poz.cena_jednostkowa != null && poz.cena_jednostkowa > 0
-                                ? `${poz.cena_jednostkowa.toFixed(4)} zł`
+                                ? `${poz.cena_jednostkowa.toFixed(2)} zł`
                                 : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                             </td>
                             <td className="text-right font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
