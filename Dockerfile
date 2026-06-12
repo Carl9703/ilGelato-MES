@@ -37,6 +37,7 @@ RUN npx prisma generate
 
 COPY server.ts ./
 COPY server-pdf.ts ./
+COPY server ./server/
 COPY pdf-worker.mjs ./
 COPY tsconfig.json ./
 COPY vite.config.ts ./
