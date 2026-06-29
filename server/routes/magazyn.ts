@@ -54,7 +54,7 @@ router.get("/api/wyroby-gotowe/stan", async (req, res) => {
 
       // Pobierz wszystkie zatwierdzone WZ z informacją o opakowaniach
       const docsWZ = await prisma.dokumenty_Magazynowe.findMany({
-        where: { typ: "WZ", status: "Zatwierdzony", pozycje_json: { not: null } }
+        where: { typ: "WZ", status: { in: ["Zatwierdzony", "Faktura wystawiona"] }, pozycje_json: { not: null } }
       });
 
       // Mapa batchId -> List of { name, weight, count } issued

@@ -5,9 +5,10 @@ import { printDocument, computeVatSummary } from "../utils/printDoc";
 import { Spinner } from "./Spinner";
 
 const statusCfg: Record<string, { bg: string; color: string; border: string; label: string; Icon: React.ElementType }> = {
-  Bufor:        { bg: 'rgba(148,163,184,.1)',  color: '#94a3b8', border: 'rgba(148,163,184,.3)', label: 'BUFOR',        Icon: Clock       },
-  Zatwierdzony: { bg: 'rgba(34,197,94,.12)',   color: '#22c55e', border: 'rgba(34,197,94,.3)',   label: 'ZATWIERDZONY', Icon: CheckCircle },
-  Anulowany:    { bg: 'rgba(239,68,68,.12)',   color: '#ef4444', border: 'rgba(239,68,68,.3)',   label: 'ANULOWANY',    Icon: Ban         },
+  Bufor:                { bg: 'rgba(148,163,184,.1)',  color: '#94a3b8', border: 'rgba(148,163,184,.3)', label: 'BUFOR',              Icon: Clock       },
+  Zatwierdzony:         { bg: 'rgba(34,197,94,.12)',   color: '#22c55e', border: 'rgba(34,197,94,.3)',   label: 'ZATWIERDZONY',       Icon: CheckCircle },
+  'Faktura wystawiona': { bg: 'rgba(168,85,247,.12)',  color: '#a855f7', border: 'rgba(168,85,247,.3)',  label: 'FAKTURA WYSTAWIONA', Icon: FileText    },
+  Anulowany:            { bg: 'rgba(239,68,68,.12)',   color: '#ef4444', border: 'rgba(239,68,68,.3)',   label: 'ANULOWANY',          Icon: Ban         },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -32,6 +33,8 @@ type Props = {
   onClose: () => void;
   zIndex?: number;
   onZatwierdz?: (ref: string) => void;
+  onZafakturuj?: (ref: string) => void;
+  onCofnijFakture?: (ref: string) => void;
   onAnuluj?: (ref: string) => void;
   onUsun?: (ref: string) => void;
   onEdit?: (ref: string) => void;
@@ -42,7 +45,7 @@ type Props = {
 export default function DocumentPreviewModal({
   docRef, docData, loading, onClose,
   zIndex = 1070,
-  onZatwierdz, onAnuluj, onUsun, onEdit, onPrintLabels, actionLoading,
+  onZatwierdz, onZafakturuj, onCofnijFakture, onAnuluj, onUsun, onEdit, onPrintLabels, actionLoading,
 }: Props) {
   const isWZ = docData?.typ === "WZ";
   const isPW = docData?.typ === "PW";
@@ -227,6 +230,20 @@ export default function DocumentPreviewModal({
                     className="btn w-full justify-center text-sm"
                     style={{ background: 'rgba(99,102,241,0.15)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.35)' }}>
                     <Pencil className="w-4 h-4" /> Edytuj dokument
+                  </button>
+                )}
+                {onZafakturuj && docData.typ === "WZ" && docData.status === "Zatwierdzony" && (
+                  <button onClick={() => onZafakturuj(docRef)} disabled={actionLoading === docRef}
+                    className="btn w-full justify-center text-sm font-bold"
+                    style={{ background: 'rgba(168,85,247,0.15)', color: '#a855f7', border: '1px solid rgba(168,85,247,0.4)' }}>
+                    <FileText className="w-4 h-4" /> Wystaw fakturę
+                  </button>
+                )}
+                {onCofnijFakture && docData.typ === "WZ" && docData.status === "Faktura wystawiona" && (
+                  <button onClick={() => onCofnijFakture(docRef)} disabled={actionLoading === docRef}
+                    className="btn w-full justify-center text-sm"
+                    style={{ background: 'rgba(168,85,247,0.05)', color: '#a855f7', border: '1px solid rgba(168,85,247,0.2)' }}>
+                    <Ban className="w-4 h-4" /> Cofnij fakturę
                   </button>
                 )}
                 {onAnuluj && (docData.typ === "PZ" || docData.typ === "WZ" || docData.typ === "RW") && docData.status === "Zatwierdzony" && (

@@ -289,7 +289,7 @@ router.get("/:id", async (req, res) => {
     const issuedByBatch = new Map<string, any[]>();
     if (partieIds.length > 0) {
       const wzDocs = await prisma.dokumenty_Magazynowe.findMany({
-        where: { typ: "WZ", status: "Zatwierdzony", pozycje_json: { not: null } },
+        where: { typ: "WZ", status: { in: ["Zatwierdzony", "Faktura wystawiona"] }, pozycje_json: { not: null } },
         select: { pozycje_json: true },
       });
       for (const doc of wzDocs) {

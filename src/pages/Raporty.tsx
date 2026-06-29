@@ -844,21 +844,26 @@ export default function Raporty() {
             columns: [
               { label: "Kod" },
               { label: "Wyrób / Opakowanie" },
+              { label: "Partia", align: "left" },
               { label: "Waga/szt." },
               { label: "Ilość szt.", align: "right" },
               { label: "Ilość kg", align: "right", bold: true },
+              { label: "Termin", align: "left" },
             ],
-            rows: grupySorted.flatMap(g => [
-              [g.kod_towaru, g.nazwa, "", fmtL(g.totalSzt, 0), fmtL(g.totalKg, 3)],
+            rows: grupySorted.flatMap((g, idx) => [
+              ...(idx > 0 ? [["", "", "", "", "", "", ""]] : []),
+              [g.kod_towaru, g.nazwa.toUpperCase(), "", "", fmtL(g.totalSzt, 0), fmtL(g.totalKg, 3), ""],
               ...g.rows.map(r => [
                 "",
-                `  └ ${r.opakowanie ?? "bez opakowania"}`,
+                `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${g.nazwa} — ${r.opakowanie ?? "bez opakowania"}`,
+                r.numer_partii || "—",
                 r.waga_jednostkowa ? `${r.waga_jednostkowa.toFixed(3)} kg` : "—",
                 r.ilosc_szt != null ? String(r.ilosc_szt) : "—",
                 fmtL(r.ilosc_kg, 3),
+                r.termin_waznosci ? fmtDate(r.termin_waznosci) : "—",
               ]),
             ]),
-            totalRow: [`RAZEM (${grupySorted.length} prod.)`, null, null, grandTotalSzt > 0 ? fmtL(grandTotalSzt, 0) : "—", fmtL(grandTotalKg, 3)],
+            totalRow: [`RAZEM (${grupySorted.length} prod.)`, null, null, null, grandTotalSzt > 0 ? fmtL(grandTotalSzt, 0) : "—", fmtL(grandTotalKg, 3), null],
           }],
         });
 
@@ -906,9 +911,9 @@ export default function Raporty() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: "var(--bg-surface)", borderBottom: "2px solid var(--border)" }}>
-                      {["Kod", "Wyrób gotowy / Opakowanie", "Masa/szt.", "Ilość szt.", "Ilość kg"].map((h, i) => (
+                      {["Kod", "Wyrób gotowy / Opakowanie", "Partia", "Masa/szt.", "Ilość szt.", "Ilość kg", "Termin"].map((h, i) => (
                         <th key={h} style={{
-                          padding: "8px 12px", textAlign: i >= 2 ? "right" : "left",
+                          padding: "8px 12px", textAlign: i === 3 || i === 4 || i === 5 ? "right" : "left",
                           fontSize: 10, fontWeight: 700, textTransform: "uppercase",
                           letterSpacing: "0.08em", color: "var(--text-muted)",
                         }}>{h}</th>
@@ -918,22 +923,28 @@ export default function Raporty() {
                   <tbody>
                     {grupySorted.map(g => (
                       <React.Fragment key={g.nazwa}>
+                        {/* Pusty wiersz jako odstęp w UI (tylko od drugiego elementu) */}
+                        <tr style={{ background: "transparent", height: 16 }}>
+                          <td colSpan={7}></td>
+                        </tr>
                         {/* Wiersz nagłówka produktu */}
-                        <tr style={{ background: "rgba(6,182,212,0.06)", borderTop: "1px solid var(--border)" }}>
-                          <td style={{ padding: "7px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--accent)" }}>{g.kod_towaru}</td>
-                          <td style={{ padding: "7px 12px", fontWeight: 700, color: "var(--text-primary)" }}>
+                        <tr style={{ background: "rgba(6,182,212,0.08)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
+                          <td style={{ padding: "10px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--accent)", fontWeight: 700 }}>{g.kod_towaru}</td>
+                          <td style={{ padding: "10px 12px", fontWeight: 800, fontSize: 14, color: "var(--text-primary)" }}>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#4ade8018', color: '#4ade80' }}>WG</span>
-                              {g.nazwa}
+                              {g.nazwa.toUpperCase()}
                             </div>
                           </td>
-                          <td style={{ padding: "7px 12px", textAlign: "right", color: "var(--text-muted)" }}>—</td>
-                          <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 600, color: g.totalSzt > 0 ? "var(--text-primary)" : "var(--text-muted)" }}>
+                          <td style={{ padding: "10px 12px", textAlign: "left", color: "var(--text-muted)" }}></td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "var(--text-muted)" }}></td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, fontSize: 13, color: g.totalSzt > 0 ? "var(--text-primary)" : "var(--text-muted)" }}>
                             {g.totalSzt > 0 ? g.totalSzt : "—"}
                           </td>
-                          <td style={{ padding: "7px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#4ade80" }}>
+                          <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 800, fontSize: 13, color: "#4ade80" }}>
                             {g.totalKg.toFixed(3)} kg
                           </td>
+                          <td style={{ padding: "10px 12px", textAlign: "left", color: "var(--text-muted)" }}></td>
                         </tr>
                         {/* Wiersze opakowań */}
                         {g.rows.map((r, idx) => (
@@ -943,17 +954,14 @@ export default function Raporty() {
                               onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                           >
                             <td style={{ padding: "5px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 10, color: "var(--text-muted)" }}></td>
-                            <td style={{ padding: "5px 12px 5px 24px", color: "var(--text-secondary)" }}>
+                            <td style={{ padding: "5px 12px 5px 40px", color: "var(--text-secondary)" }}>
                               <div className="flex items-center gap-2">
-                                <span style={{ color: "var(--border)", marginRight: 2 }}>└</span>
-                                {r.opakowanie ? (
-                                  <span className="text-[10px] font-bold px-1 py-0.5 rounded mr-1" style={{ background: '#c084fc18', color: '#c084fc' }}>OPA</span>
-                                ) : null}
+                                <span style={{ color: "var(--text-muted)" }}>{g.nazwa} —</span>
                                 {r.opakowanie ?? <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>bez opakowania</span>}
-                                {r.numer_partii && (
-                                  <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>· {r.numer_partii}</span>
-                                )}
                               </div>
+                            </td>
+                            <td style={{ padding: "5px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--text-primary)" }}>
+                              {r.numer_partii || "—"}
                             </td>
                             <td style={{ padding: "5px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--text-muted)" }}>
                               {r.waga_jednostkowa ? `${r.waga_jednostkowa.toFixed(3)} kg` : "—"}
@@ -963,6 +971,9 @@ export default function Raporty() {
                             </td>
                             <td style={{ padding: "5px 12px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 500, color: "var(--ok)" }}>
                               {r.ilosc_kg.toFixed(3)} kg
+                            </td>
+                            <td style={{ padding: "5px 12px", fontFamily: "JetBrains Mono,monospace", fontSize: 10, color: "var(--text-muted)" }}>
+                              {r.termin_waznosci ? fmtDate(r.termin_waznosci) : "—"}
                             </td>
                           </tr>
                         ))}

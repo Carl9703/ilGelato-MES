@@ -163,7 +163,7 @@ export function generateDocumentHTML(docData: any): string {
     </div></div>`;
   }
 
-  const statusLabel = docData.status === 'Zatwierdzony' ? 'ZATWIERDZONY' : docData.status === 'Anulowany' ? 'ANULOWANY' : 'BUFOR';
+  const statusLabel = docData.status === 'Zatwierdzony' ? 'ZATWIERDZONY' : docData.status === 'Faktura wystawiona' ? 'FAKTURA WYSTAWIONA' : docData.status === 'Anulowany' ? 'ANULOWANY' : 'BUFOR';
 
   return `<!DOCTYPE html><html lang="pl"><head><meta charset="UTF-8"><title>${docData.referencja}</title>
 <style>

@@ -459,6 +459,44 @@ router.post("/api/dokumenty/:ref/anuluj", async (req, res) => {
     }
   });
 
+router.post("/api/dokumenty/:ref/wystaw-fakture", async (req, res) => {
+    try {
+      const ref = decodeURIComponent(req.params.ref);
+      const header = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      if (!header) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (header.typ !== "WZ") return res.status(400).json({ error: "Akcja dotyczy tylko dokumentów WZ" });
+      if (header.status !== "Zatwierdzony") return res.status(400).json({ error: "Dokument musi być w statusie Zatwierdzony, aby wystawić fakturę" });
+
+      await prisma.dokumenty_Magazynowe.update({
+        where: { referencja: ref },
+        data: { status: "Faktura wystawiona" }
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Błąd zmiany statusu faktury" });
+    }
+  });
+
+router.post("/api/dokumenty/:ref/cofnij-fakture", async (req, res) => {
+    try {
+      const ref = decodeURIComponent(req.params.ref);
+      const header = await prisma.dokumenty_Magazynowe.findUnique({ where: { referencja: ref } });
+      if (!header) return res.status(404).json({ error: "Nie znaleziono dokumentu" });
+      if (header.typ !== "WZ") return res.status(400).json({ error: "Akcja dotyczy tylko dokumentów WZ" });
+      if (header.status !== "Faktura wystawiona") return res.status(400).json({ error: "Dokument nie ma statusu Faktura wystawiona" });
+
+      await prisma.dokumenty_Magazynowe.update({
+        where: { referencja: ref },
+        data: { status: "Zatwierdzony" }
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Błąd cofania statusu faktury" });
+    }
+  });
+
 router.delete("/api/dokumenty/:ref", async (req, res) => {
     try {
       const ref = decodeURIComponent(req.params.ref);

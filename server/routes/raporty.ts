@@ -66,7 +66,7 @@ router.get("/api/raporty/sprzedaz-per-kontrahent", async (req, res) => {
         return res.status(400).json({ error: "Wymagane podanie dat 'od' i 'do' dla raportu" });
       }
 
-      const whereHeader: any = { typ: "WZ", status: "Zatwierdzony" };
+      const whereHeader: any = { typ: "WZ", status: { in: ["Zatwierdzony", "Faktura wystawiona"] } };
       whereHeader.data_zatwierdzenia = {};
       whereHeader.data_zatwierdzenia.gte = new Date(od);
       const doDate = new Date(doData);

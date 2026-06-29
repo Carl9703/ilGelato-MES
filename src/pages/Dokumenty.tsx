@@ -25,7 +25,7 @@ type Kontrahent = { id: string; kod: string; nazwa: string };
 type Dokument = {
   referencja: string; typ: string; data: string; uzytkownik: string;
   numer_zlecenia: string | null; pozycje: Pozycja[]; wartosc_calkowita: number;
-  status: string; // Bufor | Zatwierdzony | Anulowany
+  status: string; // Bufor | Zatwierdzony | Anulowany | Faktura wystawiona
   kontrahent: Kontrahent | null;
   numer_zewnetrzny: string | null;
 };
@@ -90,9 +90,10 @@ const typColors: Record<string, string> = {
 };
 
 const statusCfg: Record<string, { bg: string; color: string; border: string; label: string; Icon: React.ElementType }> = {
-  Bufor:        { bg: 'rgba(148,163,184,.1)',  color: '#94a3b8', border: 'rgba(148,163,184,.3)', label: 'BUFOR',        Icon: Clock       },
-  Zatwierdzony: { bg: 'rgba(34,197,94,.12)',   color: '#22c55e', border: 'rgba(34,197,94,.3)',   label: 'ZATWIERDZONY', Icon: CheckCircle },
-  Anulowany:    { bg: 'rgba(239,68,68,.12)',   color: '#ef4444', border: 'rgba(239,68,68,.3)',   label: 'ANULOWANY',    Icon: Ban         },
+  Bufor:                { bg: 'rgba(148,163,184,.1)',  color: '#94a3b8', border: 'rgba(148,163,184,.3)', label: 'BUFOR',              Icon: Clock       },
+  Zatwierdzony:         { bg: 'rgba(34,197,94,.12)',   color: '#22c55e', border: 'rgba(34,197,94,.3)',   label: 'ZATWIERDZONY',       Icon: CheckCircle },
+  'Faktura wystawiona': { bg: 'rgba(168,85,247,.12)',  color: '#a855f7', border: 'rgba(168,85,247,.3)',  label: 'FAKTURA WYSTAWIONA', Icon: FileText    },
+  Anulowany:            { bg: 'rgba(239,68,68,.12)',   color: '#ef4444', border: 'rgba(239,68,68,.3)',   label: 'ANULOWANY',          Icon: Ban         },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -183,6 +184,36 @@ export default function Dokumenty() {
       const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/zatwierdz`, { method: "POST" });
       if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
       showToast(`Dokument ${ref} zatwierdzony.`, "ok");
+      fetchDokumenty();
+      if (previewDocRef === ref) openDocPreview(ref);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleZafakturuj = async (ref: string) => {
+    setActionLoading(ref);
+    try {
+      const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/wystaw-fakture`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+      showToast(`Wystawiono fakturę dla dokumentu ${ref}.`, "ok");
+      fetchDokumenty();
+      if (previewDocRef === ref) openDocPreview(ref);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCofnijFakture = async (ref: string) => {
+    setActionLoading(ref);
+    try {
+      const res = await fetch(`/api/dokumenty/${encodeURIComponent(ref)}/cofnij-fakture`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.json()).error || "Błąd serwera");
+      showToast(`Cofnięto fakturę dla dokumentu ${ref}.`, "ok");
       fetchDokumenty();
       if (previewDocRef === ref) openDocPreview(ref);
     } catch (err: any) {
@@ -1891,6 +1922,8 @@ export default function Dokumenty() {
             if (doc) openEditModal(doc);
           }}
           onZatwierdz={handleZatwierdz}
+          onZafakturuj={handleZafakturuj}
+          onCofnijFakture={handleCofnijFakture}
           onAnuluj={handleAnuluj}
           onUsun={handleUsun}
           onPrintLabels={handlePrintAllLabels}
