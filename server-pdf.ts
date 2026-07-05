@@ -81,13 +81,22 @@ export function generateDocumentHTML(docData: any): string {
       <td class="r mono">${p.cena_jednostkowa != null && p.cena_jednostkowa > 0 ? num(p.cena_jednostkowa) + ' zł' : '—'}</td>
       <td class="r mono total">${p.wartosc != null && p.wartosc > 0 ? num(p.wartosc) + ' zł' : '—'}</td>
     ` : '';
-    const iloscKg = p.ilosc_kg != null ? `<span class="sub">${fmtL(p.ilosc_kg, 3)} kg</span>` : '';
+    const kgVal = p.ilosc_kg != null ? p.ilosc_kg : (p.jednostka === 'kg' ? p.ilosc : null);
+    let kgColStr = kgVal != null ? fmtL(kgVal, 3) + ' kg' : '—';
+    if (isWZ && p.jednostka !== 'kg' && p.ilosc !== 1) {
+       kgColStr += `<span class="sub">(${fmtL(p.ilosc, p.jednostka === 'szt.' ? 0 : 3)} ${p.jednostka})</span>`;
+    }
+    const kgCol = isWZ ? `<td class="r mono b">${kgColStr}</td>` : '';
+    const iloscKg = (!isWZ && p.ilosc_kg != null) ? `<span class="sub">${fmtL(p.ilosc_kg, 3)} kg</span>` : '';
+    const stdIloscCol = !isWZ ? `<td class="r mono b">${fmtL(p.ilosc, p.jednostka === 'szt.' ? 0 : 3)} ${p.jednostka}${iloscKg}</td>` : '';
+
     if (hasOp) {
       return `<tr>
         <td class="c lp">${i + 1}</td>
         <td><b>${p.wyrob || p.asortyment}</b>${p.wyrob ? `<span class="sub">${p.asortyment}</span>` : ''}</td>
         <td class="mono small">${p.numer_partii}</td>
-        <td class="r mono b">${fmtL(p.ilosc, p.jednostka === 'szt.' ? 0 : 3)} ${p.jednostka}${iloscKg}</td>
+        ${stdIloscCol}
+        ${kgCol}
         ${pricecols}
       </tr>`;
     }
@@ -96,19 +105,22 @@ export function generateDocumentHTML(docData: any): string {
       <td class="mono small">${p.kod_towaru || ''}</td>
       <td><b>${p.asortyment}</b></td>
       <td class="mono small">${p.numer_partii}</td>
-      <td class="r mono b">${fmtL(p.ilosc, 3)} ${p.jednostka}</td>
+      ${stdIloscCol}
+      ${kgCol}
       ${pricecols}
     </tr>`;
   }).join('');
 
+  const kgHeader = isWZ ? '<th class="r">Waga (kg)</th>' : '';
+  const stdIloscHeader = !isWZ ? '<th class="r">Ilość</th>' : '';
   const priceHeaders = isWZ
     ? '<th class="r">Cena netto</th><th class="r">VAT</th><th class="r">Cena brutto</th><th class="r">Wartość netto</th><th class="r">Wartość brutto</th>'
     : isCostDoc
     ? `<th class="r">${isPZ ? 'Cena jm' : 'Koszt jm'}</th><th class="r">${isPZ ? 'Wartość netto' : 'Wartość'}</th>`
     : '';
   const thead = hasOp
-    ? `<tr><th>Lp.</th><th>Wyrób / Opakowanie</th><th>Nr partii</th><th class="r">Ilość</th>${priceHeaders}</tr>`
-    : `<tr><th>Lp.</th><th>Kod</th><th>Towar</th><th>Nr partii</th><th class="r">Ilość</th>${priceHeaders}</tr>`;
+    ? `<tr><th>Lp.</th><th>Wyrób / Opakowanie</th><th>Nr partii</th>${stdIloscHeader}${kgHeader}${priceHeaders}</tr>`
+    : `<tr><th>Lp.</th><th>Kod</th><th>Towar</th><th>Nr partii</th>${stdIloscHeader}${kgHeader}${priceHeaders}</tr>`;
 
   const sumaMap: Record<string, number> = {};
   pozycje.forEach((p: any) => {
