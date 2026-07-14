@@ -645,17 +645,6 @@ export default function Produkcja() {
       }
       if (wizTyp === "lody" && !wizBazaOk) { showToast(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`, "error"); return; }
       
-      // Walidacja planowanych opakowań
-      for (const w of wizWyroby) {
-        const ilosc = getIloscWyrobu(w);
-        const totalOpakowania = (w.planowane_opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
-        if (totalOpakowania > ilosc + 0.001) { // 0.001 margin dla błędów zaokrągleń
-          const rec = receptury.find(r => r.id === w.id_receptury);
-          showToast(`Suma zaplanowanych opakowań (${fmtL(totalOpakowania, 3)} kg) dla ${rec?.asortyment_docelowy.nazwa} przekracza zaplanowaną produkcję (${fmtL(ilosc, 3)} kg)`, "error");
-          return;
-        }
-      }
-
       // Inicjalizuj krok 3 — zachowaj istniejące dane realizacji (user mógł już wpisać coś i cofnąć)
       const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
       const init: Record<string, WizRealizacjaItem> = {};
@@ -713,10 +702,6 @@ export default function Produkcja() {
       const ilosc_planowana = getIloscWyrobu(w);
 
       if (rzeczywista <= 0) { showToast(`Suma wag opakowań musi być > 0 dla każdego wyrobu (${rec?.asortyment_docelowy.nazwa})`, "error"); return; }
-      if (totalOp > ilosc_planowana + 0.001) {
-        showToast(`Suma zapakowanych wyrobów (${fmtL(totalOp, 3)} kg) dla ${rec?.asortyment_docelowy.nazwa} przekracza zaplanowaną ilość (${fmtL(ilosc_planowana, 3)} kg)`, "error");
-        return;
-      }
       if (totalOp <= 0) { showToast(`Dodaj opakowania dla: ${rec?.asortyment_docelowy.nazwa}`, "error"); return; }
     }
     setWizLoading(true);
@@ -2334,32 +2319,10 @@ export default function Produkcja() {
                                                   <option value="">— wybierz opakowanie —</option>
                                                   {dostepneOpakowania.map(o => <option key={o.id} value={o.id}>{o.nazwa}</option>)}
                                                 </select>
-                                                <div className="relative">
-                                                  <input type="text" value={op.waga_kg} placeholder="0.00"
-                                                    onChange={e => setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, planowane_opakowania: x.planowane_opakowania?.map((p, i) => i === idx ? { ...p, waga_kg: clampDecimals(e.target.value, 3) } : p) } : x))}
-                                                    className="w-20 text-right rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-[var(--accent)] pr-6"
-                                                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                                                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>kg</span>
-                                                </div>
                                                 <button onClick={() => setWizWyroby(prev => prev.map(x => x._key === w._key ? { ...x, planowane_opakowania: x.planowane_opakowania?.filter((_, i) => i !== idx) } : x))}
-                                                  className="text-slate-600 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                                                  className="text-slate-600 hover:text-red-400 transition-colors ml-2"><Trash2 className="w-3.5 h-3.5" /></button>
                                               </div>
                                             ))}
-                                            {(() => {
-                                              const totalOp = w.planowane_opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
-                                              const diff = totalOp - ilosc;
-                                              const errColor = diff > 0.001 ? 'text-amber-400' : 'text-emerald-400';
-                                              return (
-                                                <div className="flex items-center justify-between text-xs font-mono pt-1">
-                                                  <div>
-                                                    {diff > 0.001 && <span className={errColor}>Przekroczono plan ({fmtL(diff, 3)} kg)</span>}
-                                                  </div>
-                                                  <div style={{ color: 'var(--text-muted)' }}>
-                                                    Razem: <span className={`font-bold ${diff > 0.001 ? errColor : 'text-white'}`}>{fmtL(totalOp, 3)}</span> / {fmtL(ilosc, 3)} kg
-                                                  </div>
-                                                </div>
-                                              );
-                                            })()}
                                           </div>
                                         )}
                                       </div>
