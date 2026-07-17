@@ -778,7 +778,9 @@ router.get("/api/dokumenty/podglad/:referencja", async (req, res) => {
             numer_partii: r.partia.numer_partii,
             ilosc,
             jednostka: r.partia.asortyment.jednostka_miary,
-            ilosc_kg: null,
+            ilosc_kg: r.partia.asortyment.jednostka_miary === 'szt.' && (r.partia.asortyment as any).waga_jednostkowa_kg
+              ? Math.round(ilosc * ((r.partia.asortyment as any).waga_jednostkowa_kg) * 1000) / 1000
+              : null,
             data_produkcji: r.partia.data_produkcji,
             termin_waznosci: r.partia.termin_waznosci,
             cena_jednostkowa: cena > 0 ? cena : null,
@@ -987,7 +989,9 @@ router.get("/api/dokumenty/*/pdf", async (req, res) => {
             numer_partii: r.partia.numer_partii,
             ilosc,
             jednostka: r.partia.asortyment.jednostka_miary,
-            ilosc_kg: null,
+            ilosc_kg: r.partia.asortyment.jednostka_miary === 'szt.' && (r.partia.asortyment as any).waga_jednostkowa_kg
+              ? Math.round(ilosc * ((r.partia.asortyment as any).waga_jednostkowa_kg) * 1000) / 1000
+              : null,
             cena_jednostkowa: cena > 0 ? cena : null,
             wartosc,
             cena_netto: cenaNetto2,

@@ -115,7 +115,8 @@ router.get("/api/produkcja/sesje/:id/koszty", async (req, res) => {
       const processZlecenie = (z: any) => {
         const zuzycie = z.ruchy_magazynowe.filter((r: any) => r.typ_ruchu === "Zuzycie");
         const pw = z.ruchy_magazynowe.find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji" && r.ilosc > 0);
-        const ilosc_kg = pw?.ilosc || z.rzeczywista_ilosc_wyrobu || 0;
+        const ilosc_wyrobu = pw?.ilosc || z.rzeczywista_ilosc_wyrobu || 0;
+        const jednostka_wyrobu = pw?.partia?.asortyment?.jednostka_miary || z.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
 
         // Zawsze przeliczamy z aktualnej cena_zakupu z kartoteki; ilości konwertujemy do kg gdy jest przelicznik
         const surowceMap: Record<string, { nazwa: string; kod: string; jednostka: string; ilosc: number; cena_jm: number; wartosc: number }> = {};
@@ -146,11 +147,11 @@ router.get("/api/produkcja/sesje/:id/koszty", async (req, res) => {
         const surowce_ilosc_kg_total = surowce.reduce((s, r) => s + r.ilosc, 0);
         const koszt_surowcow = surowce.reduce((s, r) => s + r.wartosc, 0);
         const koszt_total = koszt_surowcow;
-        const koszt_per_kg = ilosc_kg > 0 ? koszt_total / ilosc_kg : 0;
-        const cena_sprzedazy = z.receptura?.asortyment_docelowy?.cena_sprzedazy ?? 0;
-        const wartosc_sprzedazy = ilosc_kg * cena_sprzedazy;
+        const koszt_per_unit = ilosc_wyrobu > 0 ? koszt_total / ilosc_wyrobu : 0;
+        const cena_sprzedazy = pw?.partia?.asortyment?.cena_sprzedazy ?? z.receptura?.asortyment_docelowy?.cena_sprzedazy ?? 0;
+        const wartosc_sprzedazy = ilosc_wyrobu * cena_sprzedazy;
 
-        return { id: z.id, nazwa: z.receptura?.asortyment_docelowy?.nazwa || "—", ilosc_kg, koszt_per_kg, koszt_total, koszt_surowcow, cena_sprzedazy, wartosc_sprzedazy, surowce_ilosc_kg_total, surowce };
+        return { id: z.id, nazwa: pw?.partia?.asortyment?.nazwa || z.receptura?.asortyment_docelowy?.nazwa || "—", jednostka_wyrobu, ilosc_kg: ilosc_wyrobu, koszt_per_kg: koszt_per_unit, koszt_total, koszt_surowcow, cena_sprzedazy, wartosc_sprzedazy, surowce_ilosc_kg_total, surowce };
       };
 
       const bazaZp = zlecenia.find((z: any) => z.etap === 1);
@@ -170,11 +171,13 @@ router.get("/api/produkcja/sesje/:id/koszty", async (req, res) => {
           }, 0)
         : wyroby.reduce((s: number, w: any) => s + w.koszt_total, 0);
       const wartosc_sprzedazy_total = wyroby.reduce((s: number, w: any) => s + w.wartosc_sprzedazy, 0);
+      const jm = wyroby.length > 0 ? wyroby[0].jednostka_wyrobu : "kg";
 
       res.json({
         baza,
         wyroby,
         masa_wyrobow_total,
+        jednostka_wyrobu: jm,
         koszt_wyrobow_total,
         koszt_wyrobow_avg_per_kg: masa_wyrobow_total > 0 ? koszt_wyrobow_total / masa_wyrobow_total : 0,
         wartosc_sprzedazy_total,
@@ -385,9 +388,11 @@ router.delete("/api/produkcja/sesja-robocza/:id", async (req, res) => {
 
 router.post("/api/produkcja/sesja", async (req, res) => {
     try {
-      const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby, data_produkcji } = req.body;
-      // wyroby: [{ id_receptury, ilosc, surowce: [{ id_partii, ilosc }] }]
+      const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby, data_produkcji, typ } = req.body;
+      // wyroby: [{ id_receptury, ilosc, surowce: [{ id_partii, ilosc }], opakowania?, rzeczywista_ilosc?, ilosc_szt?, ilosc_bazy_kg? }]
       const isSorbety = !id_receptury_bazy;
+      // tryby sztukowe: kubeczki i kanapki — ilosc na PW w szt., nie w kg
+      const isSztukowy = (typ === "kubeczki" || typ === "kanapki");
       if (!isSorbety && !(parseFloat(ilosc_bazy) > 0)) throw new Error("Podaj recepturę i ilość bazy");
       if (!wyroby || wyroby.length === 0) throw new Error("Dodaj co najmniej jeden wyrób gotowy");
 
@@ -399,7 +404,7 @@ router.post("/api/produkcja/sesja", async (req, res) => {
       try {
         result = await prisma.$transaction(async (tx) => {
           const numer_sesji = await generateSesjaNumber(tx);
-          const sesja = await tx.sesje_Produkcji.create({ data: { numer_sesji, data_produkcji: data_produkcji ? new Date(data_produkcji) : null } });
+          const sesja = await tx.sesje_Produkcji.create({ data: { numer_sesji, data_produkcji: data_produkcji ? new Date(data_produkcji) : null, typ: typ || "lody" } });
 
           let partiaBazy: any = null;
           let cenaBazy = 0;
@@ -473,6 +478,39 @@ router.post("/api/produkcja/sesja", async (req, res) => {
 
             const iloscWyrobu = parseFloat(wyrob.ilosc);
             const rzeczywistaIloscWyrobu = wyrob.rzeczywista_ilosc ? parseFloat(wyrob.rzeczywista_ilosc) : iloscWyrobu;
+            
+            let idAsortymentuWyrobu = recepturaWyrobu.id_asortymentu_docelowego;
+            let nazwaWyrobu = recepturaWyrobu.asortyment_docelowy.nazwa;
+
+            if (isSztukowy && typ === "kubeczki") {
+              const nowaNazwa = `${nazwaWyrobu} w kubeczku`;
+              let vAsort = await tx.asortyment.findFirst({
+                where: { nazwa: nowaNazwa, typ_asortymentu: "Wyrob_Gotowy" }
+              });
+              if (!vAsort) {
+                const kodBazy = recepturaWyrobu.asortyment_docelowy.kod_towaru;
+                let safeKod = `KUB-${kodBazy || Date.now()}`;
+                const existsKod = await tx.asortyment.findUnique({ where: { kod_towaru: safeKod } });
+                if (existsKod) safeKod = `KUB-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+                
+                vAsort = await tx.asortyment.create({
+                  data: {
+                    nazwa: nowaNazwa,
+                    kod_towaru: safeKod,
+                    typ_asortymentu: "Wyrob_Gotowy",
+                    jednostka_miary: "szt.",
+                    waga_jednostkowa_kg: 0.15,
+                  }
+                });
+                const grupaKub = await tx.grupy_Towarowe.findFirst({ where: { kod: "GEL-KUB" } });
+                if (grupaKub) {
+                  await tx.asortyment.update({ where: { id: vAsort.id }, data: { id_grupy: grupaKub.id } });
+                }
+              }
+              idAsortymentuWyrobu = vAsort.id;
+              nazwaWyrobu = vAsort.nazwa;
+            }
+
             const numer_zp = await generateZlecenieNumber(tx);
             const zlecenieWyrobu = await tx.zlecenia_Produkcyjne.create({
               data: { numer_zlecenia: numer_zp, id_receptury: wyrob.id_receptury, id_sesji: sesja.id, etap: 2, planowana_ilosc_wyrobu: iloscWyrobu, status: "Planowane" },
@@ -482,13 +520,21 @@ router.post("/api/produkcja/sesja", async (req, res) => {
             const pwNr = await generateDocNumber(tx, "PW");
             let kosztWyrobu = 0;
 
-            // Zużycie bazy (tylko dla lodów — gdy był etap 1)
+            // Zużycie bazy (gdy był etap 1)
             if (recepturaBazy && partiaBazy) {
-              const skladnikBazy = recepturaWyrobu.skladniki.find(
-                (s: any) => s.asortyment_skladnika.id === recepturaBazy.id_asortymentu_docelowego
-              );
-              if (skladnikBazy) {
-                const iloscBazyDo = skladnikBazy.ilosc_wymagana * iloscWyrobu * (1 + (skladnikBazy.procent_strat || 0) / 100);
+              let iloscBazyDo: number;
+              if (isSztukowy && wyrob.ilosc_bazy_kg != null) {
+                // Tryb sztukowy: frontend przesyła dokładną ilość bazy w kg (szt × waga_jednostkowa_kg)
+                iloscBazyDo = parseFloat(wyrob.ilosc_bazy_kg);
+              } else {
+                const skladnikBazy = recepturaWyrobu.skladniki.find(
+                  (s: any) => s.asortyment_skladnika.id === recepturaBazy.id_asortymentu_docelowego
+                );
+                iloscBazyDo = skladnikBazy
+                  ? skladnikBazy.ilosc_wymagana * iloscWyrobu * (1 + (skladnikBazy.procent_strat || 0) / 100)
+                  : 0;
+              }
+              if (iloscBazyDo > 0) {
                 kosztWyrobu += iloscBazyDo * cenaBazy;
                 await tx.ruchy_Magazynowe.create({
                   data: { id_partii: partiaBazy.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Zuzycie", ilosc: -iloscBazyDo, cena_jednostkowa: cenaBazy, referencja_dokumentu: rwNr, id_uzytkownika: user.id },
@@ -538,27 +584,32 @@ router.post("/api/produkcja/sesja", async (req, res) => {
             const terminWaznosci_wyrob = recepturaWyrobu.dni_trwalosci ? new Date(Date.now() + recepturaWyrobu.dni_trwalosci * 86400000) : null;
             const partiaWyrobu = await tx.partie_Magazynowe.create({
               data: {
-                id_asortymentu: recepturaWyrobu.id_asortymentu_docelowego,
+                id_asortymentu: idAsortymentuWyrobu,
                 numer_partii: pwNr,
                 data_produkcji: new Date(),
                 termin_waznosci: terminWaznosci_wyrob,
                 status_partii: "Dostepna",
-                opakowania_json: wyrob.opakowania?.length > 0 ? JSON.stringify(wyrob.opakowania) : null,
+                // Tryb sztukowy: kubeczek jest sam w sobie opakowaniem — brak opakowania_json
+                opakowania_json: !isSztukowy && wyrob.opakowania?.length > 0 ? JSON.stringify(wyrob.opakowania) : null,
               },
             });
-            const cenaWyrobu = rzeczywistaIloscWyrobu > 0 ? kosztWyrobu / rzeczywistaIloscWyrobu : 0;
+            // Tryb sztukowy: PW przyjmuje sztuki; tryb wagowy: przyjmuje kg (bez zmian)
+            const rzeczywistaIloscNaPW = isSztukowy
+              ? (wyrob.ilosc_szt != null ? parseFloat(wyrob.ilosc_szt) : rzeczywistaIloscWyrobu)
+              : rzeczywistaIloscWyrobu;
+            const cenaWyrobu = rzeczywistaIloscNaPW > 0 ? kosztWyrobu / rzeczywistaIloscNaPW : 0;
             await tx.ruchy_Magazynowe.create({
-              data: { id_partii: partiaWyrobu.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Przyjecie_Z_Produkcji", ilosc: rzeczywistaIloscWyrobu, cena_jednostkowa: cenaWyrobu, referencja_dokumentu: pwNr, id_uzytkownika: user.id },
+              data: { id_partii: partiaWyrobu.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Przyjecie_Z_Produkcji", ilosc: rzeczywistaIloscNaPW, cena_jednostkowa: cenaWyrobu, referencja_dokumentu: pwNr, id_uzytkownika: user.id },
             });
             await tx.zlecenia_Produkcyjne.update({
               where: { id: zlecenieWyrobu.id },
               data: {
                 status: "Zrealizowane",
-                rzeczywista_ilosc_wyrobu: rzeczywistaIloscWyrobu,
-                opakowania_json: wyrob.opakowania?.length > 0 ? JSON.stringify(wyrob.opakowania) : null,
+                rzeczywista_ilosc_wyrobu: rzeczywistaIloscNaPW,
+                opakowania_json: !isSztukowy && wyrob.opakowania?.length > 0 ? JSON.stringify(wyrob.opakowania) : null,
               },
             });
-            zleceniaWyrobow.push({ id: zlecenieWyrobu.id, numer: numer_zp, wyrob: recepturaWyrobu.asortyment_docelowy.nazwa, ilosc: rzeczywistaIloscWyrobu, pw: pwNr });
+            zleceniaWyrobow.push({ id: zlecenieWyrobu.id, numer: numer_zp, wyrob: nazwaWyrobu, ilosc: rzeczywistaIloscNaPW, pw: pwNr });
           }
 
           // ── Strata bazy (tylko dla lodów) ─────────────────────────────────

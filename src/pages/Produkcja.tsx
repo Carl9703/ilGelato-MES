@@ -85,6 +85,7 @@ export default function Produkcja() {
       utworzono_dnia: items[0].utworzono_dnia,
       data_produkcji: (items[0].sesja as any)?.data_produkcji ?? null,
       status,
+      typ: (items[0].sesja as any)?.typ,
       baza: items.find(z => z.etap === 1),
       wyroby: items.filter(z => z.etap === 2),
       zlecenia: items
@@ -105,11 +106,12 @@ export default function Produkcja() {
   const [rozliczLoading, setRozliczLoading] = useState(false);
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDraftDeleteId, setConfirmDraftDeleteId] = useState<string | null>(null);
   const [editIlosc, setEditIlosc] = useState("");
 
   // ── Wizard sesji produkcyjnej ────────────────────────────────────────────────
   const [showWizard, setShowWizard] = useState(false);
-  const [wizTyp, setWizTyp] = useState<"" | "lody" | "sorbety">("");
+  const [wizTyp, setWizTyp] = useState<"" | "lody" | "sorbety" | "kubeczki">("");
   const [wizStep, setWizStep] = useState<1|2|3>(1);
   const [wizLoading, setWizLoading] = useState(false);
   const [wizBazaRecId, setWizBazaRecId] = useState("");
@@ -210,13 +212,19 @@ export default function Produkcja() {
     } catch { /* ignoruj */ }
   };
 
-  const deleteDraft = async (draftId: string, e?: React.MouseEvent) => {
+  const deleteDraft = (draftId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (!window.confirm("Czy na pewno chcesz usunąć ten szkic?")) return;
+    setConfirmDraftDeleteId(draftId);
+  };
+
+  const executeDeleteDraft = async () => {
+    if (!confirmDraftDeleteId) return;
     try {
-      await fetch(`/api/produkcja/sesja-robocza/${draftId}`, { method: "DELETE" });
+      await fetch(`/api/produkcja/sesja-robocza/${confirmDraftDeleteId}`, { method: "DELETE" });
       fetchDraftsList();
-    } catch {}
+    } catch {} finally {
+      setConfirmDraftDeleteId(null);
+    }
   };
 
   // Alias dla starego clearDraft
@@ -643,7 +651,7 @@ export default function Produkcja() {
         const porcje = parseFloat(w.liczba_porcji.replace(",", "."));
         if (isNaN(porcje) || porcje <= 0) { showToast("Wszystkie wyroby muszą mieć liczbę porcji > 0", "error"); return; }
       }
-      if (wizTyp === "lody" && !wizBazaOk) { showToast(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`, "error"); return; }
+      if ((wizTyp === "lody" || wizTyp === "kubeczki") && !wizBazaOk) { showToast(`Zużycie bazy (${wizTotalBazaUsed.toFixed(3)}) przekracza dostępną ilość (${wizBazaIlosc})`, "error"); return; }
       
       // Inicjalizuj krok 3 — zachowaj istniejące dane realizacji (user mógł już wpisać coś i cofnąć)
       const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
@@ -657,6 +665,7 @@ export default function Produkcja() {
           const baseOpakowania = w.planowane_opakowania && w.planowane_opakowania.length > 0
             ? w.planowane_opakowania.map(op => ({ ...op }))
             : (pozzetti ? [{ id_asortymentu: pozzetti.id, nazwa: pozzetti.nazwa, waga_kg: "" }] : []);
+          
           init[w._key] = {
             rzeczywista_ilosc: "",
             opakowania: baseOpakowania
@@ -694,38 +703,62 @@ export default function Produkcja() {
       }
     } catch { /* fallback do React state */ }
 
+    const isSztukowy = wizTyp === "kubeczki";
+
     for (const w of wizWyroby) {
       const real = realizacjaDB[w._key];
-      const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
-      const rzeczywista = totalOp;
       const rec = receptury.find(r => r.id === w.id_receptury);
-      const ilosc_planowana = getIloscWyrobu(w);
-
-      if (rzeczywista <= 0) { showToast(`Suma wag opakowań musi być > 0 dla każdego wyrobu (${rec?.asortyment_docelowy.nazwa})`, "error"); return; }
-      if (totalOp <= 0) { showToast(`Dodaj opakowania dla: ${rec?.asortyment_docelowy.nazwa}`, "error"); return; }
+      if (isSztukowy) {
+        // Dla trybu sztukowego walidujemy liczbę sztuk
+        const sztStr = real?.rzeczywista_ilosc ?? "";
+        let szt = parseFloat(sztStr.replace(",", "."));
+        if (isNaN(szt)) {
+          szt = Math.round(parseFloat(w.liczba_porcji.replace(",", ".")) || 0);
+        }
+        if (szt <= 0) {
+          showToast(`Podaj liczbę sztuk dla: ${rec?.asortyment_docelowy.nazwa}`, "error");
+          return;
+        }
+      } else {
+        const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+        if (totalOp <= 0) { showToast(`Dodaj opakowania dla: ${rec?.asortyment_docelowy.nazwa}`, "error"); return; }
+      }
     }
     setWizLoading(true);
     try {
       const payload: Record<string, any> = {
+        typ: wizTyp,
         wyroby: wizWyroby
           .filter(w => getIloscWyrobu(w) > 0)
           .map(w => {
             const ilosc = getIloscWyrobu(w);
             const real = realizacjaDB[w._key];
-            const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
-            const rzeczywista_ilosc = totalOp || ilosc;
+            const rec = receptury.find(r => r.id === w.id_receptury);
             const surowce = (wizWyrobySurowceMap[w._key] || [])
               .flatMap(s => s.zuzyte_partie.map(zp => ({ id_partii: zp.id_partii, ilosc: zp.ilosc, isAuto: zp.id_partii === "__etap1__" })))
               .filter(x => x.id_partii && !x.isAuto && x.ilosc > 0)
               .map(x => ({ id_partii: x.id_partii, ilosc: x.ilosc }));
-            const opakowania = (real?.opakowania || [])
-              .filter(o => o.id_asortymentu && parseFloat(o.waga_kg.replace(",", ".")) > 0)
-              .map(o => ({ id_asortymentu: o.id_asortymentu, nazwa: o.nazwa, waga_kg: parseFloat(o.waga_kg.replace(",", ".")) }));
-            return { id_receptury: w.id_receptury, ilosc, rzeczywista_ilosc, surowce, opakowania };
+
+            if (isSztukowy) {
+              // Tryb sztukowy (kubeczki): przesyłamy sztuki i wagę wyliczoną wg 0.15kg
+              const sztStr = real?.rzeczywista_ilosc ?? "";
+              const expectedCups = rec ? Math.floor(((parseFloat(w.liczba_porcji.replace(",", ".")) || 0) * (rec.wielkosc_produkcji || 1)) / 0.15) : 0;
+              const ilosc_szt = parseFloat(sztStr.replace(",", ".")) || expectedCups;
+              const wagaJedn = 0.15;
+              const ilosc_bazy_kg = ilosc_szt * wagaJedn;
+              return { id_receptury: w.id_receptury, ilosc, ilosc_szt, rzeczywista_ilosc: ilosc_bazy_kg, surowce, opakowania: [] };
+            } else {
+              const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+              const rzeczywista_ilosc = totalOp || ilosc;
+              const opakowania = (real?.opakowania || [])
+                .filter(o => o.id_asortymentu && parseFloat(o.waga_kg.replace(",", ".")) > 0)
+                .map(o => ({ id_asortymentu: o.id_asortymentu, nazwa: o.nazwa, waga_kg: parseFloat(o.waga_kg.replace(",", ".")) }));
+              return { id_receptury: w.id_receptury, ilosc, rzeczywista_ilosc, surowce, opakowania };
+            }
           }),
       };
-      // Dla lodów dodaj dane bazy; dla sorbetów pomijamy etap 1
-      if (wizTyp === "lody") {
+      // Dla lodów, kubeczków i kanapek dodaj dane bazy; dla sorbetów pomijamy etap 1
+      if (wizTyp === "lody" || wizTyp === "kubeczki") {
         payload.id_receptury_bazy = wizBazaRecId;
         payload.ilosc_bazy = parseFloat(wizBazaIlosc.replace(",", "."));
         payload.rzeczywista_ilosc_bazy = parseFloat((wizBazaRzeczywistaIlosc || wizBazaIlosc).replace(",", "."));
@@ -1245,7 +1278,11 @@ export default function Produkcja() {
                   </td>
                   <td className="text-right mono">{z.planowana_ilosc_wyrobu} <span className="text-xs opacity-50">{z.receptura.asortyment_docelowy.jednostka_miary}</span></td>
                   <td className="text-right mono" style={{ color: z.rzeczywista_ilosc_wyrobu ? 'var(--ok)' : 'var(--text-muted)' }}>
-                    {z.rzeczywista_ilosc_wyrobu ?? '—'}
+                    {z.rzeczywista_ilosc_wyrobu != null ? (
+                      <>{z.rzeczywista_ilosc_wyrobu} <span className="text-xs opacity-50">
+                        {z.ruchy_magazynowe?.find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji")?.partia?.asortyment?.jednostka_miary || (((z as any).sesja?.typ === "kubeczki" || (z as any).sesja?.typ === "kanapki") && z.etap === 2 ? "szt." : z.receptura.asortyment_docelowy.jednostka_miary)}
+                      </span></>
+                    ) : '—'}
                   </td>
                   <td className="mono text-xs" style={{ color: 'var(--text-secondary)' }}>{new Date(z.utworzono_dnia).toLocaleDateString("pl-PL")}</td>
                   <td onClick={e => e.stopPropagation()}>
@@ -1328,7 +1365,7 @@ export default function Produkcja() {
                               <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs mb-1.5">
                                 <span style={{ color: 'var(--text-muted)' }}>Plan: <span className="font-mono text-white">{fmtL(z.planowana_ilosc_wyrobu, 3)} {z.receptura?.asortyment_docelowy?.jednostka_miary}</span></span>
                                 {z.rzeczywista_ilosc_wyrobu != null && (
-                                  <span style={{ color: 'var(--text-muted)' }}>Wykonano: <span className="font-mono" style={{ color: 'var(--ok)' }}>{fmtL(z.rzeczywista_ilosc_wyrobu, 3)} {z.receptura?.asortyment_docelowy?.jednostka_miary}</span></span>
+                                  <span style={{ color: 'var(--text-muted)' }}>Wykonano: <span className="font-mono" style={{ color: 'var(--ok)' }}>{fmtL(z.rzeczywista_ilosc_wyrobu, 3)} {wytworzone?.partia?.asortyment?.jednostka_miary || (z.sesja?.typ === "kubeczki" && z.etap === 2 ? "szt." : z.receptura?.asortyment_docelowy?.jednostka_miary)}</span></span>
                                 )}
                                 {wytworzone && (
                                   <span style={{ color: 'var(--text-muted)' }}>Partia: <span className="font-mono" style={{ color: 'var(--text-code)' }}>{wytworzone.partia?.numer_partii || '—'}</span></span>
@@ -1847,11 +1884,11 @@ export default function Produkcja() {
                       Sesja produkcyjna
                     </div>
                     <div className="text-xl font-black text-white leading-tight">
-                      {wizTyp === "" ? "Nowa sesja" : wizTyp === "lody" ? "Sesja — Lody" : "Sesja — Sorbety"}
+                      {wizTyp === "" ? "Nowa sesja" : wizTyp === "lody" ? "Sesja — Lody" : wizTyp === "sorbety" ? "Sesja — Sorbety" : wizTyp === "kubeczki" ? "Sesja — Kubeczki" : "Sesja — Kanapki"}
                     </div>
                     {wizTyp !== "" && (
                       <div className="flex items-center gap-1.5 mt-3">
-                        {wizTyp === "lody" ? [1,2,3].map(n => (
+                        {(wizTyp === "lody" || wizTyp === "kubeczki") ? [1,2,3].map(n => (
                           <div key={n} className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
                             style={{ background: n <= wizStep ? 'var(--accent)' : 'var(--bg-app)', color: n <= wizStep ? '#fff' : 'var(--text-muted)', border: `1px solid ${n <= wizStep ? 'var(--border-accent)' : 'var(--border)'}` }}>
                             {n < wizStep ? <Check className="w-3 h-3" /> : n}
@@ -1894,7 +1931,7 @@ export default function Produkcja() {
                   {wizTyp === "" && (
                     <div style={{ color: 'var(--text-muted)' }}>Wybierz typ produkcji aby kontynuować.</div>
                   )}
-                  {wizTyp === "lody" && wizStep === 1 && (
+                  {(wizTyp === "lody" || wizTyp === "kubeczki") && wizStep === 1 && (
                     <>
                       <div>
                         <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Krok</div>
@@ -1919,9 +1956,9 @@ export default function Produkcja() {
                     <>
                       <div>
                         <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Krok</div>
-                        <div className="font-medium text-white">{wizTyp === "lody" ? "2 / 3 — Wyroby gotowe" : "1 / 2 — Wyroby gotowe"}</div>
+                        <div className="font-medium text-white">{(wizTyp === "lody" || wizTyp === "kubeczki") ? "2 / 3 — Wyroby gotowe" : "1 / 2 — Wyroby gotowe"}</div>
                       </div>
-                      {wizTyp === "lody" && (
+                      {(wizTyp === "lody" || wizTyp === "kubeczki") && (
                         <div>
                           <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Bilans bazy</div>
                           <div className="space-y-1">
@@ -1953,7 +1990,7 @@ export default function Produkcja() {
                     <>
                       <div>
                         <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Krok</div>
-                        <div className="font-medium text-white">{wizTyp === "lody" ? "3 / 3 — Pakowanie" : "2 / 2 — Pakowanie"}</div>
+                        <div className="font-medium text-white">{(wizTyp === "lody" || wizTyp === "kubeczki") ? "3 / 3 — Pakowanie" : "2 / 2 — Pakowanie"}</div>
                       </div>
                       <div>
                         <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Wyroby do spakowania</div>
@@ -2001,13 +2038,13 @@ export default function Produkcja() {
                   <button
                     onClick={() => {
                       if (wizTyp === "") { setShowWizard(false); return; }
-                      if (wizTyp === "lody" && wizStep === 1) { setShowWizard(false); return; }
+                      if ((wizTyp === "lody" || wizTyp === "kubeczki") && wizStep === 1) { setShowWizard(false); return; }
                       if (wizTyp === "sorbety" && wizStep === 2) { setWizTyp(""); return; }
                       setWizStep(prev => (prev - 1) as 1|2|3);
                     }}
                     className="btn w-full justify-center text-sm"
                     style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                    {(wizTyp === "" || (wizTyp === "lody" && wizStep === 1)) ? "Anuluj" : "← Wstecz"}
+                    {(wizTyp === "" || ((wizTyp === "lody" || wizTyp === "kubeczki") && wizStep === 1)) ? "Anuluj" : "← Wstecz"}
                   </button>
                 </div>
               </div>
@@ -2020,40 +2057,47 @@ export default function Produkcja() {
                      style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
                   <Zap className="w-3.5 h-3.5 text-indigo-400" />
                   {wizTyp === "" && "Wybierz typ produkcji"}
-                  {wizTyp === "lody" && wizStep === 1 && "Krok 1 — Półprodukt (Baza mleczna)"}
-                  {wizStep === 2 && (wizTyp === "lody" ? "Krok 2 — Wyroby gotowe i surowce" : "Krok 1 — Wyroby gotowe i surowce")}
-                  {wizStep === 3 && (wizTyp === "lody" ? "Krok 3 — Ilości rzeczywiste i pakowanie" : "Krok 2 — Ilości rzeczywiste i pakowanie")}
+                  {(wizTyp === "lody" || wizTyp === "kubeczki") && wizStep === 1 && "Krok 1 — Półprodukt (Baza mleczna)"}
+                  {wizStep === 2 && ((wizTyp === "lody" || wizTyp === "kubeczki") ? "Krok 2 — Wyroby gotowe i surowce" : "Krok 1 — Wyroby gotowe i surowce")}
+                  {wizStep === 3 && ((wizTyp === "lody" || wizTyp === "kubeczki") ? `Krok 3 — ${wizTyp === "kubeczki" ? "Liczba kubeczków" : "Ilości rzeczywiste i pakowanie"}` : "Krok 2 — Ilości rzeczywiste i pakowanie")}
                 </div>
 
               <div className="flex-1 overflow-y-auto">
 
                 {/* ─── WYBÓR TYPU PRODUKCJI ──────────────────────────────────────── */}
                 {wizTyp === "" && (
-                  <div className="flex flex-col items-center justify-center gap-6 p-12">
+                  <div className="flex flex-col items-center justify-center gap-6 p-10">
                     <p className="text-[var(--text-muted)] text-sm">Co dziś produkujesz?</p>
-                    <div className="flex gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <button
                         onClick={() => { setWizTyp("lody"); setWizStep(1); fetchData(); }}
-                        className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 transition-all hover:scale-105"
-                        style={{ background: 'var(--bg-surface)', borderColor: 'var(--accent)', color: 'white' }}>
+                        className="flex flex-col items-center gap-3 px-8 py-6 rounded-2xl border-2 transition-all hover:scale-105"
+                        style={{ background: 'var(--bg-surface)', borderColor: 'var(--accent)', color: 'var(--text-primary)' }}>
                         <span className="text-4xl">🍦</span>
                         <span className="text-lg font-bold">Lody</span>
-                        <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Etap 1: baza (półprodukt)<br/>Etap 2: wyroby gotowe<br/>Etap 3: pakowanie</span>
+                        <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Etap 1: baza mleczna<br/>Etap 2: smaki (kg)<br/>Etap 3: pakowanie w kuwety</span>
                       </button>
                       <button
                         onClick={() => { setWizTyp("sorbety"); setWizStep(2); fetchData(); }}
-                        className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 transition-all hover:scale-105"
-                        style={{ background: 'var(--bg-surface)', borderColor: 'var(--ok)', color: 'white' }}>
+                        className="flex flex-col items-center gap-3 px-8 py-6 rounded-2xl border-2 transition-all hover:scale-105"
+                        style={{ background: 'var(--bg-surface)', borderColor: 'var(--ok)', color: 'var(--text-primary)' }}>
                         <span className="text-4xl">🍋</span>
                         <span className="text-lg font-bold">Sorbety</span>
-                        <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Etap 1: wyroby gotowe<br/>Etap 2: pakowanie<br/>(bez półproduktu)</span>
+                        <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Etap 1: smaki (kg)<br/>Etap 2: pakowanie w kuwety<br/>(bez półproduktu)</span>
+                      </button>
+                      <button
+                        onClick={() => { setWizTyp("kubeczki"); setWizStep(1); fetchData(); }}
+                        className="flex flex-col items-center gap-3 px-8 py-6 rounded-2xl border-2 transition-all hover:scale-105"
+                        style={{ background: 'var(--bg-surface)', borderColor: '#f97316', color: 'var(--text-primary)' }}>
+                        <img src="/icons/kubeczek.png" alt="Kubeczki" className="w-12 h-12 object-contain drop-shadow-md" />
+                        <span className="text-lg font-bold">Kubeczki</span>
+                        <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Etap 1: baza mleczna<br/>Etap 2: smaki (kg)<br/>Etap 3: pakowanie na sztuki</span>
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* ─── KROK 1: Baza (tylko lody) ────────────────────────────────── */}
-                {wizTyp === "lody" && wizStep === 1 && (
+                {(wizTyp === "lody" || wizTyp === "kubeczki") && wizStep === 1 && (
                   <div>
                     {/* Selektor receptury + ilość */}
                     <div className="px-5 py-4 border-b border-[var(--border)] flex items-end gap-4" style={{ background: 'var(--bg-surface)' }}>
@@ -2104,8 +2148,8 @@ export default function Produkcja() {
                 {/* ─── KROK 2: Wyroby + Surowce wyrobów ────────────────────────── */}
                 {wizStep === 2 && (
                   <div>
-                    {/* Bilans bazy — tylko dla lodów */}
-                    {wizTyp === "lody" && (
+                    {/* Bilans bazy — dla lodów i kubeczków */}
+                    {(wizTyp === "lody" || wizTyp === "kubeczki") && (
                       <div className="px-5 py-3 border-b border-[var(--border)] flex items-center gap-6" style={{ background: wizBazaOk ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.07)' }}>
                         <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Bilans bazy</span>
                         <span className="text-sm"><span style={{ color: 'var(--text-muted)' }}>Dostępne </span><strong className="text-white font-mono">{fmtL(wizBazaAvail, 3)} {bazaRec?.asortyment_docelowy.jednostka_miary}</strong></span>
@@ -2145,6 +2189,9 @@ export default function Produkcja() {
 
                     {/* Dodaj wyrób */}
                     <div className="px-5 py-3 border-b border-[var(--border)] flex gap-2" style={{ background: 'var(--bg-surface)' }}>
+                      <h4 className="text-[var(--text-secondary)] text-xs font-bold uppercase tracking-widest">
+                        {wizTyp === "sorbety" ? "Dodaj sorbety do wyprodukowania" : "Dodaj wyroby gotowe, które powstaną z bazy"}
+                      </h4>
                       <select value={wizAddRecId} onChange={e => setWizAddRecId(e.target.value)}
                         className="flex-1 rounded px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2}>
                         <option value="">— wybierz recepturę wyrobu gotowego —</option>
@@ -2152,8 +2199,8 @@ export default function Produkcja() {
                           if (r.asortyment_docelowy.typ_asortymentu !== "Wyrob_Gotowy") return false;
                           if (wizWyroby.find(w => w.id_receptury === r.id)) return false;
                           const kodGrupy = r.asortyment_docelowy.grupa?.kod ?? null;
-                          if (wizTyp === "sorbety") return kodGrupy === "GEL-SOR";
-                          if (wizTyp === "lody") return kodGrupy !== "GEL-SOR";
+                          if (wizTyp === "kubeczki") return kodGrupy !== "GEL-SOR";
+                          if (wizTyp === "lody") return kodGrupy !== "GEL-SOR" && kodGrupy !== "GEL-KUB";
                           return true;
                         }).sort((a, b) => a.asortyment_docelowy.nazwa.localeCompare(b.asortyment_docelowy.nazwa, 'pl')).map(r => (
                           <option key={r.id} value={r.id}>{r.asortyment_docelowy.nazwa} v{r.numer_wersji}</option>
@@ -2179,7 +2226,7 @@ export default function Produkcja() {
                               <th>Wyrób gotowy</th>
                               <th className="text-right">Porcje</th>
                               <th className="text-right">Łączna ilość</th>
-                              {wizTyp === "lody" && <th className="text-right">Zużycie bazy</th>}
+                              {(wizTyp === "lody" || wizTyp === "kubeczki") && <th className="text-right">Zużycie bazy</th>}
                               <th className="w-8"></th>
                             </tr>
                           </thead>
@@ -2187,11 +2234,11 @@ export default function Produkcja() {
                             {wizWyroby.map(w => {
                               const rec = receptury.find(r => r.id === w.id_receptury);
                               const ilosc = getIloscWyrobu(w);
-                              const bazaUse = wizTyp === "lody" ? getEffectiveBazaForWyrob(w) : 0;
-                              const bazaPerPorcja = wizTyp === "lody" ? getBazaUsageForWyrob(w.id_receptury, rec?.wielkosc_produkcji ?? 1) : 0;
+                              const bazaUse = (wizTyp === "lody" || wizTyp === "kubeczki") ? getEffectiveBazaForWyrob(w) : 0;
+                              const bazaPerPorcja = (wizTyp === "lody" || wizTyp === "kubeczki") ? getBazaUsageForWyrob(w.id_receptury, rec?.wielkosc_produkcji ?? 1) : 0;
                               const maxPorcje = bazaPerPorcja > 0 ? Math.max(0, Math.floor((wizBazaAvail - wizTotalBazaUsed + bazaUse) / bazaPerPorcja)) : 0;
                               const surowceWyrobu = wizWyrobySurowceMap[w._key] || [];
-                              const colSpan = wizTyp === "lody" ? 5 : 4;
+                              const colSpan = (wizTyp === "lody" || wizTyp === "kubeczki") ? 5 : 4;
                               return (
                                 <React.Fragment key={w._key}>
                                   <tr>
@@ -2204,7 +2251,7 @@ export default function Produkcja() {
                                     <td className="text-right">
                                       <div className="flex items-center justify-end gap-3">
                                         <div className="flex items-center gap-1.5">
-                                          {wizTyp === "lody" && maxPorcje > 0 && (
+                                          {(wizTyp === "lody" || wizTyp === "kubeczki") && maxPorcje > 0 && (
                                             <button onClick={() => {
                                               const newIlosc = Math.round(maxPorcje * (rec?.wielkosc_produkcji ?? 1) * 1000) / 1000;
                                               const newBaza = getBazaUsageForWyrob(w.id_receptury, newIlosc);
@@ -2231,7 +2278,7 @@ export default function Produkcja() {
                                             className="w-16 rounded px-2 py-1 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
                                           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>szt.</span>
                                         </div>
-                                        {wizTyp === "lody" && bazaPerPorcja > 0 && (
+                                        {(wizTyp === "lody" || wizTyp === "kubeczki") && bazaPerPorcja > 0 && (
                                           <div className="flex items-center gap-1.5">
                                             {maxPorcje > 0 && (
                                               <button onClick={() => {
@@ -2270,7 +2317,7 @@ export default function Produkcja() {
                                     <td className="text-right mono font-bold text-white">
                                       {fmtL(ilosc, 3)} <span className="text-xs opacity-50">{rec?.asortyment_docelowy.jednostka_miary}</span>
                                     </td>
-                                    {wizTyp === "lody" && (
+                                    {(wizTyp === "lody" || wizTyp === "kubeczki") && (
                                       <td className="text-right mono text-sm" style={{ color: bazaUse > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
                                         {bazaUse > 0 ? `${fmtL(bazaUse, 3)} ${bazaRec?.asortyment_docelowy.jednostka_miary}` : '—'}
                                       </td>
@@ -2282,6 +2329,7 @@ export default function Produkcja() {
                                       </button>
                                     </td>
                                   </tr>
+                                  {(wizTyp !== "kubeczki") && (
                                   <tr>
                                     <td colSpan={colSpan} style={{ padding: 0, background: 'var(--bg-panel)', borderBottom: '1px dashed var(--border)' }}>
                                       <div className="px-4 py-3">
@@ -2328,6 +2376,7 @@ export default function Produkcja() {
                                       </div>
                                     </td>
                                   </tr>
+                                  )}
                                   {surowceWyrobu.length > 0 && (
                                     <tr>
                                       <td colSpan={colSpan} style={{ padding: 0, background: 'var(--bg-panel)' }}>
@@ -2380,7 +2429,14 @@ export default function Produkcja() {
                               <div className="relative">
                                 <input
                                   type="text"
-                                  value={fmtL(real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0), 3)}
+                                  value={fmtL(
+                                    (() => {
+                                      const rv = (wizTyp === "kubeczki")
+                                        ? (parseFloat(real.rzeczywista_ilosc.replace(",", ".") || String(Math.floor(((parseFloat(w.liczba_porcji.replace(",", ".")) || 0) * (rec?.wielkosc_produkcji || 1)) / 0.15))) || 0) * 0.15
+                                        : real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+                                      return rv;
+                                    })()
+                                  , 3)}
                                   readOnly
                                   className="w-full rounded-lg px-3 py-2 text-sm font-mono outline-none opacity-80 cursor-default pr-12"
                                   style={{ background: 'rgba(0,0,0,0.2)', border: '1px dashed var(--border)', color: 'var(--text-primary)' }}
@@ -2390,7 +2446,9 @@ export default function Produkcja() {
                                 </span>
                               </div>
                               {(() => {
-                                const rv = real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+                                const rv = (wizTyp === "kubeczki")
+                                  ? (parseFloat(real.rzeczywista_ilosc.replace(",", ".") || String(Math.floor(((parseFloat(w.liczba_porcji.replace(",", ".")) || 0) * (rec?.wielkosc_produkcji || 1)) / 0.15))) || 0) * 0.15
+                                  : real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
                                 if (!isNaN(rv) && planowana > 0 && rv > 0.001) {
                                   const diff = rv - planowana;
                                   const pct = (diff / planowana * 100).toFixed(1);
@@ -2403,62 +2461,99 @@ export default function Produkcja() {
                                 return null;
                               })()}
                             </div>
-                            {/* Pakowanie */}
-                            <div>
-                              <div className="flex items-center justify-between mb-2">
-                                <label className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Pakowanie</label>
-                                <button
-                                  onClick={() => {
-                                    const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
-                                    setReal(prev => ({ ...prev, opakowania: [...prev.opakowania, pozzetti ? { id_asortymentu: pozzetti.id, nazwa: pozzetti.nazwa, waga_kg: "" } : { id_asortymentu: "", nazwa: "", waga_kg: "" }] }));
-                                  }}
-                                  className="flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors"
-                                  style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                                  <Plus className="w-3 h-3" />Dodaj
-                                </button>
-                              </div>
-                              {real.opakowania.length === 0 ? (
-                                <div className="text-xs py-2 text-center rounded border border-dashed" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)' }}>
-                                  Brak opakowań
-                                </div>
-                              ) : (
-                                <div className="space-y-1.5">
-                                  {real.opakowania.map((op, idx) => (
-                                    <div key={idx} className="flex items-center gap-1.5">
-                                      <select
-                                        value={op.id_asortymentu}
-                                        onChange={e => {
-                                          const found = dostepneOpakowania.find(o => o.id === e.target.value);
-                                          setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, id_asortymentu: e.target.value, nazwa: found?.nazwa || "" } : x) }));
-                                        }}
-                                        className="flex-1 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--accent)]"
-                                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-                                        {dostepneOpakowania.map(o => <option key={o.id} value={o.id}>{o.nazwa}</option>)}
-                                      </select>
-                                      <div className="relative">
-                                        <input type="text" value={op.waga_kg} placeholder="0.00"
-                                          onChange={e => setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, waga_kg: clampDecimals(e.target.value, 3) } : x) }))}
-                                          className="w-20 text-right rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-[var(--accent)] pr-6"
-                                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>kg</span>
-                                      </div>
-                                      <button onClick={() => setReal(prev => ({ ...prev, opakowania: prev.opakowania.filter((_, i) => i !== idx) }))}
-                                        className="text-slate-600 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
-                                    </div>
-                                  ))}
+                            {/* Pakowanie / Podsumowanie */}
+                            {(wizTyp === "kubeczki") ? (
+                              // ── Tryb sztukowy: prosty input liczby sztuk ──────────
+                              <div>
+                                <label className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                                  Liczba kubeczków
+                                </label>
+                                <div className="mt-2 flex items-center gap-3">
+                                  <div className="relative flex-1 max-w-[160px]">
+                                    <input
+                                      type="text"
+                                      value={real.rzeczywista_ilosc}
+                                      onChange={e => setReal(prev => ({ ...prev, rzeczywista_ilosc: clampDecimals(e.target.value, 0) }))}
+                                      placeholder={String(Math.floor(((parseFloat(w.liczba_porcji.replace(",", ".")) || 0) * (rec?.wielkosc_produkcji || 1)) / 0.15))}
+                                      className="w-full rounded px-3 py-2 pr-12 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                                    />
+                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>szt.</span>
+                                  </div>
                                   {(() => {
-                                    const totalOp = real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
-                                    return (
-                                      <div className="text-xs font-mono pt-0.5 space-y-0.5">
-                                        <div className="text-right" style={{ color: 'var(--text-muted)' }}>
-                                          Razem: <span className="text-white font-bold">{fmtL(totalOp, 3)}</span> kg
-                                        </div>
-                                      </div>
-                                    );
+                                    const sztStr = real?.rzeczywista_ilosc ?? "";
+                                    let szt = parseFloat(sztStr.replace(",", "."));
+                                    if (isNaN(szt)) {
+                                      szt = Math.floor(((parseFloat(w.liczba_porcji.replace(",", ".")) || 0) * (rec?.wielkosc_produkcji || 1)) / 0.15);
+                                    }
+                                    const wagaJedn = 0.15; // Sztywna waga kubeczka
+                                    const kgTotal = !isNaN(szt) ? szt * wagaJedn : null;
+                                    return kgTotal != null ? (
+                                      <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+                                        ≈ {fmtL(kgTotal, 3)} kg
+                                      </span>
+                                    ) : null;
                                   })()}
                                 </div>
-                              )}
-                            </div>
+                              </div>
+                            ) : (
+                              // ── Tryb wagowy: oryginalne pakowanie w opakowania ─────
+                              <div>
+                                <div className="flex items-center justify-between mb-2">
+                                  <label className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Pakowanie</label>
+                                  <button
+                                    onClick={() => {
+                                      const pozzetti = dostepneOpakowania.find(o => o.nazwa.toLowerCase().includes("pozzetti") || o.nazwa.toLowerCase().includes("pozetti")) || dostepneOpakowania[0];
+                                      setReal(prev => ({ ...prev, opakowania: [...prev.opakowania, pozzetti ? { id_asortymentu: pozzetti.id, nazwa: pozzetti.nazwa, waga_kg: "" } : { id_asortymentu: "", nazwa: "", waga_kg: "" }] }));
+                                    }}
+                                    className="flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors"
+                                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                                    <Plus className="w-3 h-3" />Dodaj
+                                  </button>
+                                </div>
+                                {real.opakowania.length === 0 ? (
+                                  <div className="text-xs py-2 text-center rounded border border-dashed" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)' }}>
+                                    Brak opakowań
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    {real.opakowania.map((op, idx) => (
+                                      <div key={idx} className="flex items-center gap-1.5">
+                                        <select
+                                          value={op.id_asortymentu}
+                                          onChange={e => {
+                                            const found = dostepneOpakowania.find(o => o.id === e.target.value);
+                                            setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, id_asortymentu: e.target.value, nazwa: found?.nazwa || "" } : x) }));
+                                          }}
+                                          className="flex-1 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                                          {dostepneOpakowania.map(o => <option key={o.id} value={o.id}>{o.nazwa}</option>)}
+                                        </select>
+                                        <div className="relative">
+                                          <input type="text" value={op.waga_kg} placeholder="0.00"
+                                            onChange={e => setReal(prev => ({ ...prev, opakowania: prev.opakowania.map((x, i) => i === idx ? { ...x, waga_kg: clampDecimals(e.target.value, 3) } : x) }))}
+                                            className="w-20 text-right rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-[var(--accent)] pr-6"
+                                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                                          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>kg</span>
+                                        </div>
+                                        <button onClick={() => setReal(prev => ({ ...prev, opakowania: prev.opakowania.filter((_, i) => i !== idx) }))}
+                                          className="text-slate-600 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                                      </div>
+                                    ))}
+                                    {(() => {
+                                      const totalOp = real.opakowania.reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
+                                      return (
+                                        <div className="text-xs font-mono pt-0.5 space-y-0.5">
+                                          <div className="text-right" style={{ color: 'var(--text-muted)' }}>
+                                            Razem: <span className="text-white font-bold">{fmtL(totalOp, 3)}</span> kg
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -2982,8 +3077,12 @@ export default function Produkcja() {
                   const surowce = (w.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === "Zuzycie");
                   const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
                   const docs = (w.ruchy_magazynowe || []).filter((r: any) => r.referencja_dokumentu).map((r: any) => ({ ref: r.referencja_dokumentu as string, typ: r.typ_ruchu as string })).filter((d, i, arr) => arr.findIndex(x => x.ref === d.ref) === i);
-                  const wagaWyk = w.rzeczywista_ilosc_wyrobu || 0;
-                  const delta = wagaWyk - w.planowana_ilosc_wyrobu;
+                  const wagaWykSzt = w.rzeczywista_ilosc_wyrobu || 0;
+                  const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
+                  const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+                  const wagaWykKg = isKub ? (wagaWykSzt * wagaJedn) : wagaWykSzt;
+                  const unitPlan = w.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                  const delta = wagaWykKg - w.planowana_ilosc_wyrobu;
                   const opGrupy: any[] = w.opakowania && w.opakowania.length > 0
                     ? Object.values(w.opakowania.reduce((acc: any, op) => {
                         const k = `${op.id_asortymentu}_${op.waga_kg}`;
@@ -3005,12 +3104,13 @@ export default function Produkcja() {
                         </div>
                         <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
                           <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Plan</div>
-                          <div className="mono font-bold text-white">{fmtL(w.planowana_ilosc_wyrobu, 3)} kg</div>
+                          <div className="mono font-bold text-white">{fmtL(w.planowana_ilosc_wyrobu, 3)} {unitPlan}</div>
                         </div>
                         <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
                           <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Wykonano</div>
                           <div className="flex items-baseline gap-2">
-                            <span className="mono font-bold text-emerald-400">{fmtL(wagaWyk, 3)} kg</span>
+                            <span className="mono font-bold text-emerald-400">{fmtL(wagaWykKg, 3)} kg</span>
+                            {isKub && wagaWykSzt > 0 && <span className="text-[10px] text-blue-400 font-bold ml-1">{wagaWykSzt} szt.</span>}
                             {w.status === "Zrealizowane" && (
                               <span className={`text-[10px] font-black ${delta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                                 {delta >= 0 ? "+" : ""}{fmtL(delta, 3)}
@@ -3109,8 +3209,19 @@ export default function Produkcja() {
 
                 {/* ── PODSUMOWANIE TAB ── */}
                 {sesjaTab === "podsumowanie" && (() => {
+                  const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
                   const totalPlan = viewSesjaData.wyroby.reduce((s, w) => s + w.planowana_ilosc_wyrobu, 0);
-                  const totalWyk = viewSesjaData.wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0);
+                  
+                  // For kubeczki/kanapki calculate total kg using waga_jednostkowa_kg
+                  const totalWyk = viewSesjaData.wyroby.reduce((s, w) => {
+                    if (isKub) {
+                      const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+                      return s + ((w.rzeczywista_ilosc_wyrobu || 0) * wagaJedn);
+                    }
+                    return s + (w.rzeczywista_ilosc_wyrobu || 0);
+                  }, 0);
+                  const totalWykSzt = isKub ? viewSesjaData.wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0) : 0;
+                  
                   const totalOp = viewSesjaData.wyroby.reduce((s, w) => s + (w.opakowania?.length || 0), 0);
                   const wydajnosc = totalPlan > 0 ? (totalWyk / totalPlan) * 100 : 0;
                   const totalDocs = viewSesjaData.zlecenia.reduce((acc, z) => {
@@ -3176,7 +3287,11 @@ export default function Produkcja() {
                         <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
                           <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Masa wyk.</div>
                           <div className="text-2xl font-black text-emerald-400">{fmtL(totalWyk, 3)} <span className="text-xs">kg</span></div>
-                          {totalPlan > 0 && <div className="text-[10px] text-[var(--text-muted)] mt-0.5">plan {fmtL(totalPlan, 3)} kg</div>}
+                          {totalWykSzt > 0 ? (
+                            <div className="text-[10px] text-blue-400 font-bold mt-0.5">{totalWykSzt} szt.</div>
+                          ) : (
+                            totalPlan > 0 && <div className="text-[10px] text-[var(--text-muted)] mt-0.5">plan {fmtL(totalPlan, 3)} kg</div>
+                          )}
                         </div>
                         <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
                           <div className="text-[var(--text-muted)] text-[11px] font-black uppercase mb-1">Wydajność</div>
@@ -3225,18 +3340,21 @@ export default function Produkcja() {
                               <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Razem wejście E2</div>
                               <div className="mono font-bold text-white text-xl">{fmtL(wejscieE2, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
                             </div>
-                            {/* ── separator ── */}
-                            <div className="border-l border-[var(--border)] pl-8">
-                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Wyjście (wyk.)</div>
-                              <div className="mono font-bold text-emerald-400 text-xl">{fmtL(totalWyk, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
-                            </div>
-                            <div>
-                              <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Straty produkcji</div>
-                              <div className={`mono font-bold text-xl ${stratyProdukcji > 0.5 ? "text-red-400" : "text-slate-500"}`}>
-                                {fmtL(stratyProdukcji, 3)} <span className="text-xs opacity-50">{bazaJm}</span>
+                            <>
+                              {/* ── separator ── */}
+                              <div className="border-l border-[var(--border)] pl-8">
+                                <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Wyjście (wyk.)</div>
+                                <div className="mono font-bold text-emerald-400 text-xl">{fmtL(totalWyk, 3)} <span className="text-xs opacity-50">{bazaJm}</span></div>
+                                {totalWykSzt > 0 && <div className="text-[10px] text-blue-400 font-bold mt-0.5">{totalWykSzt} szt.</div>}
                               </div>
-                              {wejscieE2 > 0 && <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{fmtL(stratyProdukcji / wejscieE2 * 100, 1)}% wejścia</div>}
-                            </div>
+                              <div>
+                                <div className="text-[10px] text-[var(--text-muted)] uppercase font-black mb-0.5">Straty produkcji</div>
+                                <div className={`mono font-bold text-xl ${stratyProdukcji > 0.5 ? "text-red-400" : "text-slate-500"}`}>
+                                  {fmtL(stratyProdukcji, 3)} <span className="text-xs opacity-50">{bazaJm}</span>
+                                </div>
+                                {wejscieE2 > 0 && <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{fmtL(stratyProdukcji / wejscieE2 * 100, 1)}% wejścia</div>}
+                              </div>
+                            </>
                           </div>
                         </div>
                       )}
@@ -3248,13 +3366,18 @@ export default function Produkcja() {
                         </h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                           {viewSesjaData.wyroby.map((w, i) => {
-                            const wyk = w.rzeczywista_ilosc_wyrobu || 0;
-                            const delta = wyk - w.planowana_ilosc_wyrobu;
-                            const pct = w.planowana_ilosc_wyrobu > 0 ? (wyk / w.planowana_ilosc_wyrobu) * 100 : 0;
-                            const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
-                            const nrPartii = (przyjecie as any)?.partia?.numer_partii || w.numer_partii_wyrobu;
+                            const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
                             const opWyrob = (w.opakowania || []);
                             const opWagaTot = opWyrob.reduce((s, o) => s + o.waga_kg, 0);
+                            const wykSzt = w.rzeczywista_ilosc_wyrobu || 0;
+                            const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+                            const wykKg = isKub ? (wykSzt * wagaJedn) : wykSzt;
+                            
+                            const delta = wykKg - w.planowana_ilosc_wyrobu;
+                            const pct = w.planowana_ilosc_wyrobu > 0 ? (wykKg / w.planowana_ilosc_wyrobu) * 100 : 0;
+                            const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
+                            const nrPartii = (przyjecie as any)?.partia?.numer_partii || w.numer_partii_wyrobu;
+                            
                             return (
                               <div key={w.id} className="bg-[var(--bg-surface)] rounded-xl border border-[var(--border)] p-4">
                                 <div className="flex items-start justify-between mb-2">
@@ -3271,7 +3394,8 @@ export default function Produkcja() {
                                   </div>
                                   <div>
                                     <div className="text-[10px] text-[var(--text-muted)] uppercase font-black">Wyk.</div>
-                                    <div className="mono font-bold text-emerald-400 text-sm">{fmtL(wyk, 3)}</div>
+                                    <div className="mono font-bold text-emerald-400 text-sm">{fmtL(wykKg, 3)}</div>
+                                    {isKub && wykSzt > 0 && <div className="text-[10px] text-blue-400 font-bold leading-none">{wykSzt} szt.</div>}
                                   </div>
                                   <div>
                                     <div className="text-[10px] text-[var(--text-muted)] uppercase font-black">Delta</div>
@@ -3322,7 +3446,7 @@ export default function Produkcja() {
                             </thead>
                             <tbody className="divide-y divide-[var(--border)]/50">
                               {sesjaAllZp.map((z, i) => {
-                                const pct = z.planowana_ilosc_wyrobu > 0 ? ((z.rzeczywista_ilosc_wyrobu || 0) / z.planowana_ilosc_wyrobu) * 100 : 0;
+                                const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
                                 const opGrupy: any[] = z.opakowania && z.opakowania.length > 0
                                   ? Object.values(z.opakowania.reduce((acc: any, op) => {
                                       const k = `${op.id_asortymentu}_${op.waga_kg}`;
@@ -3331,6 +3455,11 @@ export default function Produkcja() {
                                       return acc;
                                     }, {}))
                                   : [];
+                                const wykSzt = z.rzeczywista_ilosc_wyrobu || 0;
+                                const wagaJedn = z.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+                                const wykKg = (isKub && z.etap === 2) ? (wykSzt * wagaJedn) : wykSzt;
+                                const pct = z.planowana_ilosc_wyrobu > 0 ? (wykKg / z.planowana_ilosc_wyrobu) * 100 : 0;
+                                
                                 return (
                                   <tr key={i} className="hover:bg-[var(--bg-surface)]/40 transition-colors">
                                     <td className="px-4 py-3 mono font-bold text-white text-xs">{z.numer_zlecenia || "—"}</td>
@@ -3341,7 +3470,10 @@ export default function Produkcja() {
                                     </td>
                                     <td className="px-4 py-3 font-semibold text-[var(--text-primary)] text-sm">{z.receptura?.asortyment_docelowy?.nazwa}</td>
                                     <td className="px-4 py-3 text-right mono text-[var(--text-muted)] text-xs">{fmtL(z.planowana_ilosc_wyrobu, 3)}</td>
-                                    <td className="px-4 py-3 text-right mono font-bold text-white text-xs">{fmtL(z.rzeczywista_ilosc_wyrobu || 0, 3)}</td>
+                                    <td className="px-4 py-3 text-right mono font-bold text-white text-xs">
+                                      {fmtL(wykKg, 3)}
+                                      {isKub && z.etap === 2 && wykSzt > 0 && <div className="text-[10px] text-blue-400 font-bold leading-none mt-1">{wykSzt} szt.</div>}
+                                    </td>
                                     <td className="px-4 py-3 text-right">
                                       {z.status === "Zrealizowane" ? (
                                         <span className={`text-xs font-bold mono ${pct >= 95 ? "text-emerald-400" : pct >= 80 ? "text-amber-400" : "text-red-400"}`}>
@@ -3366,7 +3498,10 @@ export default function Produkcja() {
                               <tr className="border-t-2 border-[var(--border)] bg-[var(--bg-surface)]">
                                 <td colSpan={3} className="px-4 py-3 font-black text-white uppercase text-[11px] tracking-widest">SUMA wyrobów E2</td>
                                 <td className="px-4 py-3 text-right mono text-[var(--text-muted)] text-xs">{fmtL(totalPlan, 3)} kg</td>
-                                <td className="px-4 py-3 text-right mono font-black" style={{ color: 'var(--ok)' }}>{fmtL(totalWyk, 3)} kg</td>
+                                <td className="px-4 py-3 text-right mono font-black" style={{ color: 'var(--ok)' }}>
+                                  {fmtL(totalWyk, 3)} kg
+                                  {totalWykSzt > 0 && <div className="text-[10px] text-blue-400 mt-1">{totalWykSzt} szt.</div>}
+                                </td>
                                 <td className="px-4 py-3 text-right mono font-bold text-xs" style={{ color: wydajnosc >= 95 ? 'var(--ok)' : 'var(--warn)' }}>{fmtL(wydajnosc, 1)}%</td>
                                 <td className="px-4 py-3 text-sm font-bold text-[var(--text-muted)]">{totalOp > 0 ? `${totalOp} szt.` : "—"}</td>
                               </tr>
@@ -3459,21 +3594,22 @@ export default function Produkcja() {
                       <>
                         {/* ── Bilans wartościowy ── */}
                         {(() => {
-                          // wejscieK i totalWykK pobieramy z danych koszty (surowce już w kg po konwersji)
                           const wejscieK = sesjaKoszty.wyroby.reduce((s: number, w: any) => s + (w.surowce_ilosc_kg_total || 0), 0);
                           const totalWykK = sesjaKoszty.masa_wyrobow_total;
-                          const strataKg = Math.max(0, wejscieK - totalWykK);
+                          const jmK = sesjaKoszty.jednostka_wyrobu || "kg";
+                          const isKg = jmK === "kg";
+                          const strataKg = isKg ? Math.max(0, wejscieK - totalWykK) : 0;
                           const koszt_per_kg_input = wejscieK > 0 ? sesjaKoszty.koszt_wyrobow_total / wejscieK : 0;
-                          const strata_wartosc = Math.round(strataKg * koszt_per_kg_input * 100) / 100;
-                          const wartosc_w_wyrobach = Math.round((sesjaKoszty.koszt_wyrobow_total - strata_wartosc) * 100) / 100;
-                          const strata_pct = sesjaKoszty.koszt_wyrobow_total > 0 ? strata_wartosc / sesjaKoszty.koszt_wyrobow_total * 100 : 0;
+                          const strata_wartosc = isKg ? Math.round(strataKg * koszt_per_kg_input * 100) / 100 : 0;
+                          const wartosc_w_wyrobach = isKg ? Math.round((sesjaKoszty.koszt_wyrobow_total - strata_wartosc) * 100) / 100 : sesjaKoszty.koszt_wyrobow_total;
+                          const strata_pct = isKg && sesjaKoszty.koszt_wyrobow_total > 0 ? strata_wartosc / sesjaKoszty.koszt_wyrobow_total * 100 : 0;
                           if (wejscieK === 0) return null;
                           return (
                             <div className="bg-[var(--bg-panel)] rounded-xl border border-[var(--border)] overflow-hidden">
                               <div className="px-4 py-2.5 bg-[var(--bg-surface)] border-b border-[var(--border)]">
                                 <span className="text-[11px] font-black uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Bilans wartościowy</span>
                               </div>
-                              <div className="grid grid-cols-3 divide-x divide-[var(--border)]">
+                              <div className={`grid grid-cols-${isKg ? '3' : '2'} divide-x divide-[var(--border)]`}>
                                 <div className="px-4 py-3">
                                   <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-0.5">Wejście — surowce</div>
                                   <div className="text-xl font-black text-white">{fmtL(sesjaKoszty.koszt_wyrobow_total, 2)} <span className="text-xs font-normal">zł</span></div>
@@ -3482,8 +3618,9 @@ export default function Produkcja() {
                                 <div className="px-4 py-3">
                                   <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-0.5">Wyjście — wyroby</div>
                                   <div className="text-xl font-black text-emerald-400">{fmtL(wartosc_w_wyrobach, 2)} <span className="text-xs font-normal">zł</span></div>
-                                  <div className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{fmtL(totalWykK, 3)} kg</div>
+                                  <div className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{fmtL(totalWykK, 3)} {jmK}</div>
                                 </div>
+                                {isKg && (
                                 <div className="px-4 py-3">
                                   <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-0.5">Strata produkcyjna</div>
                                   <div className="text-xl font-black" style={{ color: strata_wartosc > 0 ? 'var(--warn)' : 'var(--ok)' }}>
@@ -3493,6 +3630,7 @@ export default function Produkcja() {
                                     {fmtL(strataKg, 3)} kg · {fmtL(strata_pct, 1)}%
                                   </div>
                                 </div>
+                                )}
                               </div>
                             </div>
                           );
@@ -3505,12 +3643,12 @@ export default function Produkcja() {
                             <div className="text-2xl font-black" style={{ color: 'var(--accent)' }}>{fmtL(sesjaKoszty.koszt_wyrobow_total, 2)} <span className="text-xs">zł</span></div>
                           </div>
                           <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
-                            <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Śr. koszt / kg wyrobów</div>
-                            <div className="text-2xl font-black text-amber-400">{fmtL(sesjaKoszty.koszt_wyrobow_avg_per_kg, 2)} <span className="text-xs">zł/kg</span></div>
+                            <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Śr. koszt / {sesjaKoszty.jednostka_wyrobu || "kg"} wyrobów</div>
+                            <div className="text-2xl font-black text-amber-400">{fmtL(sesjaKoszty.koszt_wyrobow_avg_per_kg, 2)} <span className="text-xs">zł/{sesjaKoszty.jednostka_wyrobu || "kg"}</span></div>
                           </div>
                           <div className="bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border)]">
-                            <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Masa wyrobów</div>
-                            <div className="text-2xl font-black text-emerald-400">{fmtL(sesjaKoszty.masa_wyrobow_total, 2)} <span className="text-xs">kg</span></div>
+                            <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">{sesjaKoszty.jednostka_wyrobu === "szt." ? "Ilość wyrobów" : "Masa wyrobów"}</div>
+                            <div className="text-2xl font-black text-emerald-400">{fmtL(sesjaKoszty.masa_wyrobow_total, 2)} <span className="text-xs">{sesjaKoszty.jednostka_wyrobu || "kg"}</span></div>
                           </div>
                         </div>
 
@@ -3630,6 +3768,16 @@ export default function Produkcja() {
         cancelText="Anuluj"
         onConfirm={() => { handleDelete(confirmDeleteId!); setConfirmDeleteId(null); }}
         onCancel={() => setConfirmDeleteId(null)}
+      />
+
+      <ConfirmModal
+        isOpen={!!confirmDraftDeleteId}
+        title="Usuń szkic"
+        message="Czy na pewno chcesz usunąć ten zapisany szkic? Tej operacji nie można cofnąć."
+        confirmText="Usuń"
+        cancelText="Anuluj"
+        onConfirm={executeDeleteDraft}
+        onCancel={() => setConfirmDraftDeleteId(null)}
       />
     </div>
   );

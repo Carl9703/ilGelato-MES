@@ -11,10 +11,10 @@ export const prismaTest = new PrismaClient({
 
 const initDB = async () => {
   try {
-    await prismaProdukcja.$executeRawUnsafe('PRAGMA journal_mode = WAL;');
-    await prismaProdukcja.$executeRawUnsafe('PRAGMA synchronous = NORMAL;');
-    await prismaTest.$executeRawUnsafe('PRAGMA journal_mode = WAL;');
-    await prismaTest.$executeRawUnsafe('PRAGMA synchronous = NORMAL;');
+    await prismaProdukcja.$queryRawUnsafe('PRAGMA journal_mode = WAL;');
+    await prismaProdukcja.$queryRawUnsafe('PRAGMA synchronous = NORMAL;');
+    await prismaTest.$queryRawUnsafe('PRAGMA journal_mode = WAL;');
+    await prismaTest.$queryRawUnsafe('PRAGMA synchronous = NORMAL;');
   } catch (e) {
     console.error("Błąd ustawień PRAGMA SQLite:", e);
   }

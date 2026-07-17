@@ -85,6 +85,7 @@ model Asortyment {
   cena_sprzedazy           Float?
   stawka_vat               Float?
   cena_zakupu              Float?
+  waga_jednostkowa_kg      Float?  // Waga 1 szt. dla produktów kubeczkowych/kanapkowych
   alergeny                 Alergeny_Asortymentu?
   grupa                    Grupy_Towarowe?            @relation(fields: [id_grupy], references: [id])
   opakowania_wyrobowe      Opakowania_Wyrobowe[]
@@ -264,6 +265,7 @@ model Sesje_Produkcji {
   utworzono_dnia      DateTime               @default(now())
   zaktualizowano_dnia DateTime               @updatedAt
   data_produkcji      DateTime?
+  typ                 String                 @default("lody") // "lody" | "sorbety" | "kubeczki" | "kanapki"
   zlecenia            Zlecenia_Produkcyjne[]
 }
 

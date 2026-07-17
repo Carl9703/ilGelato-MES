@@ -79,7 +79,7 @@ export default function Asortyment() {
   const [kartoSaving, setKartoSaving] = useState(false);
 
   // Ceny zakupu / sprzedaży
-  const [cenyForm, setCenyForm] = useState({ cena_sprzedazy: "", stawka_vat: "", cena_zakupu: "" });
+  const [cenyForm, setCenyForm] = useState({ cena_sprzedazy: "", stawka_vat: "", cena_zakupu: "", waga_jednostkowa_kg: "" });
   const [cenySaving, setCenySaving] = useState(false);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -166,7 +166,7 @@ export default function Asortyment() {
       setSkladnikiOpisForm({ producent: (a as any).producent || "", zrodlo_danych: (a as any).zrodlo_danych || "", skladniki_opis: (a as any).skladniki_opis || "", moze_zawierac: (a as any).moze_zawierac || "" });
     }).catch(() => {});
     fetch(`/api/asortyment/${a.id}/ceny`).then(r => r.json()).then(d => {
-      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? Number(d.cena_sprzedazy).toFixed(2) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "5", cena_zakupu: d?.cena_zakupu != null ? Number(d.cena_zakupu).toFixed(2) : "" });
+      setCenyForm({ cena_sprzedazy: d?.cena_sprzedazy != null ? Number(d.cena_sprzedazy).toFixed(2) : "", stawka_vat: d?.stawka_vat != null ? String(d.stawka_vat) : "5", cena_zakupu: d?.cena_zakupu != null ? Number(d.cena_zakupu).toFixed(2) : "", waga_jednostkowa_kg: d?.waga_jednostkowa_kg != null ? String(d.waga_jednostkowa_kg) : "" });
     }).catch(() => {});
   };
 
@@ -713,6 +713,23 @@ export default function Asortyment() {
                         <option value="23">23%</option>
                       </select>
                     </div>
+                    {/* Waga jednostkowa — tylko dla produktów w sztukach */}
+                    {detailData.ogolne.jednostka_miary === "szt." && (
+                      <div className="border-t pt-4" style={{ borderColor: 'var(--border)' }}>
+                        <label className="block text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Waga jednostkowa (kg/szt.) <span style={{ color: 'var(--text-muted)' }}>— używana do obliczenia zużycia bazy</span></label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number" step="0.001" min="0"
+                            value={cenyForm.waga_jednostkowa_kg}
+                            onChange={e => setCenyForm(f => ({ ...f, waga_jednostkowa_kg: clampDecimals(e.target.value, 3) }))}
+                            className="flex-1 rounded px-3 py-2 text-sm font-mono outline-none focus:ring-1"
+                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            placeholder="0.150"
+                          />
+                          <span className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>kg</span>
+                        </div>
+                      </div>
+                    )}
                     {cenyForm.cena_sprzedazy && cenyForm.stawka_vat !== "" && (
                       <div className="rounded p-3 text-sm space-y-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
                         <div className="flex justify-between">

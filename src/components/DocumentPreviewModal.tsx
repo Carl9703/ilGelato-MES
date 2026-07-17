@@ -274,7 +274,8 @@ export default function DocumentPreviewModal({
                     });
                     if (res.ok) {
                       const data = await res.json();
-                      window.open(`/api/dokumenty/${docRef}/pdf?token=${encodeURIComponent(data.token)}`, '_blank');
+                      const ts = new Date().getTime();
+                      window.open(`/api/dokumenty/${docRef}/pdf?token=${encodeURIComponent(data.token)}&t=${ts}`, '_blank');
                     } else {
                       alert('Nie udało się pobrać tokena dla PDF');
                     }

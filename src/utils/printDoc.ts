@@ -288,12 +288,29 @@ export async function printSesja(sesja: any): Promise<void> {
     .filter(s => s.nazwa !== bazaNazwa)
     .sort((a, b) => b.wartosc - a.wartosc);
 
-  // Pozycje — każde opakowanie jako wiersz
+  const isKub = sesja.typ === 'kubeczki' || sesja.typ === 'kanapki';
+  
+  // Pozycje — każde opakowanie jako wiersz (lub łączna sztukówka dla kubeczków)
   let lp = 0;
   const tbodyPoz = wyroby.map((w: any) => {
     const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === 'Przyjecie_Z_Produkcji');
     const nrP = (przyjecie as any)?.partia?.numer_partii || w.numer_partii_wyrobu || '—';
     const nazwa = w.receptura?.asortyment_docelowy?.nazwa || '—';
+    const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+    
+    if (isKub) {
+      const wykSzt = w.rzeczywista_ilosc_wyrobu || 0;
+      const wykKg = wykSzt * wagaJedn;
+      lp++;
+      return `<tr>
+        <td class="c lp">${lp}</td>
+        <td><b>${nazwa}</b></td>
+        <td class="mono small">${nrP}</td>
+        <td class="r mono b">${wykSzt > 0 ? `${wykSzt} szt.` : '—'}</td>
+        <td class="r mono b">${fmtL(wykKg, 3)} kg</td>
+      </tr>`;
+    }
+
     const ops: any[] = w.opakowania || [];
     if (ops.length === 0) {
       lp++;
@@ -323,13 +340,20 @@ export async function printSesja(sesja: any): Promise<void> {
     const key = w.receptura?.asortyment_docelowy?.nazwa || '—';
     if (!sumaMap.has(key)) sumaMap.set(key, { szt: 0, kg: 0 });
     const e = sumaMap.get(key)!;
-    const ops: any[] = w.opakowania || [];
-    e.szt += ops.length;
-    e.kg += ops.reduce((s: number, o: any) => s + (o.waga_kg || 0), 0);
+    
+    if (isKub) {
+      const wykSzt = w.rzeczywista_ilosc_wyrobu || 0;
+      const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+      e.szt += wykSzt;
+      e.kg += (wykSzt * wagaJedn);
+    } else {
+      const ops: any[] = w.opakowania || [];
+      e.szt += ops.length;
+      e.kg += ops.reduce((s: number, o: any) => s + (o.waga_kg || 0), 0);
+    }
   });
   const totalSzt = [...sumaMap.values()].reduce((s, e) => s + e.szt, 0);
   const totalKg = [...sumaMap.values()].reduce((s, e) => s + e.kg, 0);
-  const totalWyk = wyroby.reduce((s: number, w: any) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0);
   const tbodySuma = [...sumaMap.entries()].map(([nazwa, e]) => `
     <tr>
       <td><b>${nazwa}</b></td>
@@ -339,7 +363,7 @@ export async function printSesja(sesja: any): Promise<void> {
     `<tr class="waga-total">
       <td>ŁĄCZNIE</td>
       <td class="r mono">${totalSzt > 0 ? `${totalSzt} szt.` : '—'}</td>
-      <td class="r mono">${fmtL(totalKg > 0 ? totalKg : totalWyk, 3)} kg</td>
+      <td class="r mono">${fmtL(totalKg, 3)} kg</td>
     </tr>`;
 
   const totalSurWartosc = surowce.reduce((s, r) => s + r.wartosc, 0);

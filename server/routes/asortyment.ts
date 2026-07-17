@@ -232,7 +232,7 @@ router.put("/:id/kartoteka", async (req, res) => {
 router.get("/:id/ceny", async (req, res) => {
   try {
     const data = await prisma.asortyment.findUnique({
-      where: { id: req.params.id }, select: { cena_sprzedazy: true, stawka_vat: true, cena_zakupu: true },
+      where: { id: req.params.id }, select: { cena_sprzedazy: true, stawka_vat: true, cena_zakupu: true, waga_jednostkowa_kg: true },
     });
     res.json(data || {});
   } catch { res.status(500).json({ error: "Błąd pobierania cen" }); }
@@ -244,10 +244,11 @@ router.put("/:id/ceny", async (req, res) => {
     const cena = req.body.cena_sprzedazy !== undefined && req.body.cena_sprzedazy !== "" ? parseFloat(req.body.cena_sprzedazy) : null;
     const vat = req.body.stawka_vat !== undefined && req.body.stawka_vat !== "" ? parseFloat(req.body.stawka_vat) : null;
     const cenaZakupu = req.body.cena_zakupu !== undefined && req.body.cena_zakupu !== "" ? parseFloat(req.body.cena_zakupu) : null;
+    const wagaJedn = req.body.waga_jednostkowa_kg !== undefined && req.body.waga_jednostkowa_kg !== "" ? parseFloat(req.body.waga_jednostkowa_kg) : null;
     const result = await prisma.asortyment.update({
-      where: { id }, data: { cena_sprzedazy: cena, stawka_vat: vat, cena_zakupu: cenaZakupu },
+      where: { id }, data: { cena_sprzedazy: cena, stawka_vat: vat, cena_zakupu: cenaZakupu, waga_jednostkowa_kg: wagaJedn },
     });
-    res.json({ cena_sprzedazy: result.cena_sprzedazy, stawka_vat: result.stawka_vat, cena_zakupu: result.cena_zakupu });
+    res.json({ cena_sprzedazy: result.cena_sprzedazy, stawka_vat: result.stawka_vat, cena_zakupu: result.cena_zakupu, waga_jednostkowa_kg: result.waga_jednostkowa_kg });
   } catch { res.status(500).json({ error: "Błąd zapisu cen" }); }
 });
 

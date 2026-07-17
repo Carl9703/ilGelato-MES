@@ -154,8 +154,16 @@ router.get("/api/wyroby-gotowe/stan", async (req, res) => {
           } catch {}
         }
 
-        // Brak danych o opakowaniach lub pusta lista po odjęciu — jeden wiersz z łącznym kg
-        rows.push({ ...base, opakowanie: null, waga_jednostkowa: null, ilosc_szt: null, ilosc_kg: Math.round(stan * 1000) / 1000 });
+        // Brak danych o opakowaniach lub pusta lista po odjęciu
+        // Dla produktów sztukowych (szt.) — stan w szt., ilosc_kg z waga_jednostkowa_kg kartoteki
+        if (p.asortyment.jednostka_miary === "szt.") {
+          const wagaJedn = (p.asortyment as any).waga_jednostkowa_kg ?? null;
+          const iloscSzt = Math.round(stan);
+          const iloscKg = wagaJedn != null ? Math.round(stan * wagaJedn * 1000) / 1000 : null;
+          rows.push({ ...base, opakowanie: null, waga_jednostkowa: wagaJedn, ilosc_szt: iloscSzt, ilosc_kg: iloscKg ?? 0 });
+        } else {
+          rows.push({ ...base, opakowanie: null, waga_jednostkowa: null, ilosc_szt: null, ilosc_kg: Math.round(stan * 1000) / 1000 });
+        }
       }
 
       res.json(rows);
