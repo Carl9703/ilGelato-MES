@@ -27,4 +27,8 @@ DATABASE_URL="$DATABASE_URL_TEST" npx prisma db push --skip-generate
 echo "Ensuring admin user..."
 npx tsx prisma/create-admin.ts
 
+# Ensure default product groups exist
+echo "Ensuring required product groups..."
+npx tsx scripts/init_groups.ts
+
 exec npx tsx server.ts
