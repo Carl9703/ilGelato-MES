@@ -594,9 +594,10 @@ router.post("/api/produkcja/sesja", async (req, res) => {
               },
             });
             // Tryb sztukowy: PW przyjmuje sztuki; tryb wagowy: przyjmuje kg (bez zmian)
-            const rzeczywistaIloscNaPW = isSztukowy
+            let rzeczywistaIloscNaPW = isSztukowy
               ? (wyrob.ilosc_szt != null ? parseFloat(wyrob.ilosc_szt) : rzeczywistaIloscWyrobu)
               : rzeczywistaIloscWyrobu;
+            if (isNaN(rzeczywistaIloscNaPW)) rzeczywistaIloscNaPW = rzeczywistaIloscWyrobu;
             const cenaWyrobu = rzeczywistaIloscNaPW > 0 ? kosztWyrobu / rzeczywistaIloscNaPW : 0;
             await tx.ruchy_Magazynowe.create({
               data: { id_partii: partiaWyrobu.id, id_zlecenia: zlecenieWyrobu.id, typ_ruchu: "Przyjecie_Z_Produkcji", ilosc: rzeczywistaIloscNaPW, cena_jednostkowa: cenaWyrobu, referencja_dokumentu: pwNr, id_uzytkownika: user.id },

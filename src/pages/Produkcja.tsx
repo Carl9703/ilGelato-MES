@@ -10,7 +10,7 @@ import { EmptyState } from "../components/EmptyState";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
 import { printSesja, printZP } from "../utils/printDoc";
 
-type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null; typ_asortymentu?: string; id_grupy?: string | null; grupa?: { kod: string } | null };
+type Asortyment = { id: string; kod_towaru: string; nazwa: string; jednostka_miary: string; jednostka_pomocnicza?: string | null; przelicznik_jednostki?: number | null; typ_asortymentu?: string; id_grupy?: string | null; grupa?: { kod: string } | null; waga_jednostkowa_kg?: number | null; };
 type SkladnikReceptury = { 
   id_asortymentu_skladnika: string; 
   ilosc_wymagana: number; 
@@ -742,11 +742,11 @@ export default function Produkcja() {
             if (isSztukowy) {
               // Tryb sztukowy (kubeczki): przesyłamy sztuki i wagę wyliczoną wg 0.15kg
               const sztStr = real?.rzeczywista_ilosc ?? "";
-              const expectedCups = rec ? Math.floor(((parseFloat(w.liczba_porcji.replace(",", ".")) || 0) * (rec.wielkosc_produkcji || 1)) / 0.15) : 0;
-              const ilosc_szt = parseFloat(sztStr.replace(",", ".")) || expectedCups;
               const wagaJedn = 0.15;
+              const expectedCups = rec ? Math.floor(((parseFloat(w.liczba_porcji.replace(",", ".")) || 0) * (rec.wielkosc_produkcji || 1)) / wagaJedn) : 0;
+              const ilosc_szt = parseFloat(sztStr.replace(",", ".")) || expectedCups;
               const ilosc_bazy_kg = ilosc_szt * wagaJedn;
-              return { id_receptury: w.id_receptury, ilosc, ilosc_szt, rzeczywista_ilosc: ilosc_bazy_kg, surowce, opakowania: [] };
+              return { id_receptury: w.id_receptury, ilosc, ilosc_szt, rzeczywista_ilosc: ilosc_bazy_kg, ilosc_bazy_kg, surowce, opakowania: [] };
             } else {
               const totalOp = (real?.opakowania || []).reduce((s, o) => s + (parseFloat(o.waga_kg.replace(",", ".")) || 0), 0);
               const rzeczywista_ilosc = totalOp || ilosc;
@@ -1065,7 +1065,7 @@ export default function Produkcja() {
         <div className="space-y-4">
           <div className="mes-panel rounded overflow-hidden">
             {(() => {
-              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalMasa: number; status: string; isDraft?: boolean }> = {};
+              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean }> = {};
               zlecenia.forEach(z => {
                 const sid = z.id_sesji || `indiv-${z.id}`;
                 if (!sessionsMap[sid]) {
@@ -1075,14 +1075,28 @@ export default function Produkcja() {
                     data: z.utworzono_dnia,
                     baza: null,
                     wyroby: [],
-                    totalMasa: 0,
+                    totalKg: 0,
+                    totalSzt: 0,
                     status: z.status
                   };
                 }
                 if (z.etap === 1) sessionsMap[sid].baza = z;
                 if (z.etap === 2 || !z.etap) {
                   sessionsMap[sid].wyroby.push(z);
-                  if (z.status === "Zrealizowane") sessionsMap[sid].totalMasa += (z.rzeczywista_ilosc_wyrobu || 0);
+                  if (z.status === "Zrealizowane") {
+                    const isKub = z.sesja?.typ === "kubeczki" || z.sesja?.typ === "kanapki";
+                    const baseJM = z.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                    const isSztuki = isKub || baseJM === "szt.";
+                    const wagaJedn = z.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+                    const val = z.rzeczywista_ilosc_wyrobu || 0;
+
+                    if (isSztuki) {
+                      sessionsMap[sid].totalSzt += val;
+                      sessionsMap[sid].totalKg += val * wagaJedn;
+                    } else {
+                      sessionsMap[sid].totalKg += val;
+                    }
+                  }
                 }
                 if (z.status === "W_toku") sessionsMap[sid].status = "W_toku";
               });
@@ -1094,20 +1108,21 @@ export default function Produkcja() {
                   data: d.zaktualizowano_dnia,
                   baza: null,
                   wyroby: [],
-                  totalMasa: 0,
+                  totalKg: 0,
+                  totalSzt: 0,
                   status: "Szkic w toku",
                   isDraft: true,
                 };
               });
 
-              type SessionRow = { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalMasa: number; status: string; isDraft?: boolean };
+              type SessionRow = { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean };
               const sessions = sortBy<SessionRow>(
                 Object.values(sessionsMap) as SessionRow[],
                 s => {
                   switch (seszjeSortKey) {
                     case 'numer_sesji': return s.numer_sesji;
                     case 'baza':        return s.baza?.receptura?.asortyment_docelowy?.nazwa ?? '';
-                    case 'totalMasa':   return s.totalMasa;
+                    case 'totalMasa':   return s.totalKg; // s.totalKg already includes szt weight
                     case 'status':      return s.status;
                     default:            return s.data;
                   }
@@ -1146,16 +1161,25 @@ export default function Produkcja() {
                         </td>
                         <td>
                           <div className="flex flex-wrap gap-1">
-                            {s.wyroby.map(w => (
-                              <div key={w.id} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border)]" title={w.receptura?.asortyment_docelowy?.nazwa}>
-                                {w.receptura?.asortyment_docelowy?.nazwa.slice(0, 15)}...
-                                <span className="ml-1 text-emerald-400 font-bold">{w.status === "Zrealizowane" ? fmtL(w.rzeczywista_ilosc_wyrobu || 0, 1) : "—"} kg</span>
-                              </div>
-                            ))}
+                            {s.wyroby.map(w => {
+                              const isKub = w.sesja?.typ === "kubeczki" || w.sesja?.typ === "kanapki";
+                              const baseJM = w.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                              const isSztuki = isKub || baseJM === "szt.";
+                              return (
+                                <div key={w.id} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border)]" title={w.receptura?.asortyment_docelowy?.nazwa}>
+                                  {w.receptura?.asortyment_docelowy?.nazwa.slice(0, 15)}...
+                                  <span className="ml-1 text-emerald-400 font-bold">{w.status === "Zrealizowane" ? fmtL(w.rzeczywista_ilosc_wyrobu || 0, isSztuki ? 0 : 1) : "—"} {isSztuki ? "szt." : baseJM}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
                         <td className="text-right mono font-black text-white">
-                          {s.totalMasa > 0 ? <>{fmtL(s.totalMasa, 3)} <span className="text-[10px] opacity-40 font-normal">kg</span></> : "—"}
+                          <div className="flex flex-col items-end leading-tight">
+                            {s.totalKg > 0 && <div>{fmtL(s.totalKg, 3)} <span className="text-[10px] opacity-40 font-normal">kg</span></div>}
+                            {s.totalSzt > 0 && <div className="text-emerald-400">{fmtL(s.totalSzt, 0)} <span className="text-[10px] opacity-40 font-normal">szt</span></div>}
+                            {s.totalKg === 0 && s.totalSzt === 0 && <div>—</div>}
+                          </div>
                         </td>
                         <td>
                           <span className={`badge ${getStatusStyle(s.status)}`}>{s.status.replace("_", " ")}</span>
@@ -1365,7 +1389,7 @@ export default function Produkcja() {
                               <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs mb-1.5">
                                 <span style={{ color: 'var(--text-muted)' }}>Plan: <span className="font-mono text-white">{fmtL(z.planowana_ilosc_wyrobu, 3)} {z.receptura?.asortyment_docelowy?.jednostka_miary}</span></span>
                                 {z.rzeczywista_ilosc_wyrobu != null && (
-                                  <span style={{ color: 'var(--text-muted)' }}>Wykonano: <span className="font-mono" style={{ color: 'var(--ok)' }}>{fmtL(z.rzeczywista_ilosc_wyrobu, 3)} {wytworzone?.partia?.asortyment?.jednostka_miary || (z.sesja?.typ === "kubeczki" && z.etap === 2 ? "szt." : z.receptura?.asortyment_docelowy?.jednostka_miary)}</span></span>
+                                  <span style={{ color: 'var(--text-muted)' }}>Wykonano: <span className="font-mono" style={{ color: 'var(--ok)' }}>{fmtL(z.rzeczywista_ilosc_wyrobu, 3)} {wytworzone?.partia?.asortyment?.jednostka_miary || ((z.sesja?.typ === "kubeczki" || z.sesja?.typ === "kanapki") && z.etap === 2 ? "szt." : z.receptura?.asortyment_docelowy?.jednostka_miary)}</span></span>
                                 )}
                                 {wytworzone && (
                                   <span style={{ color: 'var(--text-muted)' }}>Partia: <span className="font-mono" style={{ color: 'var(--text-code)' }}>{wytworzone.partia?.numer_partii || '—'}</span></span>
@@ -2916,8 +2940,31 @@ export default function Produkcja() {
                   </div>
                   <div>
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Masa całkowita</div>
-                    <div className="font-mono font-bold text-white">
-                      {fmtL(viewSesjaData.wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0), 2)} kg
+                    <div className="font-mono font-bold text-white flex flex-col gap-0.5">
+                      {(() => {
+                        let tKg = 0, tSzt = 0;
+                        viewSesjaData.wyroby.forEach(w => {
+                          const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
+                          const baseJM = w.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                          const isSztuki = isKub || baseJM === "szt.";
+                          const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+                          const val = w.rzeczywista_ilosc_wyrobu || 0;
+                          
+                          if (isSztuki) {
+                            tSzt += val;
+                            tKg += val * wagaJedn;
+                          } else {
+                            tKg += val;
+                          }
+                        });
+                        return (
+                          <>
+                            {tKg > 0 && <div>{fmtL(tKg, 3)} <span className="text-[10px] font-normal" style={{ color: 'var(--text-muted)' }}>kg</span></div>}
+                            {tSzt > 0 && <div className="text-emerald-400">{fmtL(tSzt, 0)} <span className="text-[10px] font-normal" style={{ color: 'var(--text-muted)' }}>szt</span></div>}
+                            {tKg === 0 && tSzt === 0 && <div>—</div>}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                   {viewSesjaData.baza && (
@@ -2967,11 +3014,16 @@ export default function Produkcja() {
                       <span className="text-[10px] font-black text-blue-400 mr-1.5">E1</span>Baza
                     </button>
                   )}
-                  {viewSesjaData.wyroby.map(w => (
-                    <button key={w.id} onClick={() => setSesjaTab(w.id)} className={tabCls(w.id)}>
-                      <span className="text-[10px] font-black text-emerald-400 mr-1.5">E2</span>{w.receptura?.asortyment_docelowy?.nazwa}
-                    </button>
-                  ))}
+                  {viewSesjaData.wyroby.map(w => {
+                    const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
+                    const baseJM = w.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                    const isSztuki = isKub || baseJM === "szt.";
+                    return (
+                      <button key={w.id} onClick={() => setSesjaTab(w.id)} className={tabCls(w.id)}>
+                        <span className="text-[10px] font-black text-emerald-400 mr-1.5">E2</span>{w.receptura?.asortyment_docelowy?.nazwa}
+                      </button>
+                    );
+                  })}
                 </div>
                 {/* scroll right */}
                 <button
@@ -3077,12 +3129,15 @@ export default function Produkcja() {
                   const surowce = (w.ruchy_magazynowe || []).filter((r: any) => r.typ_ruchu === "Zuzycie");
                   const przyjecie = (w.ruchy_magazynowe || []).find((r: any) => r.typ_ruchu === "Przyjecie_Z_Produkcji");
                   const docs = (w.ruchy_magazynowe || []).filter((r: any) => r.referencja_dokumentu).map((r: any) => ({ ref: r.referencja_dokumentu as string, typ: r.typ_ruchu as string })).filter((d, i, arr) => arr.findIndex(x => x.ref === d.ref) === i);
-                  const wagaWykSzt = w.rzeczywista_ilosc_wyrobu || 0;
                   const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
+                  const baseJM = w.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                  const isSztuki = isKub || baseJM === "szt.";
+                  const unitPlan = isKub ? "kg" : baseJM; // For kubeczki the plan is in kg!
                   const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
-                  const wagaWykKg = isKub ? (wagaWykSzt * wagaJedn) : wagaWykSzt;
-                  const unitPlan = w.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
-                  const delta = wagaWykKg - w.planowana_ilosc_wyrobu;
+                  const wagaWykSzt = isSztuki ? (w.rzeczywista_ilosc_wyrobu || 0) : 0;
+                  const wagaWykKg = isSztuki ? (wagaWykSzt * wagaJedn) : (w.rzeczywista_ilosc_wyrobu || 0);
+                  const planSzt = isSztuki ? (isKub ? (w.planowana_ilosc_wyrobu / wagaJedn) : w.planowana_ilosc_wyrobu) : 0;
+                  const delta = isSztuki ? (wagaWykSzt - planSzt) : (wagaWykKg - w.planowana_ilosc_wyrobu);
                   const opGrupy: any[] = w.opakowania && w.opakowania.length > 0
                     ? Object.values(w.opakowania.reduce((acc: any, op) => {
                         const k = `${op.id_asortymentu}_${op.waga_kg}`;
@@ -3109,11 +3164,15 @@ export default function Produkcja() {
                         <div className="bg-[var(--bg-surface)] p-3 rounded-xl border border-[var(--border)]">
                           <div className="text-[10px] font-black uppercase text-[var(--text-muted)] mb-1">Wykonano</div>
                           <div className="flex items-baseline gap-2">
-                            <span className="mono font-bold text-emerald-400">{fmtL(wagaWykKg, 3)} kg</span>
-                            {isKub && wagaWykSzt > 0 && <span className="text-[10px] text-blue-400 font-bold ml-1">{wagaWykSzt} szt.</span>}
+                            <span className="mono font-bold text-emerald-400">
+                              {isSztuki ? `${fmtL(wagaWykSzt, 0)} szt.` : `${fmtL(wagaWykKg, 3)} kg`}
+                            </span>
+                            {isSztuki && wagaWykKg > 0 && (
+                              <span className="text-[10px] text-[var(--text-muted)] font-bold ml-1">{fmtL(wagaWykKg, 3)} kg</span>
+                            )}
                             {w.status === "Zrealizowane" && (
                               <span className={`text-[10px] font-black ${delta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                {delta >= 0 ? "+" : ""}{fmtL(delta, 3)}
+                                {delta >= 0 ? "+" : ""}{fmtL(delta, isSztuki ? 0 : 3)} {isSztuki ? "szt." : ""}
                               </span>
                             )}
                           </div>
@@ -3210,17 +3269,32 @@ export default function Produkcja() {
                 {/* ── PODSUMOWANIE TAB ── */}
                 {sesjaTab === "podsumowanie" && (() => {
                   const isKub = viewSesjaData.typ === "kubeczki" || viewSesjaData.typ === "kanapki";
-                  const totalPlan = viewSesjaData.wyroby.reduce((s, w) => s + w.planowana_ilosc_wyrobu, 0);
-                  
-                  // For kubeczki/kanapki calculate total kg using waga_jednostkowa_kg
-                  const totalWyk = viewSesjaData.wyroby.reduce((s, w) => {
+                  let totalPlan = 0;
+                  let totalWyk = 0;
+                  let totalWykSzt = 0;
+
+                  viewSesjaData.wyroby.forEach(w => {
+                    const baseJM = w.receptura?.asortyment_docelowy?.jednostka_miary || "kg";
+                    const isSztuki = isKub || baseJM === "szt.";
+                    const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
+                    const val = w.rzeczywista_ilosc_wyrobu || 0;
+
+                    // Plan is always stored in base unit OR kg for kubeczki
                     if (isKub) {
-                      const wagaJedn = w.receptura?.asortyment_docelowy?.waga_jednostkowa_kg || 0.15;
-                      return s + ((w.rzeczywista_ilosc_wyrobu || 0) * wagaJedn);
+                      totalPlan += w.planowana_ilosc_wyrobu; // Already kg
+                    } else if (baseJM === "szt.") {
+                      totalPlan += w.planowana_ilosc_wyrobu * wagaJedn; // Convert pieces to kg
+                    } else {
+                      totalPlan += w.planowana_ilosc_wyrobu; // Already kg
                     }
-                    return s + (w.rzeczywista_ilosc_wyrobu || 0);
-                  }, 0);
-                  const totalWykSzt = isKub ? viewSesjaData.wyroby.reduce((s, w) => s + (w.rzeczywista_ilosc_wyrobu || 0), 0) : 0;
+
+                    if (isSztuki) {
+                      totalWykSzt += val;
+                      totalWyk += val * wagaJedn;
+                    } else {
+                      totalWyk += val;
+                    }
+                  });
                   
                   const totalOp = viewSesjaData.wyroby.reduce((s, w) => s + (w.opakowania?.length || 0), 0);
                   const wydajnosc = totalPlan > 0 ? (totalWyk / totalPlan) * 100 : 0;

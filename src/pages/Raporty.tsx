@@ -224,21 +224,51 @@ export default function Raporty() {
       .sort((a, b) => (b.data ?? "").localeCompare(a.data ?? ""));
   }, [fsRaportData, fsKontrahent]);
 
-  const fsSumaKg = React.useMemo(
-    () => fsDokumenty.filter(d => selectedWz.has(d.referencja))
-      .reduce((s, d) => s + d.pozycje.reduce((ps, p) => ps + (p.ilosc_kg ?? 0), 0), 0),
-    [fsDokumenty, selectedWz],
-  );
+  const fsAggregates = React.useMemo(() => {
+    let sumKg = 0;
+    let wartoscKg = 0;
+    let sumSzt = 0;
+    let wartoscSzt = 0;
 
-  const fsWartoscNetto = React.useMemo(
-    () => fsDokumenty.filter(d => selectedWz.has(d.referencja)).reduce((s, d) => s + d.wartosc, 0),
-    [fsDokumenty, selectedWz],
-  );
+    fsDokumenty.filter(d => selectedWz.has(d.referencja)).forEach(d => {
+      d.pozycje.forEach(p => {
+        if (p.ilosc_kg != null && p.ilosc_kg > 0) {
+          sumKg += p.ilosc_kg;
+          wartoscKg += p.wartosc;
+        } else if (p.jednostka === "szt." || p.jednostka === "szt") {
+          sumSzt += p.ilosc;
+          wartoscSzt += p.wartosc;
+        } else {
+          // Fallback
+          sumKg += p.ilosc;
+          wartoscKg += p.wartosc;
+        }
+      });
+    });
 
-  const fsSredniaCena = fsSumaKg > 0 ? fsWartoscNetto / fsSumaKg : 0;
-  const fsVatRateNum = parseFloat(fsVatRate) || 0;
-  const fsKwotaVat = Math.round(fsWartoscNetto * fsVatRateNum / 100 * 100) / 100;
-  const fsWartoscBrutto = Math.round((fsWartoscNetto + fsKwotaVat) * 100) / 100;
+    const totalWartoscNetto = wartoscKg + wartoscSzt;
+    const vatRateNum = parseFloat(fsVatRate) || 0;
+    
+    // Calculate VAT per row to avoid rounding discrepancies with the PDF rows
+    const kwotaVatKg = sumKg > 0 ? Math.round(wartoscKg * vatRateNum / 100 * 100) / 100 : 0;
+    const kwotaVatSzt = sumSzt > 0 ? Math.round(wartoscSzt * vatRateNum / 100 * 100) / 100 : 0;
+    const kwotaVat = kwotaVatKg + kwotaVatSzt;
+    
+    const wartoscBrutto = Math.round((totalWartoscNetto + kwotaVat) * 100) / 100;
+
+    return { 
+      sumKg, wartoscKg, sredniaCenaKg: sumKg > 0 ? wartoscKg / sumKg : 0, 
+      sumSzt, wartoscSzt, sredniaCenaSzt: sumSzt > 0 ? wartoscSzt / sumSzt : 0,
+      totalWartoscNetto, kwotaVat, wartoscBrutto, vatRateNum
+    };
+  }, [fsDokumenty, selectedWz, fsVatRate]);
+
+  const fsSumaKg = fsAggregates.sumKg;
+  const fsSredniaCena = fsAggregates.sredniaCenaKg;
+  const fsWartoscNetto = fsAggregates.totalWartoscNetto;
+  const fsVatRateNum = fsAggregates.vatRateNum;
+  const fsKwotaVat = fsAggregates.kwotaVat;
+  const fsWartoscBrutto = fsAggregates.wartoscBrutto;
 
   const toggleWz = (ref: string) => setSelectedWz(prev => {
     const next = new Set(prev);
@@ -270,16 +300,28 @@ export default function Raporty() {
             { label: "Kwota VAT", align: "right" },
             { label: "Wartość brutto", align: "right", bold: true },
           ],
-          rows: [[
-            "Lody gelato",
-            fmtL(fsSumaKg, 3),
-            "kg",
-            `${fsSredniaCena.toFixed(2)} zł`,
-            `${fsVatRate}%`,
-            `${fmt(fsWartoscNetto)} zł`,
-            `${fmt(fsKwotaVat)} zł`,
-            `${fmt(fsWartoscBrutto)} zł`,
-          ]],
+          rows: [
+            ...(fsAggregates.sumKg > 0 ? [[
+              "Lody gelato",
+              fmtL(fsAggregates.sumKg, 3),
+              "kg",
+              `${fsAggregates.sredniaCenaKg.toFixed(2)} zł`,
+              `${fsVatRate}%`,
+              `${fmt(fsAggregates.wartoscKg)} zł`,
+              `${fmt(Math.round(fsAggregates.wartoscKg * fsVatRateNum / 100 * 100) / 100)} zł`,
+              `${fmt(fsAggregates.wartoscKg + Math.round(fsAggregates.wartoscKg * fsVatRateNum / 100 * 100) / 100)} zł`,
+            ]] : []),
+            ...(fsAggregates.sumSzt > 0 ? [[
+              "Gelato w kubeczkach",
+              fmtL(fsAggregates.sumSzt, 0),
+              "szt.",
+              `${fsAggregates.sredniaCenaSzt.toFixed(2)} zł`,
+              `${fsVatRate}%`,
+              `${fmt(fsAggregates.wartoscSzt)} zł`,
+              `${fmt(Math.round(fsAggregates.wartoscSzt * fsVatRateNum / 100 * 100) / 100)} zł`,
+              `${fmt(fsAggregates.wartoscSzt + Math.round(fsAggregates.wartoscSzt * fsVatRateNum / 100 * 100) / 100)} zł`,
+            ]] : [])
+          ],
           totalRow: ["RAZEM", null, null, null, null, `${fmt(fsWartoscNetto)} zł`, `${fmt(fsKwotaVat)} zł`, `${fmt(fsWartoscBrutto)} zł`],
         },
         {
@@ -1247,31 +1289,80 @@ export default function Raporty() {
               ) : (
                 <>
                   <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.2)", color: "var(--accent)" }}>
-                    <span className="font-bold font-mono">{selectedWz.size}</span> dok. WZ · <span className="font-bold font-mono">{fmtL(fsSumaKg, 3)} kg</span>
+                    <span className="font-bold font-mono">{selectedWz.size}</span> dok. WZ
+                    {fsAggregates.sumKg > 0 && <span className="ml-1">· <span className="font-bold font-mono">{fmtL(fsAggregates.sumKg, 3)} kg</span></span>}
+                    {fsAggregates.sumSzt > 0 && <span className="ml-1">· <span className="font-bold font-mono">{fmtL(fsAggregates.sumSzt, 0)} szt.</span></span>}
                   </div>
 
-                  <div className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>Lody gelato</div>
+                  <div className="flex flex-col gap-3">
+                    {fsAggregates.sumKg > 0 && (
+                      <div>
+                        <div className="text-sm font-bold mb-1.5" style={{ color: "var(--text-primary)" }}>Lody gelato</div>
+                        <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <tbody>
+                              {[
+                                { label: "Ilość", value: `${fmtL(fsAggregates.sumKg, 3)} kg`, color: "var(--text-primary)", bold: true },
+                                { label: "Śr. cena/kg", value: `${fsAggregates.sredniaCenaKg.toFixed(2)} zł`, color: "var(--text-secondary)", bold: false },
+                                { label: "Wartość netto", value: `${fmt(fsAggregates.wartoscKg)} zł`, color: "var(--ok)", bold: true },
+                              ].map(row => (
+                                <tr key={row.label} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                                  <td style={{ padding: "7px 10px", color: "var(--text-muted)" }}>{row.label}</td>
+                                  <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: row.bold ? 700 : 400, color: row.color }}>
+                                    {row.value}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
-                  <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                    {fsAggregates.sumSzt > 0 && (
+                      <div>
+                        <div className="text-sm font-bold mb-1.5" style={{ color: "var(--text-primary)" }}>Gelato w kubeczkach</div>
+                        <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <tbody>
+                              {[
+                                { label: "Ilość", value: `${fmtL(fsAggregates.sumSzt, 0)} szt.`, color: "var(--text-primary)", bold: true },
+                                { label: "Śr. cena/szt", value: `${fsAggregates.sredniaCenaSzt.toFixed(2)} zł`, color: "var(--text-secondary)", bold: false },
+                                { label: "Wartość netto", value: `${fmt(fsAggregates.wartoscSzt)} zł`, color: "var(--ok)", bold: true },
+                              ].map(row => (
+                                <tr key={row.label} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                                  <td style={{ padding: "7px 10px", color: "var(--text-muted)" }}>{row.label}</td>
+                                  <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: row.bold ? 700 : 400, color: row.color }}>
+                                    {row.value}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg overflow-hidden mt-1" style={{ border: "1px solid var(--border)", background: "rgba(16,185,129,0.05)" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <tbody>
-                        {[
-                          { label: "Ilość", value: `${fmtL(fsSumaKg, 3)} kg`, color: "var(--text-primary)", bold: true },
-                          { label: "Śr. cena/kg", value: `${fsSredniaCena.toFixed(2)} zł`, color: "var(--text-secondary)", bold: false },
-                          { label: "Wartość netto", value: `${fmt(fsWartoscNetto)} zł`, color: "var(--ok)", bold: true },
-                          { label: `VAT ${fsVatRate}%`, value: `${fmt(fsKwotaVat)} zł`, color: "var(--warn)", bold: false },
-                        ].map(row => (
-                          <tr key={row.label} style={{ borderBottom: "1px solid var(--border-dim)" }}>
-                            <td style={{ padding: "7px 10px", color: "var(--text-muted)" }}>{row.label}</td>
-                            <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: row.bold ? 700 : 400, color: row.color }}>
-                              {row.value}
-                            </td>
-                          </tr>
-                        ))}
-                        <tr style={{ background: "rgba(251,146,60,0.08)", borderTop: "2px solid rgba(251,146,60,0.3)" }}>
-                          <td style={{ padding: "9px 10px", fontWeight: 700, color: "var(--text-primary)" }}>Wartość brutto</td>
-                          <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "#fb923c", fontSize: 14 }}>
-                            {fmt(fsWartoscBrutto)} zł
+                        <tr style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                          <td style={{ padding: "7px 10px", color: "var(--text-muted)" }}>Łącznie netto</td>
+                          <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 700, color: "var(--ok)" }}>
+                            {fmt(fsWartoscNetto)} zł
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                          <td style={{ padding: "7px 10px", color: "var(--text-muted)" }}>VAT {fsVatRate}%</td>
+                          <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", color: "var(--warn)" }}>
+                            {fmt(fsAggregates.kwotaVat)} zł
+                          </td>
+                        </tr>
+                        <tr style={{ background: "rgba(16,185,129,0.1)" }}>
+                          <td style={{ padding: "7px 10px", fontWeight: 700, color: "var(--text-primary)" }}>Wartość brutto</td>
+                          <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: "JetBrains Mono,monospace", fontWeight: 900, color: "var(--ok)" }}>
+                            {fmt(fsAggregates.wartoscBrutto)} zł
                           </td>
                         </tr>
                       </tbody>

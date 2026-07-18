@@ -82,9 +82,10 @@ export function generateDocumentHTML(docData: any): string {
       <td class="r mono total">${p.wartosc != null && p.wartosc > 0 ? num(p.wartosc) + ' zł' : '—'}</td>
     ` : '';
     const kgVal = p.ilosc_kg != null ? p.ilosc_kg : (p.jednostka === 'kg' ? p.ilosc : null);
-    let kgColStr = kgVal != null ? fmtL(kgVal, 3) + ' kg' : '—';
-    if (isWZ && p.jednostka !== 'kg' && p.ilosc !== 1) {
-       kgColStr += `<span class="sub">(${fmtL(p.ilosc, p.jednostka === 'szt.' ? 0 : 3)} ${p.jednostka})</span>`;
+    let kgColStr = kgVal != null ? fmtL(kgVal, 3) + ' kg' : (p.jednostka !== 'kg' ? '' : '—');
+    if (isWZ && p.jednostka !== 'kg') {
+       const qtyStr = `${fmtL(p.ilosc, p.jednostka === 'szt.' ? 0 : 3)} ${p.jednostka}`;
+       kgColStr = kgVal != null ? `${kgColStr}<br><span class="sub" style="font-size:0.85em;color:#6b7280;">(${qtyStr})</span>` : qtyStr;
     }
     const kgCol = isWZ ? `<td class="r mono b">${kgColStr}</td>` : '';
     const iloscKg = (!isWZ && p.ilosc_kg != null) ? `<span class="sub">${fmtL(p.ilosc_kg, 3)} kg</span>` : '';
@@ -111,7 +112,7 @@ export function generateDocumentHTML(docData: any): string {
     </tr>`;
   }).join('');
 
-  const kgHeader = isWZ ? '<th class="r">Waga (kg)</th>' : '';
+  const kgHeader = isWZ ? '<th class="r">Ilość / Waga</th>' : '';
   const stdIloscHeader = !isWZ ? '<th class="r">Ilość</th>' : '';
   const priceHeaders = isWZ
     ? '<th class="r">Cena netto</th><th class="r">VAT</th><th class="r">Cena brutto</th><th class="r">Wartość netto</th><th class="r">Wartość brutto</th>'
@@ -125,7 +126,8 @@ export function generateDocumentHTML(docData: any): string {
   const sumaMap: Record<string, number> = {};
   pozycje.forEach((p: any) => {
     const key = p.wyrob || p.asortyment;
-    sumaMap[key] = (sumaMap[key] || 0) + (p.ilosc_kg ?? (p.jednostka === 'kg' ? p.ilosc : 0));
+    const kg = p.ilosc_kg ?? (p.jednostka === 'kg' ? p.ilosc : 0);
+    if (kg > 0) sumaMap[key] = (sumaMap[key] || 0) + kg;
   });
   const wagaRows = Object.entries(sumaMap)
     .map(([n, kg]) => `<tr><td>${n}</td><td class="r mono b">${fmtL(kg, 3)} kg</td></tr>`)
