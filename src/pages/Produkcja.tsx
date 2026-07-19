@@ -534,44 +534,27 @@ export default function Produkcja() {
   const computeWyrobySurowce = async () => {
     const runId = ++computeRunRef.current;
     const iloscBazyNum = parseFloat(wizBazaIlosc.replace(",", ".")) || 0;
-    const newMap: Record<string, WizSurowiecWyrob[]> = {};
+
+    // Pobranie unikalnych ID surowców do pobrania
+    const uniqueAsortymentIds = new Set<string>();
     for (const wyrob of wizWyroby) {
       const rec = receptury.find(r => r.id === wyrob.id_receptury);
       if (!rec) continue;
-      const ilosc = getIloscWyrobu(wyrob);
-      if (ilosc <= 0) continue;
-      newMap[wyrob._key] = rec.skladniki.map(s => {
-        // Dla składnika bazy używamy bezpośrednio wpisanej ilości, żeby uniknąć błędów zaokrągleń w łańcuchu kg→porcje→kg
-        const directBaza = s.id_asortymentu_skladnika === wizPolproduktAsortId && wyrob.ilosc_bazy_str
-          ? parseFloat(wyrob.ilosc_bazy_str.replace(",", "."))
-          : NaN;
-        const ilosc_wymagana = !isNaN(directBaza) && directBaza > 0
-          ? Math.round(directBaza * 1000) / 1000
-          : Math.round(s.ilosc_wymagana * ilosc * 1000) / 1000;
-        const przelicznik = s.asortyment_skladnika.przelicznik_jednostki ?? 1;
-        const ilosc_jm = s.czy_pomocnicza && przelicznik > 0
-          ? Math.round(ilosc_wymagana / przelicznik * 1000) / 1000
-          : ilosc_wymagana;
-        return {
-          id_asortymentu: s.id_asortymentu_skladnika,
-          nazwa: s.asortyment_skladnika.nazwa,
-          jednostka: s.czy_pomocnicza && s.asortyment_skladnika.jednostka_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary,
-          jednostka_glowna: s.asortyment_skladnika.jednostka_miary,
-          czy_pomocnicza: s.czy_pomocnicza,
-          przelicznik,
-          ilosc_wymagana,
-          ilosc_jm,
-          czy_zasob_nieograniczony: s.asortyment_skladnika.czy_zasob_nieograniczony ?? false,
-          id_partii: "",
-          zuzyte_partie: [{ _uid: Math.random().toString(36), id_partii: s.id_asortymentu_skladnika === wizPolproduktAsortId ? "__etap1__" : "", ilosc: ilosc_jm }],
-          partie: s.id_asortymentu_skladnika === wizPolproduktAsortId
-            ? [{ id: "__etap1__", numer_partii: "Etap 1 (auto)", termin_waznosci: null, stan: iloscBazyNum }]
-            : [],
-        };
-      });
+      for (const s of rec.skladniki) {
+        if (s.id_asortymentu_skladnika !== wizPolproduktAsortId) {
+          uniqueAsortymentIds.add(s.id_asortymentu_skladnika);
+        }
+      }
     }
-    if (runId !== computeRunRef.current) return; // stale run — inny efekt uruchomił nową wersję
-    setWizWyrobySurowceMap(newMap);
+
+    // Pobieranie partii (równolegle, raz per surowiec)
+    const partieCache: Record<string, WizPartia[]> = {};
+    await Promise.all(Array.from(uniqueAsortymentIds).map(async (id) => {
+      partieCache[id] = await loadPartieForAsortyment(id);
+    }));
+
+    if (runId !== computeRunRef.current) return;
+
     // Mapa zużycia z etapu 1 per partia (w JM głównej) — do korekty stanu w etapie 2
     const consumedInStep1: Record<string, number> = {};
     for (const s of wizBazaSurowce) {
@@ -581,24 +564,67 @@ export default function Produkcja() {
         }
       }
     }
-    // Załaduj partie dla surowców (nie dla bazy)
-    for (const wyrob of wizWyroby) {
-      const surowce = newMap[wyrob._key] || [];
-      for (const s of surowce) {
-        if (s.id_asortymentu === wizPolproduktAsortId) continue;
-        const partie = await loadPartieForAsortyment(s.id_asortymentu);
-        if (runId !== computeRunRef.current) return; // przerwij stale run przed zapisem stanu
-        // Odejmij zużycie etapu 1 od stanu partii
-        const partieAdjusted = partie.map(p => ({
-          ...p,
-          stan: Math.max(0, Math.round((p.stan - (consumedInStep1[p.id] || 0)) * 1000) / 1000),
-        }));
-        setWizWyrobySurowceMap(prev => ({
-          ...prev,
-          [wyrob._key]: (prev[wyrob._key] || []).map(x => {
-            if (x.id_asortymentu !== s.id_asortymentu) return x;
-            const zp: typeof x.zuzyte_partie = [];
-            let remaining = x.ilosc_jm;
+
+    // Aktualizujemy stan z zachowaniem poprzednich przypisań tam, gdzie to możliwe
+    setWizWyrobySurowceMap(prev => {
+      const newMap: Record<string, WizSurowiecWyrob[]> = {};
+      
+      for (const wyrob of wizWyroby) {
+        const rec = receptury.find(r => r.id === wyrob.id_receptury);
+        if (!rec) continue;
+        const ilosc = getIloscWyrobu(wyrob);
+        if (ilosc <= 0) continue;
+
+        newMap[wyrob._key] = rec.skladniki.map(s => {
+          const directBaza = s.id_asortymentu_skladnika === wizPolproduktAsortId && wyrob.ilosc_bazy_str
+            ? parseFloat(wyrob.ilosc_bazy_str.replace(",", "."))
+            : NaN;
+          const ilosc_wymagana = !isNaN(directBaza) && directBaza > 0
+            ? Math.round(directBaza * 1000) / 1000
+            : Math.round(s.ilosc_wymagana * ilosc * 1000) / 1000;
+          const przelicznik = s.asortyment_skladnika.przelicznik_jednostki ?? 1;
+          const ilosc_jm = s.czy_pomocnicza && przelicznik > 0
+            ? Math.round(ilosc_wymagana / przelicznik * 1000) / 1000
+            : ilosc_wymagana;
+
+          const isBaza = s.id_asortymentu_skladnika === wizPolproduktAsortId;
+
+          // Szukamy poprzedniego stanu tego surowca dla tego konkretnego wyrobu
+          const prevSurowiecList = prev[wyrob._key];
+          const prevSurowiec = prevSurowiecList?.find(x => x.id_asortymentu === s.id_asortymentu_skladnika);
+
+          if (isBaza) {
+            return {
+              id_asortymentu: s.id_asortymentu_skladnika,
+              nazwa: s.asortyment_skladnika.nazwa,
+              jednostka: s.czy_pomocnicza && s.asortyment_skladnika.jednostka_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary,
+              jednostka_glowna: s.asortyment_skladnika.jednostka_miary,
+              czy_pomocnicza: s.czy_pomocnicza,
+              przelicznik,
+              ilosc_wymagana,
+              ilosc_jm,
+              czy_zasob_nieograniczony: s.asortyment_skladnika.czy_zasob_nieograniczony ?? false,
+              id_partii: "",
+              zuzyte_partie: [{ _uid: Math.random().toString(36), id_partii: "__etap1__", ilosc: ilosc_jm }],
+              partie: [{ id: "__etap1__", numer_partii: "Etap 1 (auto)", termin_waznosci: null, stan: iloscBazyNum }],
+            };
+          }
+
+          // Zwykły surowiec
+          const basePartie = partieCache[s.id_asortymentu_skladnika] || [];
+          const partieAdjusted = basePartie.map(p => ({
+            ...p,
+            stan: Math.max(0, Math.round((p.stan - (consumedInStep1[p.id] || 0)) * 1000) / 1000),
+          }));
+
+          let zp: { _uid: string; id_partii: string; ilosc: number }[] = [];
+
+          // Jeśli ilosc_jm zmieniła się o mniej niż margines błędu zaokrąglenia, zachowujemy poprzednie zuzyte_partie
+          if (prevSurowiec && Math.abs(prevSurowiec.ilosc_jm - ilosc_jm) < 0.001) {
+            zp = prevSurowiec.zuzyte_partie;
+          } else {
+            // Ponowne przeliczenie FIFO
+            let remaining = ilosc_jm;
             for (const p of partieAdjusted) {
               if (remaining <= 0) break;
               if (p.stan > 0) {
@@ -607,12 +633,29 @@ export default function Produkcja() {
                 remaining -= take;
               }
             }
-            if (zp.length === 0 || remaining > 0.001) zp.push({ _uid: Math.random().toString(36), id_partii: "", ilosc: remaining > 0 ? remaining : x.ilosc_jm });
-            return { ...x, partie: partieAdjusted, zuzyte_partie: zp };
-          })
-        }));
+            if (zp.length === 0 || remaining > 0.001) {
+              zp.push({ _uid: Math.random().toString(36), id_partii: "", ilosc: remaining > 0 ? remaining : ilosc_jm });
+            }
+          }
+
+          return {
+            id_asortymentu: s.id_asortymentu_skladnika,
+            nazwa: s.asortyment_skladnika.nazwa,
+            jednostka: s.czy_pomocnicza && s.asortyment_skladnika.jednostka_pomocnicza ? s.asortyment_skladnika.jednostka_pomocnicza : s.asortyment_skladnika.jednostka_miary,
+            jednostka_glowna: s.asortyment_skladnika.jednostka_miary,
+            czy_pomocnicza: s.czy_pomocnicza,
+            przelicznik,
+            ilosc_wymagana,
+            ilosc_jm,
+            czy_zasob_nieograniczony: s.asortyment_skladnika.czy_zasob_nieograniczony ?? false,
+            id_partii: "",
+            zuzyte_partie: zp,
+            partie: partieAdjusted,
+          };
+        });
       }
-    }
+      return newMap;
+    });
   };
 
   const handleWizNext = () => {
@@ -685,7 +728,7 @@ export default function Produkcja() {
     const rec = receptury.find(r => r.id === wizAddRecId);
     const initIlosc = rec?.wielkosc_produkcji ?? 1;
     const initBaza = getBazaUsageForWyrob(wizAddRecId, initIlosc);
-    setWizWyroby(prev => [...prev, { _key: wizAddRecId + Date.now(), id_receptury: wizAddRecId, liczba_porcji: "1", ilosc_bazy_str: initBaza > 0 ? String(initBaza) : "" }]);
+    setWizWyroby(prev => [{ _key: wizAddRecId + Date.now(), id_receptury: wizAddRecId, liczba_porcji: "1", ilosc_bazy_str: initBaza > 0 ? String(initBaza) : "" }, ...prev]);
     setWizAddRecId("");
   };
 
@@ -2255,7 +2298,7 @@ export default function Produkcja() {
                             </tr>
                           </thead>
                           <tbody>
-                            {wizWyroby.map(w => {
+                            {wizWyroby.map((w, index) => {
                               const rec = receptury.find(r => r.id === w.id_receptury);
                               const ilosc = getIloscWyrobu(w);
                               const bazaUse = (wizTyp === "lody" || wizTyp === "kubeczki") ? getEffectiveBazaForWyrob(w) : 0;
@@ -2265,8 +2308,13 @@ export default function Produkcja() {
                               const colSpan = (wizTyp === "lody" || wizTyp === "kubeczki") ? 5 : 4;
                               return (
                                 <React.Fragment key={w._key}>
-                                  <tr>
-                                    <td className="font-medium text-white">
+                                  {index > 0 && (
+                                    <tr>
+                                      <td colSpan={colSpan} style={{ height: '24px', background: 'var(--bg-body)', border: 'none', padding: 0 }}></td>
+                                    </tr>
+                                  )}
+                                  <tr style={{ background: 'var(--accent-dim)' }}>
+                                    <td className="font-bold" style={{ color: 'var(--text-primary)', boxShadow: 'inset 4px 0 0 var(--accent)' }}>
                                       {rec?.asortyment_docelowy.nazwa}
                                       <span className="ml-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
                                         (wsad: {rec?.wielkosc_produkcji} {rec?.asortyment_docelowy.jednostka_miary})
