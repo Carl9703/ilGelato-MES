@@ -126,7 +126,7 @@ export default function Produkcja() {
   const [wizDraftId, setWizDraftId] = useState<string | null>(null);
   const [wizDraftName, setWizDraftName] = useState<string>("");
   const [draftsList, setDraftsList] = useState<any[]>([]);
-  const [wizDataProdukcji, setWizDataProdukcji] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [wizDataProdukcji, setWizDataProdukcji] = useState<string>("");
 
   // ── Draft w bazie danych ──────────────────────────────────────────────────
   const dbSaveDraft = async (krok: number, data: object, nazwa?: string, zdarzenie = "auto") => {
@@ -201,7 +201,7 @@ export default function Produkcja() {
       setWizWyroby(draft.wizWyroby);
       setWizWyrobySurowceMap(draft.wizWyrobySurowceMap);
       setWizRealizacja(draft.wizRealizacja ?? {});
-      setWizDataProdukcji(draft.dataProdukcji ?? new Date().toISOString().split('T')[0]);
+      setWizDataProdukcji(draft.dataProdukcji || "");
       setShowWizard(true);
       
       if (draft.wizStep >= 3 && dostepneOpakowania.length === 0) {
@@ -486,7 +486,7 @@ export default function Produkcja() {
     setWizWyroby([]); setWizAddRecId("");
     setWizWyrobySurowceMap({});
     setWizRealizacja({});
-    setWizDataProdukcji(new Date().toISOString().split('T')[0]);
+    setWizDataProdukcji("");
   };
 
   const wizPolproduktAsortId = receptury.find(r => r.id === wizBazaRecId)?.asortyment_docelowy.id;
@@ -733,6 +733,11 @@ export default function Produkcja() {
   };
 
   const handleSubmitWizard = async () => {
+    if (!wizDataProdukcji) {
+      showToast("Data produkcji jest wymagana!", "error");
+      return;
+    }
+
     // Czytaj dane kroku 3 z DB aby uniknąć problemów z React state
     let realizacjaDB: Record<string, WizRealizacjaItem> = wizRealizacja;
     try {
@@ -1108,14 +1113,16 @@ export default function Produkcja() {
         <div className="space-y-4">
           <div className="mes-panel rounded overflow-hidden">
             {(() => {
-              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean }> = {};
+              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; data_produkcji: string; utworzono_dnia: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean }> = {};
               zlecenia.forEach(z => {
                 const sid = z.id_sesji || `indiv-${z.id}`;
                 if (!sessionsMap[sid]) {
                   sessionsMap[sid] = {
                     id: sid,
                     numer_sesji: z.sesja?.numer_sesji || "Indywidualne",
-                    data: z.utworzono_dnia,
+                    data: (z.sesja as any)?.data_produkcji || z.utworzono_dnia,
+                    data_produkcji: (z.sesja as any)?.data_produkcji || "",
+                    utworzono_dnia: z.utworzono_dnia,
                     baza: null,
                     wyroby: [],
                     totalKg: 0,
@@ -1149,6 +1156,8 @@ export default function Produkcja() {
                   id: `draft-${d.id}`,
                   numer_sesji: d.nazwa || "Szkic bez nazwy",
                   data: d.zaktualizowano_dnia,
+                  data_produkcji: "",
+                  utworzono_dnia: d.zaktualizowano_dnia,
                   baza: null,
                   wyroby: [],
                   totalKg: 0,
@@ -1158,7 +1167,7 @@ export default function Produkcja() {
                 };
               });
 
-              type SessionRow = { id: string; numer_sesji: string; data: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean };
+              type SessionRow = { id: string; numer_sesji: string; data: string; data_produkcji: string; utworzono_dnia: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean };
               const sessions = sortBy<SessionRow>(
                 Object.values(sessionsMap) as SessionRow[],
                 s => {
@@ -1184,7 +1193,7 @@ export default function Produkcja() {
                       <th>Wyroby gotowe</th>
                       <SortableTh label="Masa całkowita"    field="totalMasa"   sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="text-right" />
                       <SortableTh label="Status"            field="status"      sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="w-32" />
-                      <SortableTh label="Data"              field="data"        sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="w-32" />
+                      <SortableTh label="Daty (Prod / Utw)" field="data"        sortKey={seszjeSortKey} sortDir={seszjeSortDir} onSort={handleSeszjeSort} className="w-40" />
                       <th className="w-20 text-right">Akcje</th>
                     </tr>
                   </thead>
@@ -1227,7 +1236,16 @@ export default function Produkcja() {
                         <td>
                           <span className={`badge ${getStatusStyle(s.status)}`}>{s.status.replace("_", " ")}</span>
                         </td>
-                        <td className="text-xs mono" style={{ color: 'var(--text-muted)' }}>{fmtDate(s.data)}</td>
+                        <td className="text-xs mono" style={{ color: 'var(--text-muted)' }}>
+                          {s.data_produkcji ? (
+                            <div className="flex flex-col leading-tight">
+                              <span className="font-bold text-[var(--text-primary)]" title="Data produkcji">{fmtDate(s.data_produkcji)}</span>
+                              <span className="text-[10px] opacity-60" title="Utworzono">{fmtDate(s.utworzono_dnia)}</span>
+                            </div>
+                          ) : (
+                            <div title="Utworzono / Zaktualizowano">{fmtDate(s.utworzono_dnia)}</div>
+                          )}
+                        </td>
                         <td className="text-right" onClick={e => e.stopPropagation()}>
                           {s.isDraft ? (
                             <button
@@ -2178,18 +2196,14 @@ export default function Produkcja() {
                           ))}
                         </select>
                       </div>
-                      <div className="w-32 space-y-1">
-                        <label className="text-[var(--text-secondary)] text-xs font-semibold uppercase tracking-wider">Ilość (plan)</label>
-                        <div className="relative">
-                          <input type="text" value={wizBazaIlosc} onChange={e => setWizBazaIlosc(clampDecimals(e.target.value, 3))} placeholder="0"
-                            className="w-full rounded px-3 py-2 pr-10 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>{bazaRec?.asortyment_docelowy.jednostka_miary}</span>
-                        </div>
-                      </div>
-                      <div className="w-32 space-y-1">
+                      <div className="w-40 space-y-1">
                         <label className="text-[var(--text-secondary)] text-xs font-semibold uppercase tracking-wider">Ilość (rzeczyw.)</label>
                         <div className="relative">
-                          <input type="text" value={wizBazaRzeczywistaIlosc} onChange={e => setWizBazaRzeczywistaIlosc(clampDecimals(e.target.value, 3))} placeholder={wizBazaIlosc || "0"}
+                          <input type="text" value={wizBazaRzeczywistaIlosc} onChange={e => {
+                            const val = clampDecimals(e.target.value, 3);
+                            setWizBazaRzeczywistaIlosc(val);
+                            setWizBazaIlosc(val);
+                          }} placeholder="0"
                             className="w-full rounded px-3 py-2 pr-10 text-sm font-mono text-right outline-none focus:ring-1 focus:ring-[var(--accent)]" style={inp2} />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none" style={{ color: 'var(--text-muted)' }}>{bazaRec?.asortyment_docelowy.jednostka_miary}</span>
                         </div>

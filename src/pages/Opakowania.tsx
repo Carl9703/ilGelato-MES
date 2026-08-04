@@ -487,7 +487,7 @@ export default function Opakowania() {
                         <td><RuchBadge typ={h.typ_ruchu} /></td>
                         <td className="mono font-bold text-center" style={{ fontSize: 15 }}>{h.ilosc}</td>
                         <td style={{ color: "var(--text-secondary)" }}>
-                          {h.kontrahent ? <span title={h.kontrahent.nazwa}>{h.kontrahent.kod}</span> : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                          {h.kontrahent ? <span title={h.kontrahent.nazwa}>{h.kontrahent.nazwa}</span> : <span style={{ color: "var(--text-muted)" }}>—</span>}
                         </td>
                         <td className="mono text-xs font-bold" style={{ color: "var(--accent)" }}>
                           {h.referencja_dokumentu || "—"}

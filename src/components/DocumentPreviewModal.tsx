@@ -122,7 +122,6 @@ export default function DocumentPreviewModal({
                   <div>
                     <div className="text-[9px] font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>Kontrahent</div>
                     <div className="font-semibold text-white">{docData.kontrahent.nazwa}</div>
-                    <div className="font-mono mt-0.5" style={{ color: 'var(--text-code)' }}>{docData.kontrahent.kod}</div>
                   </div>
                 )}
 
@@ -322,7 +321,7 @@ export default function DocumentPreviewModal({
                     <div className="print-title">{docData.typ} — {docRef}</div>
                     <div className="print-meta">
                       Data: {fmtFull(docData.data)} · Operator: {docData.uzytkownik}
-                      {docData.kontrahent ? ` · Odbiorca: ${docData.kontrahent.kod} — ${docData.kontrahent.nazwa}` : ""}
+                      {docData.kontrahent ? ` · Odbiorca: ${docData.kontrahent.nazwa}` : ""}
                       {docData.data_zatwierdzenia ? ` · Zatwierdzono: ${fmtFull(docData.data_zatwierdzenia)}` : ""}
                     </div>
                   </div>

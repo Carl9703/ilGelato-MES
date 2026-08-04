@@ -689,7 +689,6 @@ export default function Raporty() {
                           </td>
                           <td style={{ padding: "8px 12px" }}>
                             <div className="font-semibold" style={{ color: "var(--text-primary)" }}>{k.nazwa}</div>
-                            {k.id && <div className="font-mono text-xs mt-0.5" style={{ color: "var(--accent)" }}>{k.kod}</div>}
                           </td>
                           <td style={{ padding: "8px 12px", textAlign: "right" }}>
                             <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{k.liczba_dokumentow}</span>

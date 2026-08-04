@@ -2094,10 +2094,7 @@ export default function Dokumenty() {
                     {filter !== 'RW' && filter !== 'PW' && (
                       <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
                         {doc.kontrahent
-                          ? <span style={{ fontSize: 11 }}>
-                              <span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--accent)', fontWeight: 700 }}>{doc.kontrahent.kod}</span>
-                              {' '}<span style={{ color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span>
-                            </span>
+                          ? <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{doc.kontrahent.nazwa}</span>
                           : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
                       </td>
                     )}

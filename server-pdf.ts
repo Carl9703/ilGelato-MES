@@ -253,7 +253,6 @@ tbody tr:last-child td{border-bottom:none}
   ${docData.kontrahent ? `<div>
     <div class="meta-label">${docData.typ === 'WZ' ? 'Odbiorca' : 'Dostawca'}</div>
     <div class="meta-val">${docData.kontrahent.nazwa}</div>
-    <div class="meta-sub mono">${docData.kontrahent.kod}</div>
   </div>` : '<div></div>'}
   ${docData.numer_zlecenia ? `<div>
     <div class="meta-label">Zlecenie produkcyjne</div>
