@@ -14,7 +14,6 @@ import WyrobyGotowe from "./pages/WyrobyGotowe";
 import Ustawienia from "./pages/Ustawienia";
 import Opakowania from "./pages/Opakowania";
 import LoginPage from "./pages/Login";
-import PremiumModal from "./components/PremiumModal";
 
 function useTheme() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -255,29 +254,26 @@ function AppInner() {
   }
 
   return (
-    <>
-      <PremiumModal />
-      <Routes>
-        <Route path="/*" element={
-          <MainLayout userLogin={auth.login} baza={auth.baza} onLogout={logout}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/asortyment" element={<Asortyment />} />
-              <Route path="/receptury" element={<Receptury />} />
-              <Route path="/produkcja" element={<Produkcja />} />
-              <Route path="/dokumenty" element={<Dokumenty />} />
-              <Route path="/wyroby-gotowe" element={<WyrobyGotowe />} />
-              <Route path="/opakowania" element={<Opakowania />} />
-              <Route path="/kontrahenci" element={<Kontrahenci />} />
-              <Route path="/traceability" element={<Traceability />} />
-              <Route path="/raporty" element={<Raporty />} />
-              <Route path="/ustawienia" element={<Ustawienia />} />
-            </Routes>
-          </MainLayout>
-        } />
-      </Routes>
-    </>
+    <Routes>
+      <Route path="/*" element={
+        <MainLayout userLogin={auth.login} baza={auth.baza} onLogout={logout}>
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/asortyment" element={<Asortyment />} />
+            <Route path="/receptury" element={<Receptury />} />
+            <Route path="/produkcja" element={<Produkcja />} />
+            <Route path="/dokumenty" element={<Dokumenty />} />
+            <Route path="/wyroby-gotowe" element={<WyrobyGotowe />} />
+            <Route path="/opakowania" element={<Opakowania />} />
+            <Route path="/kontrahenci" element={<Kontrahenci />} />
+            <Route path="/traceability" element={<Traceability />} />
+            <Route path="/raporty" element={<Raporty />} />
+            <Route path="/ustawienia" element={<Ustawienia />} />
+          </Routes>
+        </MainLayout>
+      } />
+    </Routes>
   );
 }
 
