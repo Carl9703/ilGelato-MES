@@ -28,7 +28,7 @@ type Zlecenie = {
   id_receptury: string;
   id_sesji?: string | null;
   etap?: number | null;
-  sesja?: { id: string; numer_sesji: string } | null;
+  sesja?: { id: string; numer_sesji: string; status?: string; typ?: string; data_produkcji?: string | null } | null;
   planowana_ilosc_wyrobu: number;
   rzeczywista_ilosc_wyrobu?: number;
   opakowania?: OpakowaniePozycja[];
@@ -301,7 +301,11 @@ export default function Produkcja() {
     try {
       const [zlecRes, recRes, asortRes] = await Promise.all([fetch("/api/produkcja"), fetch("/api/receptury"), fetch("/api/asortyment")]);
       if (zlecRes.ok) {
-        const data: Zlecenie[] = await zlecRes.json();
+        const wszystkie: Zlecenie[] = await zlecRes.json();
+        // Zlecenia z turnusów planera (sesja w statusie "Planowana") żyją wyłącznie
+        // w /planer — do rozliczenia — i nie powinny mieszać się ze standardowym
+        // przepływem ZP, żeby nie dało się ich przypadkiem "zrealizować" tym starym flow.
+        const data = wszystkie.filter(z => z.sesja?.status !== "Planowana");
         setZlecenia(data);
         // Sync open detail view
         setViewZlecenie(prev => prev ? data.find(z => z.id === prev.id) || null : null);

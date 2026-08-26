@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Save, X, BookOpen, Trash2, Edit2, Calculator, Search } from "lucide-react";
+import { Plus, Save, X, BookOpen, Trash2, Edit2, Calculator, Search, Layers } from "lucide-react";
+import WariantyWsaduPanel from "../components/WariantyWsaduPanel";
 import { fmtL, fmtDate, fmtFull, resolveDisplayUnit, clampDecimals } from "../utils/fmt";
 import { useToast } from "../components/Toast";
 import { Spinner } from "../components/Spinner";
@@ -45,7 +46,7 @@ export default function Receptury() {
   const handleSort = makeSortHandler(sortKey, setSortKey, setSortDir);
 
   // Zakładki karty (tylko w view mode)
-  const [kartaTab, setKartaTab] = useState<"specyfikacja" | "kalkulator">("specyfikacja");
+  const [kartaTab, setKartaTab] = useState<"specyfikacja" | "kalkulator" | "warianty">("specyfikacja");
 
   // Kalkulator kosztów
   const [kalkulacja, setKalkulacja] = useState<any>(null);
@@ -459,6 +460,7 @@ export default function Receptury() {
                   {[
                     { id: "specyfikacja", label: "Specyfikacja BOM", icon: BookOpen },
                     { id: "kalkulator", label: "Kalkulator kosztów", icon: Calculator },
+                    { id: "warianty", label: "Warianty wsadu", icon: Layers },
                   ].map(tab => (
                     <button key={tab.id} onClick={() => setKartaTab(tab.id as any)}
                       className="flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2"
@@ -610,6 +612,10 @@ export default function Receptury() {
                   )}
 
                   {/* KALKULATOR KOSZTÓW */}
+                  {kartaTab === "warianty" && kartaReceptura && (
+                    <WariantyWsaduPanel receptura={kartaReceptura as any} onZapisano={() => fetchAll()} />
+                  )}
+
                   {kartaTab === "kalkulator" && kartaReceptura && (
                     <div className="p-5 space-y-5">
                       <div className="flex items-end gap-4 flex-wrap">
@@ -633,6 +639,24 @@ export default function Receptury() {
                           {kalcLoading ? "Liczę…" : "Przelicz"}
                         </button>
                       </div>
+
+                      {/* Wielkość produkcji to wydajność z mnożnika 1, a nie rozmiar partii.
+                          Wartości rzędu 4–6 oznaczają zwykle, że ktoś wpisał tu całą partię —
+                          wtedy mnożnik 1 na planie turnusu daje kilka kilogramów zamiast jednego. */}
+                      {kartaReceptura.asortyment_docelowy.typ_asortymentu === "Wyrob_Gotowy"
+                        && (kartaReceptura.wielkosc_produkcji ?? 1) > 2 && (
+                        <div className="flex items-start gap-2 text-xs rounded px-3 py-2"
+                          style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24' }}>
+                          <span className="shrink-0">⚠</span>
+                          <span>
+                            Wielkość produkcji <span className="font-mono font-bold">{fmtL(kartaReceptura.wielkosc_produkcji, 3)}</span>{" "}
+                            wygląda na rozmiar partii, a nie na wydajność z mnożnika 1. Jeśli składniki sumują się już do 1,
+                            ustaw tu <span className="font-mono font-bold">1</span> — inaczej mnożnik ×1 na planie turnusu
+                            oznaczy {fmtL(kartaReceptura.wielkosc_produkcji, 1)} kg zamiast 1 kg. Nie zmieniaj tej wartości
+                            w recepturach mlecznych rzędu 1,0–1,2 — tam to poprawnie zapisany przyrost z past i przekładek.
+                          </span>
+                        </div>
+                      )}
 
                       {kalkulacja && (
                         <table className="mes-table">

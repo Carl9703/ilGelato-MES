@@ -54,7 +54,6 @@ model Dokumenty_Magazynowe {
   uzytkownik_anulowania        Uzytkownicy?          @relation("DokumentAnulowany", fields: [id_uzytkownika_anulowania], references: [id])
   uzytkownik_zatwierdzenia     Uzytkownicy?          @relation("DokumentZatwierdzony", fields: [id_uzytkownika_zatwierdzenia], references: [id])
   uzytkownik_utworzenia        Uzytkownicy           @relation("DokumentUtworzony", fields: [id_uzytkownika_utworzenia], references: [id])
-  opakowania_wz                Opakowania_Wyrobowe[]
 
   @@index([id_uzytkownika_utworzenia])
   @@index([id_uzytkownika_zatwierdzenia])
@@ -86,9 +85,9 @@ model Asortyment {
   stawka_vat               Float?
   cena_zakupu              Float?
   waga_jednostkowa_kg      Float?  // Waga 1 szt. dla produktów kubeczkowych/kanapkowych
+  kolejnosc_produkcji      Int?    // Kolejność barwna na planie produkcji (od najjaśniejszych), co 10
   alergeny                 Alergeny_Asortymentu?
   grupa                    Grupy_Towarowe?            @relation(fields: [id_grupy], references: [id])
-  opakowania_wyrobowe      Opakowania_Wyrobowe[]
   partie_magazynowe        Partie_Magazynowe[]
   receptury_docelowe       Receptury[]                @relation("AsortymentDocelowy")
   rezerwacje               Rezerwacje_Magazynowe[]
@@ -167,9 +166,7 @@ model Partie_Magazynowe {
   utworzono_dnia      DateTime                @default(now())
   zaktualizowano_dnia DateTime                @updatedAt
   opakowania_json     String?
-  opakowania_baza     Opakowania_Wyrobowe[]
   asortyment          Asortyment              @relation(fields: [id_asortymentu], references: [id])
-  pozycje_sesji_baza  Pozycje_Sesji_Gelato[]
   rezerwacje          Rezerwacje_Magazynowe[]
   ruchy_magazynowe    Ruchy_Magazynowe[]
 
@@ -208,13 +205,13 @@ model Receptury {
   id                        String                 @id @default(uuid())
   id_asortymentu_docelowego String
   numer_wersji              Int
+  warianty_json             String?                // Typowe wsady: [{mnoznik, id_opakowania, liczba}]
   dni_trwalosci             Int?
   wielkosc_produkcji        Float                  @default(1)
   narzut_procent            Float                  @default(0)
   czy_aktywne               Boolean                @default(true)
   utworzono_dnia            DateTime               @default(now())
   zaktualizowano_dnia       DateTime               @updatedAt
-  pozycje_sesji_gelato      Pozycje_Sesji_Gelato[]
   asortyment_docelowy       Asortyment             @relation("AsortymentDocelowy", fields: [id_asortymentu_docelowego], references: [id])
   skladniki                 Skladniki_Receptury[]
   zlecenia_produkcyjne      Zlecenia_Produkcyjne[]
@@ -266,6 +263,9 @@ model Sesje_Produkcji {
   zaktualizowano_dnia DateTime               @updatedAt
   data_produkcji      DateTime?
   typ                 String                 @default("lody") // "lody" | "sorbety" | "kubeczki" | "kanapki"
+  status              String                 @default("Planowana") // "Planowana" | "Zrealizowana" | "Anulowana"
+  notatki             String?
+  planowana_baza_kg   Float?
   zlecenia            Zlecenia_Produkcyjne[]
 }
 
@@ -275,6 +275,8 @@ model Zlecenia_Produkcyjne {
   id_receptury             String
   id_sesji                 String?
   etap                     Int?
+  wsady_json               String?                 // Rozbicie na wsady: [{mnoznik, id_opakowania, liczba}]
+  kolejnosc                Int?                    // Pozycja w turnusie (nadpisuje kolejność barwną)
   planowana_ilosc_wyrobu   Float
   rzeczywista_ilosc_wyrobu Float?
   opakowania_json          String?
@@ -308,83 +310,6 @@ model Rezerwacje_Magazynowe {
 
   @@index([id_zlecenia])
   @@index([status])
-}
-
-model Typy_Opakowan {
-  id               String                @id @default(uuid())
-  nazwa            String                @unique
-  pojemnosc_min_kg Float                 @default(0)
-  pojemnosc_max_kg Float                 @default(10)
-  czy_aktywne      Boolean               @default(true)
-  utworzono_dnia   DateTime              @default(now())
-  opakowania       Opakowania_Wyrobowe[]
-}
-
-model Sesje_Produkcji_Gelato {
-  id                  String                 @id @default(uuid())
-  numer_sesji         String                 @unique
-  data_sesji          DateTime
-  status              String                 @default("Otwarta")
-  notatki             String?
-  id_uzytkownika      String
-  czy_aktywne         Boolean                @default(true)
-  utworzono_dnia      DateTime               @default(now())
-  zaktualizowano_dnia DateTime               @updatedAt
-  opakowania          Opakowania_Wyrobowe[]
-  pozycje             Pozycje_Sesji_Gelato[]
-}
-
-model Pozycje_Sesji_Gelato {
-  id                  String                 @id @default(uuid())
-  id_sesji            String
-  id_receptury        String
-  id_partii_bazy      String?
-  ilosc_bazy_kg       Float?
-  liczba_wsadow       Int                    @default(1)
-  surowce_json        String?
-  uwagi               String?
-  czy_aktywne         Boolean                @default(true)
-  utworzono_dnia      DateTime               @default(now())
-  zaktualizowano_dnia DateTime               @updatedAt
-  opakowania          Opakowania_Wyrobowe[]
-  partia_bazy         Partie_Magazynowe?     @relation(fields: [id_partii_bazy], references: [id], onDelete: SetNull)
-  receptura           Receptury              @relation(fields: [id_receptury], references: [id])
-  sesja               Sesje_Produkcji_Gelato @relation(fields: [id_sesji], references: [id], onDelete: Cascade)
-
-  @@index([id_sesji])
-  @@index([id_receptury])
-  @@index([id_partii_bazy])
-}
-
-model Opakowania_Wyrobowe {
-  id                  String                 @id @default(uuid())
-  numer_serii         String                 @unique
-  id_sesji            String
-  id_pozycji_sesji    String?
-  id_asortymentu      String
-  id_typu_opakowania  String
-  id_partii_bazy      String?
-  waga_kg             Float
-  data_produkcji      DateTime               @default(now())
-  termin_waznosci     DateTime?
-  status              String                 @default("Dostepne")
-  id_dokumentu_wz     String?
-  czy_aktywne         Boolean                @default(true)
-  utworzono_dnia      DateTime               @default(now())
-  zaktualizowano_dnia DateTime               @updatedAt
-  dokument_wz         Dokumenty_Magazynowe?  @relation(fields: [id_dokumentu_wz], references: [id])
-  partia_bazy         Partie_Magazynowe?     @relation(fields: [id_partii_bazy], references: [id])
-  typ_opakowania      Typy_Opakowan          @relation(fields: [id_typu_opakowania], references: [id])
-  asortyment          Asortyment             @relation(fields: [id_asortymentu], references: [id])
-  pozycja_sesji       Pozycje_Sesji_Gelato?  @relation(fields: [id_pozycji_sesji], references: [id])
-  sesja               Sesje_Produkcji_Gelato @relation(fields: [id_sesji], references: [id])
-
-  @@index([id_sesji])
-  @@index([id_pozycji_sesji])
-  @@index([id_asortymentu])
-  @@index([id_typu_opakowania])
-  @@index([id_partii_bazy])
-  @@index([id_dokumentu_wz])
 }
 
 model Ruchy_Opakowan_Zwrotnych {

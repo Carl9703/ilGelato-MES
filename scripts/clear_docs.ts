@@ -7,16 +7,7 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     // Odwrócona kolejność ze względu na relacje kluczy obcych
     
-    // 1. Opakowania wyrobowe (zależne od sesji, WZ, partii)
-    const delOpakowania = await tx.opakowania_Wyrobowe.deleteMany();
-    
-    // 2. Pozycje Sesji Gelato (zależne od sesji, partii)
-    const delPozSesji = await tx.pozycje_Sesji_Gelato.deleteMany();
-    
-    // 3. Sesje Produkcji Gelato
-    const delSesjeG = await tx.sesje_Produkcji_Gelato.deleteMany();
-    
-    // 4. Rezerwacje Magazynowe (zależne od zleceń i partii)
+    // 1. Rezerwacje Magazynowe (zależne od zleceń i partii)
     const delRezerwacje = await tx.rezerwacje_Magazynowe.deleteMany();
     
     // 5. Ruchy Magazynowe (zależne od dokumentów, zleceń, partii)
@@ -46,8 +37,6 @@ async function main() {
     console.log(`- Ruchy magazynowe:      ${delRuchy.count}`);
     console.log(`- Partie magazynowe:     ${delPartie.count}`);
     console.log(`- Rezerwacje magazynowe: ${delRezerwacje.count}`);
-    console.log(`- Opakowania:            ${delOpakowania.count}`);
-    console.log(`- Sesje Gelato:          ${delSesjeG.count}`);
     console.log(`- Sesje Produkcyjne:     ${delSesje.count}`);
     console.log("-----------------------------------------");
   });

@@ -62,6 +62,7 @@ src/
     Asortyment.tsx      — katalog produktów, stany magazynowe, partie
     Receptury.tsx       — receptury z BOM, wersjonowanie, kalkulator kosztów
     Produkcja.tsx       — zlecenia produkcyjne + wizard sesji gelato
+    PlanProdukcji.tsx   — planer turnusu (plan → wydruk → rozliczenie)
     Dokumenty.tsx       — dokumenty magazynowe PZ/WZ/PW/RW
     WyrobyGotowe.tsx    — stan opakowań wyrobów gotowych (pozzetti itp.)
     Opakowania.tsx      — cyrkulacja opakowań zwrotnych
@@ -106,10 +107,6 @@ docs/                   — dokumentacja domenowa (PL)
 | `Wartosci_Odzywcze`       | Tabela wartości odżywczych per asortyment (1:1)       |
 | `Alergeny_Asortymentu`    | 14 alergenów UE per asortyment (1:1)                  |
 | `Uzytkownicy`             | Użytkownicy systemu (auth uproszczony)                |
-| `Sesje_Produkcji_Gelato`  | Sesje produkcyjne gelato (turnus baza → wyroby)       |
-| `Pozycje_Sesji_Gelato`    | Smaki/receptury w ramach sesji gelato                 |
-| `Opakowania_Wyrobowe`     | Fizyczne opakowania wyrobów gotowych (pozzetti itp.)  |
-| `Typy_Opakowan`           | Słownik typów opakowań (pozzetti, kuweta itp.)        |
 | `Ruchy_Opakowan_Zwrotnych`| Cyrkulacja opakowań zwrotnych (PRZYJECIE/WYDA/ZWROT)  |
 | `Sesja_Robocza`           | Persystencja stanu wizarda gelato (jeden rekord)      |
 | `Sesja_Robocza_Log`       | Log kroków wizarda gelato                             |
@@ -194,6 +191,15 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 - `POST /api/produkcja/sesja` — finalizacja całej sesji w jednej transakcji
 - **Persystencja szkicu:** `GET/PUT/DELETE /api/produkcja/sesja-robocza` — jeden rekord `Sesja_Robocza` przechowuje JSON stanu wizarda; przy wejściu sprawdzany jest szkic
 
+**Planer turnusu (`PlanProdukcji.tsx`, `/planer`)** — szczegóły w `docs/planer_produkcji.md`
+- Plan to `Sesje_Produkcji` w statusie `Planowana` + zlecenia `Planowane`, **bez ruchów magazynowych**
+- Rozliczenie (`POST /api/produkcja/plany/:id/rozlicz`) dokłada RW/PW/partie na już istniejących zleceniach
+- Obie ścieżki (wizard i planer) dzielą funkcję `wykonajSesjeProdukcji()` w `server/routes/produkcja.ts`
+- `auto_fifo: true` w body → serwer sam dobiera partie (`dobierzFifo`, `surowceFifoZReceptury`)
+- **Uwaga na `wielkosc_produkcji`:** to wydajność (kg wyrobu z mnożnika 1), a nie rozmiar partii.
+  `Skladniki_Receptury.ilosc_wymagana` to udziały masowe sumujące się do 1,0.
+  `kg wyrobu = suma(mnożników) × wielkosc_produkcji`, `kg surowca = udział × kg wyrobu`
+
 ---
 
 ## Wzorce kodu
@@ -243,6 +249,7 @@ Numeracja: `PREFIX-NNN/MM/RR`, zlecenia: `ZP-NNNN/MM/RR`, sesje: `SP-NNN/MM/RR`,
 ## Dokumentacja domenowa
 
 W katalogu `docs/` (język polski):
+- `planer_produkcji.md` — planer turnusu: mnożnik, wsady, rozliczenie
 - `strukturabazy.md` — opis schematu DB
 - `receptury.md` — logika receptur
 - `produkcja.md` — logika produkcji

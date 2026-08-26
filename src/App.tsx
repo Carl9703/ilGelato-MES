@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router";
-import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package, Sun, Moon, Settings, Archive, LogOut } from "lucide-react";
+import { BookOpen, Factory, Database, LayoutDashboard, FileText, Share2, Users, BarChart2, Package, Sun, Moon, Settings, Archive, LogOut, ClipboardList } from "lucide-react";
 import logoImg from "./assets/logo.png";
 import Dashboard from "./pages/Dashboard";
 import Asortyment from "./pages/Asortyment";
 import Receptury from "./pages/Receptury";
 import Produkcja from "./pages/Produkcja";
+import PlanProdukcji from "./pages/PlanProdukcji";
 import Dokumenty from "./pages/Dokumenty";
 import Traceability from "./pages/Traceability";
 import Kontrahenci from "./pages/Kontrahenci";
@@ -74,6 +75,7 @@ const navItems = [
   { to: "/asortyment",    icon: Database,         label: "Asortyment",   testId: "nav-asortyment"     },
   { to: "/receptury",     icon: BookOpen,          label: "Receptury",    testId: "nav-receptury"      },
   { to: "/produkcja",     icon: Factory,           label: "Produkcja",    testId: "nav-produkcja"      },
+  { to: "/planer",        icon: ClipboardList,     label: "Planer",       testId: "nav-planer"         },
   { to: "/dokumenty",     icon: FileText,          label: "Dokumenty",    testId: "nav-dokumenty"      },
   { to: "/wyroby-gotowe", icon: Package,           label: "Wyroby gotowe",testId: "nav-wyroby-gotowe"  },
   { to: "/opakowania",    icon: Archive,           label: "Opakowania",   testId: "nav-opakowania"    },
@@ -263,6 +265,7 @@ function AppInner() {
             <Route path="/asortyment" element={<Asortyment />} />
             <Route path="/receptury" element={<Receptury />} />
             <Route path="/produkcja" element={<Produkcja />} />
+            <Route path="/planer" element={<PlanProdukcji />} />
             <Route path="/dokumenty" element={<Dokumenty />} />
             <Route path="/wyroby-gotowe" element={<WyrobyGotowe />} />
             <Route path="/opakowania" element={<Opakowania />} />

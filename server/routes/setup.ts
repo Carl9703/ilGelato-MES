@@ -32,10 +32,7 @@ router.post("/reset", async (req, res) => {
     await prisma.$transaction(async (tx) => {
       await (tx as any).sesja_Robocza_Log?.deleteMany();
       await (tx as any).sesja_Robocza?.deleteMany();
-      await (tx as any).pozycje_Sesji_Gelato?.deleteMany();
-      await (tx as any).sesje_Produkcji_Gelato?.deleteMany();
       await (tx as any).sesje_Produkcji?.deleteMany();
-      await (tx as any).opakowania_Wyrobowe?.deleteMany();
       await (tx as any).wartosci_Odzywcze?.deleteMany();
       await (tx as any).alergeny_Asortymentu?.deleteMany();
       await tx.rezerwacje_Magazynowe.deleteMany();

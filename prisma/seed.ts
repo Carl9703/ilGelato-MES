@@ -21,10 +21,6 @@ async function main() {
   await prisma.sesja_Robocza.deleteMany();
   await prisma.rezerwacje_Magazynowe.deleteMany();
   await prisma.ruchy_Magazynowe.deleteMany();
-  await prisma.opakowania_Wyrobowe.deleteMany();
-  await prisma.pozycje_Sesji_Gelato.deleteMany();
-  await prisma.sesje_Produkcji_Gelato.deleteMany();
-  await prisma.typy_Opakowan.deleteMany();
   await prisma.zlecenia_Produkcyjne.deleteMany();
   await prisma.sesje_Produkcji.deleteMany();
   await prisma.dokumenty_Magazynowe.deleteMany();

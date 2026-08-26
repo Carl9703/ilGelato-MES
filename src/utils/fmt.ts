@@ -1,5 +1,20 @@
 export const fmtL = (n: number, dec: number): string => n.toFixed(dec).replace('.', ',');
 
+/**
+ * Odmiana rzeczownika przez liczbę — polski ma trzy formy.
+ *   pluralPL(1, "smak", "smaki", "smaków")  → "smak"
+ *   pluralPL(3, …)                          → "smaki"
+ *   pluralPL(5, …) / pluralPL(12, …)        → "smaków"
+ */
+export function pluralPL(n: number, jeden: string, dwaCztery: string, piecWiecej: string): string {
+  const abs = Math.abs(n);
+  if (abs === 1) return jeden;
+  const dziesiatki = abs % 100;
+  const jednosci = abs % 10;
+  if (jednosci >= 2 && jednosci <= 4 && !(dziesiatki >= 12 && dziesiatki <= 14)) return dwaCztery;
+  return piecWiecej;
+}
+
 export const esc = (s: string | null | undefined): string => {
   if (!s) return '';
   return String(s)

@@ -160,6 +160,32 @@ router.put("/api/receptury/:id/parametry", async (req, res) => {
     }
   });
 
+/**
+ * Warianty wsadu — typowe mnożniki, w jakich robi się dany smak, wraz z
+ * docelowym opakowaniem (np. ×4 → kuweta, ×10 → 2 pozzetti).
+ * Służą do jednoklikowego dodawania wsadów na planie turnusu.
+ */
+router.put("/api/receptury/:id/warianty", async (req, res) => {
+    try {
+      const { warianty } = req.body;
+      const oczyszczone = (warianty || [])
+        .map((w: any) => ({
+          mnoznik: parseFloat(w.mnoznik),
+          id_opakowania: w.id_opakowania || null,
+          liczba: parseInt(w.liczba, 10) || 1,
+        }))
+        .filter((w: any) => w.mnoznik > 0);
+
+      const result = await prisma.receptury.update({
+        where: { id: req.params.id },
+        data: { warianty_json: oczyszczone.length > 0 ? JSON.stringify(oczyszczone) : null },
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "Błąd zapisu wariantów wsadu" });
+    }
+  });
+
 router.get("/api/receptury/:id/kalkulacja", async (req, res) => {
     try {
       const receptura = await prisma.receptury.findUnique({

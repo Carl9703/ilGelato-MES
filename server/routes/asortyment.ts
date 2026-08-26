@@ -129,6 +129,28 @@ router.post("/", async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Błąd tworzenia asortymentu" }); }
 });
 
+/**
+ * Kolejność barwna na planie produkcji — od najjaśniejszych smaków do najciemniejszych.
+ * Zapis zbiorczy po przeciągnięciu listy. Musi stać przed `PUT /:id`, inaczej
+ * express dopasuje ścieżkę do parametru `:id`.
+ */
+router.put("/kolejnosc-produkcji", async (req, res) => {
+  try {
+    const { kolejnosc } = req.body as { kolejnosc: Array<{ id: string; kolejnosc_produkcji: number | null }> };
+    if (!Array.isArray(kolejnosc)) return res.status(400).json({ error: "Oczekiwano listy `kolejnosc`" });
+
+    await prisma.$transaction(
+      kolejnosc.map((poz) =>
+        prisma.asortyment.update({
+          where: { id: poz.id },
+          data: { kolejnosc_produkcji: poz.kolejnosc_produkcji != null ? Number(poz.kolejnosc_produkcji) : null },
+        })
+      )
+    );
+    res.json({ ok: true, zapisano: kolejnosc.length });
+  } catch (error) { res.status(500).json({ error: "Błąd zapisu kolejności produkcji" }); }
+});
+
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;

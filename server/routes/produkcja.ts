@@ -386,9 +386,80 @@ router.delete("/api/produkcja/sesja-robocza/:id", async (req, res) => {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-router.post("/api/produkcja/sesja", async (req, res) => {
-    try {
-      const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby, data_produkcji, typ } = req.body;
+/**
+ * Dobiera partie metodą FIFO — najpierw te z najbliższym terminem ważności.
+ * Używane przy rozliczaniu planu turnusu, gdzie operator nie wskazuje partii ręcznie.
+ */
+async function dobierzFifo(tx: any, id_asortymentu: string, ilosc: number) {
+  if (!(ilosc > 0)) return [];
+  const partie = await tx.partie_Magazynowe.findMany({
+    where: { id_asortymentu, status_partii: "Dostepna", czy_aktywne: true },
+    include: { ruchy_magazynowe: { where: { czy_aktywne: true } }, asortyment: true },
+    orderBy: [{ termin_waznosci: "asc" }, { utworzono_dnia: "asc" }],
+  });
+
+  // Suma wielu drobnych odejmowań (double) prawie nigdy nie trafia w czyste zero —
+  // partia "wyczerpana" w praktyce potrafi mieć stan rzędu 0,00000000000001. Poniżej
+  // tego progu traktujemy ją jak pustą, żeby FIFO jej nie wybierało i nie zostawiało
+  // kolejnego, jeszcze drobniejszego śladu w Ruchy_Magazynowe.
+  const EPSILON = 0.0005;
+
+  const wynik: Array<{ id_partii: string; ilosc: number }> = [];
+  let pozostalo = ilosc;
+  for (const p of partie) {
+    if (pozostalo <= EPSILON) break;
+    const stan = p.ruchy_magazynowe.reduce((s: number, r: any) => s + r.ilosc, 0);
+    if (stan <= EPSILON) continue;
+    const bierz = Math.round(Math.min(stan, pozostalo) * 1000) / 1000;
+    if (bierz <= 0) continue;
+    wynik.push({ id_partii: p.id, ilosc: bierz });
+    pozostalo = Math.round((pozostalo - bierz) * 1000) / 1000;
+  }
+
+  if (pozostalo > EPSILON) {
+    const a = partie[0]?.asortyment ?? (await tx.asortyment.findUnique({ where: { id: id_asortymentu } }));
+    throw new Error(
+      `Brak wystarczającej ilości składnika [${a?.nazwa ?? id_asortymentu}] w magazynie. ` +
+      `Brakuje: ${pozostalo.toFixed(3).replace(".", ",")} ${a?.jednostka_miary ?? ""}`
+    );
+  }
+  return wynik;
+}
+
+/**
+ * Rozpisuje BOM receptury na konkretne partie metodą FIFO.
+ * Pomija bazę (rozliczaną osobno z partii etapu 1) i zasoby nieograniczone
+ * (obsługiwane przez wirtualne partie AUTO-).
+ */
+async function surowceFifoZReceptury(
+  tx: any,
+  skladniki: any[],
+  iloscWyrobu: number,
+  idAsortymentuBazy: string | null
+) {
+  const wynik: Array<{ id_partii: string; ilosc: number }> = [];
+  for (const sk of skladniki) {
+    if (idAsortymentuBazy && sk.id_asortymentu_skladnika === idAsortymentuBazy) continue;
+    if (sk.asortyment_skladnika?.czy_zasob_nieograniczony) continue;
+
+    let ilosc = sk.ilosc_wymagana * iloscWyrobu * (1 + (sk.procent_strat || 0) / 100);
+    if (sk.czy_pomocnicza && sk.asortyment_skladnika?.przelicznik_jednostki) {
+      ilosc = ilosc / sk.asortyment_skladnika.przelicznik_jednostki;
+    }
+    wynik.push(...(await dobierzFifo(tx, sk.id_asortymentu_skladnika, ilosc)));
+  }
+  return wynik;
+}
+
+/**
+ * Wykonuje sesję produkcyjną: zużycie surowców (RW) oraz przyjęcie bazy i wyrobów (PW).
+ *
+ * Dwa tryby wywołania:
+ *  - bez `id_sesji` — sesja i zlecenia powstają w tej samej transakcji (realizacja od ręki),
+ *  - z `id_sesji`  — sesja i jej zlecenia istnieją już jako plan turnusu i zostają rozliczone.
+ */
+async function wykonajSesjeProdukcji(body: any, opcje: { id_sesji?: string } = {}) {
+      const { id_receptury_bazy, ilosc_bazy, rzeczywista_ilosc_bazy, surowce_bazy, wyroby, data_produkcji, typ } = body;
       // wyroby: [{ id_receptury, ilosc, surowce: [{ id_partii, ilosc }], opakowania?, rzeczywista_ilosc?, ilosc_szt?, ilosc_bazy_kg? }]
       const isSorbety = !id_receptury_bazy;
       // tryby sztukowe: kubeczki i kanapki — ilosc na PW w szt., nie w kg
@@ -403,8 +474,14 @@ router.post("/api/produkcja/sesja", async (req, res) => {
       let result;
       try {
         result = await prisma.$transaction(async (tx) => {
-          const numer_sesji = await generateSesjaNumber(tx);
-          const sesja = await tx.sesje_Produkcji.create({ data: { numer_sesji, data_produkcji: data_produkcji ? new Date(data_produkcji) : null, typ: typ || "lody" } });
+          // Przy rozliczaniu planu sesja już istnieje — nie tworzymy nowej
+          const sesjaIstniejaca = opcje.id_sesji
+            ? await tx.sesje_Produkcji.findUnique({ where: { id: opcje.id_sesji } })
+            : null;
+          if (opcje.id_sesji && !sesjaIstniejaca) throw new Error("Nie znaleziono planu turnusu");
+          if (sesjaIstniejaca && sesjaIstniejaca.status === "Zrealizowana") throw new Error("Ten turnus został już rozliczony");
+          const numer_sesji = sesjaIstniejaca ? sesjaIstniejaca.numer_sesji : await generateSesjaNumber(tx);
+          const sesja = sesjaIstniejaca ?? await tx.sesje_Produkcji.create({ data: { numer_sesji, data_produkcji: data_produkcji ? new Date(data_produkcji) : null, typ: typ || "lody" } });
 
           let partiaBazy: any = null;
           let cenaBazy = 0;
@@ -418,14 +495,29 @@ router.post("/api/produkcja/sesja", async (req, res) => {
             // ── Etap 1: Polprodukt (baza) ────────────────────────────────────
             recepturaBazy = await tx.receptury.findUnique({
               where: { id: id_receptury_bazy },
-              include: { asortyment_docelowy: true },
+              include: {
+                asortyment_docelowy: true,
+                skladniki: { include: { asortyment_skladnika: true } },
+              },
             });
             if (!recepturaBazy) throw new Error("Nie znaleziono receptury bazy");
 
-            numer_zp_bazy = await generateZlecenieNumber(tx);
-            zlecenieBazy = await tx.zlecenia_Produkcyjne.create({
-              data: { numer_zlecenia: numer_zp_bazy, id_receptury: id_receptury_bazy, id_sesji: sesja.id, etap: 1, planowana_ilosc_wyrobu: parseFloat(ilosc_bazy), status: "Planowane" },
-            });
+            // Zlecenie etapu 1 mogło powstać już przy zapisie planu
+            zlecenieBazy = body.id_zlecenia_bazy
+              ? await tx.zlecenia_Produkcyjne.findUnique({ where: { id: body.id_zlecenia_bazy } })
+              : null;
+            if (zlecenieBazy) {
+              await tx.zlecenia_Produkcyjne.update({
+                where: { id: zlecenieBazy.id },
+                data: { planowana_ilosc_wyrobu: parseFloat(ilosc_bazy) },
+              });
+              numer_zp_bazy = zlecenieBazy.numer_zlecenia;
+            } else {
+              numer_zp_bazy = await generateZlecenieNumber(tx);
+              zlecenieBazy = await tx.zlecenia_Produkcyjne.create({
+                data: { numer_zlecenia: numer_zp_bazy, id_receptury: id_receptury_bazy, id_sesji: sesja.id, etap: 1, planowana_ilosc_wyrobu: parseFloat(ilosc_bazy), status: "Planowane" },
+              });
+            }
 
             const rwBazyNr = await generateDocNumber(tx, "RW");
             pwBazyNr = await generateDocNumber(tx, "PW");
@@ -434,7 +526,14 @@ router.post("/api/produkcja/sesja", async (req, res) => {
             // Śledź łączne zużycie per partia w tej sesji (ochrona przed overdraftem przy duplikatach)
             const zuzyteWTransakcji: Record<string, number> = {};
 
-            for (const s of surowce_bazy || []) {
+            // Rozliczenie planu nie wskazuje partii ręcznie — dobieramy je FIFO z BOM-u
+            const surowceBazyDoZuzycia = (surowce_bazy && surowce_bazy.length > 0)
+              ? surowce_bazy
+              : (body.auto_fifo
+                  ? await surowceFifoZReceptury(tx, recepturaBazy.skladniki, parseFloat(ilosc_bazy), null)
+                  : []);
+
+            for (const s of surowceBazyDoZuzycia) {
               if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
               const ilosc = parseFloat(s.ilosc);
               const partia = await tx.partie_Magazynowe.findUnique({
@@ -511,10 +610,19 @@ router.post("/api/produkcja/sesja", async (req, res) => {
               nazwaWyrobu = vAsort.nazwa;
             }
 
-            const numer_zp = await generateZlecenieNumber(tx);
-            const zlecenieWyrobu = await tx.zlecenia_Produkcyjne.create({
-              data: { numer_zlecenia: numer_zp, id_receptury: wyrob.id_receptury, id_sesji: sesja.id, etap: 2, planowana_ilosc_wyrobu: iloscWyrobu, status: "Planowane" },
-            });
+            // Zlecenie etapu 2 mogło powstać już przy zapisie planu
+            const zlecenieZPlanu = wyrob.id_zlecenia
+              ? await tx.zlecenia_Produkcyjne.findUnique({ where: { id: wyrob.id_zlecenia } })
+              : null;
+            const numer_zp = zlecenieZPlanu ? zlecenieZPlanu.numer_zlecenia : await generateZlecenieNumber(tx);
+            const zlecenieWyrobu = zlecenieZPlanu
+              ? await tx.zlecenia_Produkcyjne.update({
+                  where: { id: zlecenieZPlanu.id },
+                  data: { planowana_ilosc_wyrobu: iloscWyrobu },
+                })
+              : await tx.zlecenia_Produkcyjne.create({
+                  data: { numer_zlecenia: numer_zp, id_receptury: wyrob.id_receptury, id_sesji: sesja.id, etap: 2, planowana_ilosc_wyrobu: iloscWyrobu, status: "Planowane" },
+                });
 
             const rwNr = await generateDocNumber(tx, "RW");
             const pwNr = await generateDocNumber(tx, "PW");
@@ -542,8 +650,19 @@ router.post("/api/produkcja/sesja", async (req, res) => {
               }
             }
 
-            // Zużycie pozostałych surowców
-            for (const s of wyrob.surowce || []) {
+            // Zużycie pozostałych surowców — przy rozliczaniu planu dobierane FIFO
+            const surowceWyrobu = (wyrob.surowce && wyrob.surowce.length > 0)
+              ? wyrob.surowce
+              : (body.auto_fifo
+                  ? await surowceFifoZReceptury(
+                      tx,
+                      recepturaWyrobu.skladniki,
+                      iloscWyrobu,
+                      recepturaBazy?.id_asortymentu_docelowego ?? null
+                    )
+                  : []);
+
+            for (const s of surowceWyrobu) {
               if (!s.id_partii || !(parseFloat(s.ilosc) > 0)) continue;
               const ilosc = parseFloat(s.ilosc);
               const partia = await tx.partie_Magazynowe.findUnique({
@@ -630,6 +749,15 @@ router.post("/api/produkcja/sesja", async (req, res) => {
             }
           }
 
+          // Pozycje planu pominięte przy rozliczeniu (niewykonane) zamykamy jako anulowane
+          if (opcje.id_sesji) {
+            await tx.zlecenia_Produkcyjne.updateMany({
+              where: { id_sesji: sesja.id, status: "Planowane" },
+              data: { status: "Anulowane" },
+            });
+          }
+          await tx.sesje_Produkcji.update({ where: { id: sesja.id }, data: { status: "Zrealizowana" } });
+
           const bazaResult = zlecenieBazy
             ? { numer_zp: numer_zp_bazy, pw: pwBazyNr, ilosc: iloscBazy }
             : null;
@@ -639,11 +767,243 @@ router.post("/api/produkcja/sesja", async (req, res) => {
         releaseMutex();
       }
 
-      res.json(result);
-    } catch (e: any) {
-      res.status(400).json({ error: e.message || "Błąd sesji produkcyjnej" });
-    }
-  });
+      return result;
+}
+
+router.post("/api/produkcja/sesja", async (req, res) => {
+  try {
+    res.json(await wykonajSesjeProdukcji(req.body));
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Błąd sesji produkcyjnej" });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLANER PRODUKCJI
+//
+// Plan turnusu to sesja w statusie "Planowana" wraz ze zleceniami w statusie
+// "Planowane" — bez żadnych ruchów magazynowych. Dopiero rozliczenie dokłada
+// RW, PW i partie, przestawiając sesję na "Zrealizowana".
+// ══════════════════════════════════════════════════════════════════════════════
+
+const includePlanu = {
+  zlecenia: {
+    where: { czy_aktywne: true },
+    include: {
+      receptura: {
+        include: {
+          asortyment_docelowy: true,
+          skladniki: { include: { asortyment_skladnika: true } },
+        },
+      },
+    },
+  },
+} as const;
+
+/** Suma mnożników wsadów → planowana ilość wyrobu w kg (mnożnik × wydajność receptury). */
+function iloscZWsadow(wsady: any[], wielkoscProdukcji: number) {
+  const suma = (wsady || []).reduce((s: number, w: any) => s + (parseFloat(w.mnoznik) || 0), 0);
+  return Math.round(suma * (wielkoscProdukcji || 1) * 1000) / 1000;
+}
+
+router.get("/api/produkcja/plany", async (req, res) => {
+  try {
+    const { status } = req.query as { status?: string };
+    const plany = await prisma.sesje_Produkcji.findMany({
+      where: { czy_aktywne: true, ...(status ? { status } : {}) },
+      include: includePlanu,
+      orderBy: [{ data_produkcji: "desc" }, { utworzono_dnia: "desc" }],
+    });
+    res.json(plany);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/api/produkcja/plany/:id", async (req, res) => {
+  try {
+    const plan = await prisma.sesje_Produkcji.findUnique({
+      where: { id: req.params.id },
+      include: includePlanu,
+    });
+    if (!plan) return res.status(404).json({ error: "Nie znaleziono planu turnusu" });
+    res.json(plan);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/api/produkcja/plany", async (req, res) => {
+  try {
+    const { data_produkcji, typ, notatki, planowana_baza_kg, id_receptury_bazy, pozycje } = req.body;
+
+    const releaseMutex = await globalTransactionMutex.acquire();
+    try {
+      const plan = await prisma.$transaction(async (tx) => {
+        const numer_sesji = await generateSesjaNumber(tx);
+        const sesja = await tx.sesje_Produkcji.create({
+          data: {
+            numer_sesji,
+            typ: typ || "lody",
+            status: "Planowana",
+            notatki: notatki || null,
+            planowana_baza_kg: planowana_baza_kg != null ? parseFloat(planowana_baza_kg) : null,
+            data_produkcji: data_produkcji ? new Date(data_produkcji) : null,
+          },
+        });
+
+        // Etap 1 — baza (pomijany dla sorbetów, które nie mają półproduktu)
+        if (id_receptury_bazy) {
+          await tx.zlecenia_Produkcyjne.create({
+            data: {
+              numer_zlecenia: await generateZlecenieNumber(tx),
+              id_receptury: id_receptury_bazy,
+              id_sesji: sesja.id,
+              etap: 1,
+              planowana_ilosc_wyrobu: planowana_baza_kg != null ? parseFloat(planowana_baza_kg) : 0,
+              status: "Planowane",
+            },
+          });
+        }
+
+        // Etap 2 — smaki w kolejności barwnej
+        for (const [idx, poz] of (pozycje || []).entries()) {
+          const receptura = await tx.receptury.findUnique({ where: { id: poz.id_receptury } });
+          if (!receptura) throw new Error(`Nie znaleziono receptury ${poz.id_receptury}`);
+          await tx.zlecenia_Produkcyjne.create({
+            data: {
+              numer_zlecenia: await generateZlecenieNumber(tx),
+              id_receptury: poz.id_receptury,
+              id_sesji: sesja.id,
+              etap: 2,
+              kolejnosc: poz.kolejnosc ?? idx,
+              wsady_json: JSON.stringify(poz.wsady || []),
+              planowana_ilosc_wyrobu: iloscZWsadow(poz.wsady, receptura.wielkosc_produkcji),
+              status: "Planowane",
+            },
+          });
+        }
+
+        return tx.sesje_Produkcji.findUnique({ where: { id: sesja.id }, include: includePlanu });
+      }, { timeout: 30000 });
+
+      res.json(plan);
+    } finally { releaseMutex(); }
+  } catch (e: any) { res.status(400).json({ error: e.message || "Błąd zapisu planu" }); }
+});
+
+router.put("/api/produkcja/plany/:id", async (req, res) => {
+  try {
+    const { data_produkcji, typ, notatki, planowana_baza_kg, id_receptury_bazy, pozycje } = req.body;
+
+    const releaseMutex = await globalTransactionMutex.acquire();
+    try {
+      const plan = await prisma.$transaction(async (tx) => {
+        const sesja = await tx.sesje_Produkcji.findUnique({
+          where: { id: req.params.id },
+          include: { zlecenia: { where: { czy_aktywne: true } } },
+        });
+        if (!sesja) throw new Error("Nie znaleziono planu turnusu");
+        if (sesja.status !== "Planowana") throw new Error("Rozliczonego turnusu nie można już edytować");
+
+        await tx.sesje_Produkcji.update({
+          where: { id: sesja.id },
+          data: {
+            typ: typ || sesja.typ,
+            notatki: notatki ?? null,
+            planowana_baza_kg: planowana_baza_kg != null ? parseFloat(planowana_baza_kg) : null,
+            data_produkcji: data_produkcji ? new Date(data_produkcji) : null,
+          },
+        });
+
+        // ── Etap 1 ──────────────────────────────────────────────────────────
+        const zlecenieBazy = sesja.zlecenia.find((z) => z.etap === 1);
+        const iloscBazy = planowana_baza_kg != null ? parseFloat(planowana_baza_kg) : 0;
+        if (id_receptury_bazy && zlecenieBazy) {
+          await tx.zlecenia_Produkcyjne.update({
+            where: { id: zlecenieBazy.id },
+            data: { id_receptury: id_receptury_bazy, planowana_ilosc_wyrobu: iloscBazy },
+          });
+        } else if (id_receptury_bazy && !zlecenieBazy) {
+          await tx.zlecenia_Produkcyjne.create({
+            data: {
+              numer_zlecenia: await generateZlecenieNumber(tx),
+              id_receptury: id_receptury_bazy,
+              id_sesji: sesja.id,
+              etap: 1,
+              planowana_ilosc_wyrobu: iloscBazy,
+              status: "Planowane",
+            },
+          });
+        } else if (!id_receptury_bazy && zlecenieBazy) {
+          await tx.zlecenia_Produkcyjne.delete({ where: { id: zlecenieBazy.id } });
+        }
+
+        // ── Etap 2 — różnicowo, żeby nie palić numerów zleceń ───────────────
+        const istniejace = sesja.zlecenia.filter((z) => z.etap === 2);
+        const zachowane = new Set<string>();
+
+        for (const [idx, poz] of (pozycje || []).entries()) {
+          const receptura = await tx.receptury.findUnique({ where: { id: poz.id_receptury } });
+          if (!receptura) throw new Error(`Nie znaleziono receptury ${poz.id_receptury}`);
+          const dane = {
+            id_receptury: poz.id_receptury,
+            kolejnosc: poz.kolejnosc ?? idx,
+            wsady_json: JSON.stringify(poz.wsady || []),
+            planowana_ilosc_wyrobu: iloscZWsadow(poz.wsady, receptura.wielkosc_produkcji),
+          };
+          if (poz.id && istniejace.some((z) => z.id === poz.id)) {
+            await tx.zlecenia_Produkcyjne.update({ where: { id: poz.id }, data: dane });
+            zachowane.add(poz.id);
+          } else {
+            const utworzone = await tx.zlecenia_Produkcyjne.create({
+              data: {
+                ...dane,
+                numer_zlecenia: await generateZlecenieNumber(tx),
+                id_sesji: sesja.id,
+                etap: 2,
+                status: "Planowane",
+              },
+            });
+            zachowane.add(utworzone.id);
+          }
+        }
+
+        const doUsuniecia = istniejace.filter((z) => !zachowane.has(z.id)).map((z) => z.id);
+        if (doUsuniecia.length > 0) {
+          await tx.zlecenia_Produkcyjne.deleteMany({ where: { id: { in: doUsuniecia } } });
+        }
+
+        return tx.sesje_Produkcji.findUnique({ where: { id: sesja.id }, include: includePlanu });
+      }, { timeout: 30000 });
+
+      res.json(plan);
+    } finally { releaseMutex(); }
+  } catch (e: any) { res.status(400).json({ error: e.message || "Błąd zapisu planu" }); }
+});
+
+router.delete("/api/produkcja/plany/:id", async (req, res) => {
+  try {
+    const sesja = await prisma.sesje_Produkcji.findUnique({ where: { id: req.params.id } });
+    if (!sesja) return res.status(404).json({ error: "Nie znaleziono planu turnusu" });
+    if (sesja.status !== "Planowana") return res.status(400).json({ error: "Rozliczonego turnusu nie można usunąć" });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.zlecenia_Produkcyjne.deleteMany({ where: { id_sesji: sesja.id } });
+      await tx.sesje_Produkcji.delete({ where: { id: sesja.id } });
+    });
+    res.json({ ok: true });
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+/**
+ * Rozliczenie turnusu — plan zamienia się w ruchy magazynowe.
+ * Body ma tę samą strukturę co `POST /api/produkcja/sesja`, wzbogaconą o
+ * `id_zlecenia_bazy` oraz `id_zlecenia` przy każdym wyrobie.
+ */
+router.post("/api/produkcja/plany/:id/rozlicz", async (req, res) => {
+  try {
+    res.json(await wykonajSesjeProdukcji(req.body, { id_sesji: req.params.id }));
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || "Błąd rozliczenia turnusu" });
+  }
+});
 
 router.post("/api/produkcja/:id/realizuj", async (req, res) => {
     try {
