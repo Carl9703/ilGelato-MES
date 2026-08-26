@@ -443,7 +443,7 @@ tbody tr:last-child td{border-bottom:none}
   </div>
   <div style="text-align:right">
     <div class="meta-label">Masa całkowita</div>
-    <div class="meta-val mono">${fmtL(totalKg > 0 ? totalKg : totalWyk, 3)} kg</div>
+    <div class="meta-val mono">${fmtL(totalKg, 3)} kg</div>
   </div>
 </div>
 

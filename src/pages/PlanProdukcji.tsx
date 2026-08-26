@@ -10,6 +10,7 @@
  * Dopiero rozliczenie dokłada RW, PW i partie.
  */
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import {
   Plus, Trash2, GripVertical, Printer, Save, ArrowRight, ArrowLeft,
   CalendarDays, ListOrdered, FileText, PlayCircle,
@@ -141,6 +142,17 @@ export default function PlanProdukcji() {
 
   useEffect(() => { pobierz(); }, []);
 
+  // Wejście z listy "Sesje produkcyjne" (Produkcja.tsx) z linkiem /planer?otworz=<id>
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const idDoOtwarcia = searchParams.get("otworz");
+    if (!idDoOtwarcia || plany.length === 0) return;
+    const plan = plany.find((p) => p.id === idDoOtwarcia);
+    if (plan) otworzPlan(plan);
+    setSearchParams((prev) => { prev.delete("otworz"); return prev; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plany, searchParams]);
+
   // ── Pomocnicze ─────────────────────────────────────────────────────────────
 
   const recepturaById = (id: string) => receptury.find((r) => r.id === id);
@@ -260,14 +272,12 @@ export default function PlanProdukcji() {
       return;
     }
 
-    const warianty = wariantyReceptury(rec);
-    const pierwszy = warianty[0];
+    // Wsad dodaje się ręcznie — kliknięciem w pastylkę wariantu albo "+ inny wsad",
+    // żeby nie wskoczył automatycznie zły wariant przy recepturach z kilkoma wariantami.
     const nowa: Pozycja = {
       _uid: uid(),
       id_receptury: idReceptury,
-      wsady: pierwszy
-        ? [{ _uid: uid(), mnoznik: String(pierwszy.mnoznik), id_opakowania: pierwszy.id_opakowania ?? "", liczba: String(pierwszy.liczba || 1) }]
-        : [{ _uid: uid(), mnoznik: "", id_opakowania: "", liczba: "1" }],
+      wsady: [],
     };
 
     const kNowej = rec.asortyment_docelowy.kolejnosc_produkcji;
@@ -347,6 +357,11 @@ export default function PlanProdukcji() {
 
   async function zapisz() {
     if (pozycje.length === 0) { showToast("Dodaj co najmniej jeden smak", "warn"); return; }
+    const bezWsadu = pozycje.find((p) => p.wsady.length === 0);
+    if (bezWsadu) {
+      showToast(`Dodaj wsad dla: ${recepturaById(bezWsadu.id_receptury)?.asortyment_docelowy.nazwa ?? "smaku"}`, "warn");
+      return;
+    }
     if (wymagaBazy(typ) && !idRecepturyBazy) { showToast("Wybierz recepturę bazy", "warn"); return; }
     if (bazaPrzekroczona) {
       showToast(`Zaplanowana baza (${fmtL(bazaKgNum, 1)} kg) nie wystarczy na wybrane smaki — potrzeba ${fmtL(sumaBazy, 1)} kg. Zwiększ bazę albo usuń smak.`, "error");

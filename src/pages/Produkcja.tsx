@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, FileText, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard } from "lucide-react";
+import { useNavigate } from "react-router";
+import { Plus, Save, X, Factory, AlertCircle, Play, Trash2, CheckCircle2, AlertTriangle, Database, Clock, Clipboard, FileText, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Package, Trash, Eye, Printer, Check, RotateCcw, Zap, Calendar, BarChart2, Calculator, Layers, LayoutDashboard, ClipboardList } from "lucide-react";
 import { SortableTh } from "../components/SortableTh";
 import { sortBy, makeSortHandler, type SortDir } from "../utils/sortBy";
 import { fmtL, fmtDate, resolveDisplayUnit, clampDecimals } from "../utils/fmt";
@@ -47,7 +48,11 @@ type WizSurowiecWyrob = { id_asortymentu: string; nazwa: string; jednostka: stri
 
 export default function Produkcja() {
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const [zlecenia, setZlecenia] = useState<Zlecenie[]>([]);
+  // Zlecenia z turnusów planera (sesja "Planowana") — tylko do podglądu w zakładce Sesje,
+  // trzymane osobno od `zlecenia`, żeby nie dało się ich uruchomić starym flow (zob. fetchData)
+  const [zleceniaPlanow, setZleceniaPlanow] = useState<Zlecenie[]>([]);
   const [receptury, setReceptury] = useState<Receptura[]>([]);
   const [itemToRealize, setItemToRealize] = useState<Zlecenie | null>(null);
   const [rzeczywistaIlosc, setRzeczywistaIlosc] = useState<string>("");
@@ -307,6 +312,7 @@ export default function Produkcja() {
         // przepływem ZP, żeby nie dało się ich przypadkiem "zrealizować" tym starym flow.
         const data = wszystkie.filter(z => z.sesja?.status !== "Planowana");
         setZlecenia(data);
+        setZleceniaPlanow(wszystkie.filter(z => z.sesja?.status === "Planowana"));
         // Sync open detail view
         setViewZlecenie(prev => prev ? data.find(z => z.id === prev.id) || null : null);
       }
@@ -835,6 +841,7 @@ export default function Produkcja() {
   const getStatusStyle = (s: string) => {
     switch (s) {
       case "Planowane": return "badge-info";
+      case "Planowana": return "badge-neutral";
       case "W_toku": return "badge-warn";
       case "Zrealizowane": return "badge-ok";
       case "Anulowane": return "bg-rose-500/20 text-rose-400 border border-rose-500/20";
@@ -1117,7 +1124,7 @@ export default function Produkcja() {
         <div className="space-y-4">
           <div className="mes-panel rounded overflow-hidden">
             {(() => {
-              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; data_produkcji: string; utworzono_dnia: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean }> = {};
+              const sessionsMap: Record<string, { id: string; numer_sesji: string; data: string; data_produkcji: string; utworzono_dnia: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean; isPlan?: boolean }> = {};
               zlecenia.forEach(z => {
                 const sid = z.id_sesji || `indiv-${z.id}`;
                 if (!sessionsMap[sid]) {
@@ -1155,6 +1162,30 @@ export default function Produkcja() {
                 if (z.status === "W_toku") sessionsMap[sid].status = "W_toku";
               });
 
+              // Turnusy z planera (sesja "Planowana") — tylko podgląd, bez akcji;
+              // rozliczane wyłącznie w /planer.
+              zleceniaPlanow.forEach(z => {
+                const sid = z.id_sesji as string;
+                if (!sid) return;
+                if (!sessionsMap[sid]) {
+                  sessionsMap[sid] = {
+                    id: sid,
+                    numer_sesji: z.sesja?.numer_sesji || "Plan",
+                    data: (z.sesja as any)?.data_produkcji || z.utworzono_dnia,
+                    data_produkcji: (z.sesja as any)?.data_produkcji || "",
+                    utworzono_dnia: z.utworzono_dnia,
+                    baza: null,
+                    wyroby: [],
+                    totalKg: 0,
+                    totalSzt: 0,
+                    status: "Planowana",
+                    isPlan: true,
+                  };
+                }
+                if (z.etap === 1) sessionsMap[sid].baza = z;
+                if (z.etap === 2 || !z.etap) sessionsMap[sid].wyroby.push(z);
+              });
+
               draftsList.forEach(d => {
                 sessionsMap[`draft-${d.id}`] = {
                   id: `draft-${d.id}`,
@@ -1171,7 +1202,7 @@ export default function Produkcja() {
                 };
               });
 
-              type SessionRow = { id: string; numer_sesji: string; data: string; data_produkcji: string; utworzono_dnia: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean };
+              type SessionRow = { id: string; numer_sesji: string; data: string; data_produkcji: string; utworzono_dnia: string; baza: Zlecenie | null; wyroby: Zlecenie[]; totalKg: number; totalSzt: number; status: string; isDraft?: boolean; isPlan?: boolean };
               const sessions = sortBy<SessionRow>(
                 Object.values(sessionsMap) as SessionRow[],
                 s => {
@@ -1203,7 +1234,7 @@ export default function Produkcja() {
                   </thead>
                   <tbody>
                     {sessions.map(s => (
-                      <tr key={s.id} className="cursor-pointer hover:bg-[var(--bg-panel)]" onClick={() => s.isDraft ? restoreDraft(s.id.replace("draft-", "")) : setViewSesjaId(s.id)}>
+                      <tr key={s.id} className="cursor-pointer hover:bg-[var(--bg-panel)]" onClick={() => s.isDraft ? restoreDraft(s.id.replace("draft-", "")) : s.isPlan ? navigate(`/planer?otworz=${s.id}`) : setViewSesjaId(s.id)}>
                         <td className="mono font-bold text-white">{s.numer_sesji}</td>
                         <td>
                           {s.baza ? (
@@ -1224,7 +1255,9 @@ export default function Produkcja() {
                               return (
                                 <div key={w.id} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border)]" title={w.receptura?.asortyment_docelowy?.nazwa}>
                                   {w.receptura?.asortyment_docelowy?.nazwa.slice(0, 15)}...
-                                  <span className="ml-1 text-emerald-400 font-bold">{w.status === "Zrealizowane" ? fmtL(w.rzeczywista_ilosc_wyrobu || 0, isSztuki ? 0 : 1) : "—"} {isSztuki ? "szt." : baseJM}</span>
+                                  <span className={`ml-1 font-bold ${s.isPlan ? "text-[var(--text-muted)]" : "text-emerald-400"}`}>
+                                    {s.isPlan ? `plan ${fmtL(w.planowana_ilosc_wyrobu || 0, isSztuki ? 0 : 1)}` : (w.status === "Zrealizowane" ? fmtL(w.rzeczywista_ilosc_wyrobu || 0, isSztuki ? 0 : 1) : "—")} {isSztuki ? "szt." : baseJM}
+                                  </span>
                                 </div>
                               );
                             })}
@@ -1258,6 +1291,14 @@ export default function Produkcja() {
                               title="Usuń szkic"
                             >
                               <X className="w-4 h-4" />
+                            </button>
+                          ) : s.isPlan ? (
+                            <button
+                              onClick={() => navigate(`/planer?otworz=${s.id}`)}
+                              className="p-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-white transition-colors"
+                              title="Otwórz w Planerze"
+                            >
+                              <ClipboardList className="w-4 h-4" />
                             </button>
                           ) : (
                             <button
