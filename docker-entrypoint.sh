@@ -31,4 +31,8 @@ npx tsx prisma/create-admin.ts
 echo "Ensuring required product groups..."
 npx tsx scripts/init_groups.ts
 
+# Backfill statusu sesji produkcyjnych dla danych sprzed planera (idempotentne)
+echo "Backfilling production session statuses..."
+npx tsx scripts/backfill_sesje_status.ts
+
 exec npx tsx server.ts
