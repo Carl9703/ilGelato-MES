@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Instalacja TESTOWA / STAGING — działa OBOK produkcji, nic nie współdzieli.
+#
+# Różnice względem docker-compose.yml (produkcja):
+#   • name: ilgelato-test        → osobne kontenery, sieci, obrazy
+#   • port www: 8081 (prod: 8080)
+#   • dane:  /volume1/docker/ilgelato-test/data  (prod: .../ilgelato/data)
+#
+# Uruchomienie na NAS (w katalogu /volume1/docker/ilgelato-test):
+#   docker compose -f docker-compose.test.yml up -d --build
+#
+# Pełna instrukcja: docs/instalacja_testowa.md
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: ilgelato-test
+
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: file:/data/gelato.db
+      DATABASE_URL_TEST: file:/data/test.db
+    volumes:
+      - /volume1/docker/ilgelato-test/data:/data
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    restart: unless-stopped
+    ports:
+      # Produkcja zajmuje 8080 — testowa słucha na 8081.
+      - "8081:80"
+    depends_on:
+      - backend
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
