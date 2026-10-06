@@ -38,6 +38,9 @@ rsync -a --exclude='prisma/dev.db' \
          --exclude='node_modules/' \
          "${EXTRACT_DIR}/" "${INSTALL_DIR}/"
 
+# Upewnij się, że pliki mają uprawnienia do odczytu
+chmod -R a+rX "${INSTALL_DIR}" 2>/dev/null || true
+
 echo "==> Przebudowywanie i uruchamianie kontenerów..."
 cd "$INSTALL_DIR"
 docker compose up -d --build
